@@ -27,6 +27,7 @@ Elasticsearch 8.19.3 node. There are no stub endpoints in the implemented paths.
 | Run recording with idempotent events + redaction | Working | `tests/unit/test_run_recorder.py`, `tests/integration/test_security.py` |
 | PostgreSQL source of truth (12 tables, Alembic) | Working | `migrations/versions/`, `tests/integration/test_postgres.py` |
 | Elasticsearch BM25 + dense vector + hybrid RRF | Working | `tests/integration/test_elasticsearch.py` |
+| Deterministic lexical reranker (`hybrid_rerank`) | Working | `tests/unit/test_reranker.py`, integration |
 | Outcome-aware selection with rejection reasons | Working | `tests/unit/test_recall_policy.py` |
 | RepairCompiler (failure window -> typed candidate) | Working | `tests/unit/test_repair_compiler.py` |
 | Static + executing mock-sandbox validators | Working | `tests/unit/test_repair_compiler.py` |

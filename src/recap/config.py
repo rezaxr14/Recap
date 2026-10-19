@@ -81,6 +81,14 @@ class RecallSettings(BaseModel):
     require_tool_match: bool = False
     no_safe_memory_threshold: float = 0.35
     max_per_strategy: int = 2
+    reranker: str = "lexical"
+
+    @field_validator("reranker")
+    @classmethod
+    def _known_reranker(cls, value: str) -> str:
+        if value not in {"none", "lexical"}:
+            raise ValueError("reranker must be 'none' or 'lexical'")
+        return value
 
 
 class ReliabilitySettings(BaseModel):
@@ -165,6 +173,7 @@ def _apply_env_overrides(raw: dict[str, Any]) -> dict[str, Any]:
         "RECAP_EMBEDDING_DIMENSION": ("embeddings", "dimension"),
         "RECAP_VECTOR_DIMENSION": ("elasticsearch", "vector_dimension"),
         "RECAP_INDEX_GENERATION": ("elasticsearch", "index_generation"),
+        "RECAP_RERANKER": ("recall", "reranker"),
     }
     for env_name, (section, key) in mapping.items():
         value = os.environ.get(env_name)

@@ -109,6 +109,34 @@ def test_each_branch_retrieves_the_memory(container, workspace_id: str, mode) ->
     assert candidate.features.relevance > 0
 
 
+def test_hybrid_rerank_actually_reranks(container, workspace_id: str) -> None:
+    """HYBRID_RERANK must run a real rerank stage, not alias HYBRID_RRF."""
+    memory = make_memory(
+        container,
+        workspace_id=workspace_id,
+        title="Recover from INVALID_CURSOR",
+        summary="Discard the expired pagination cursor and start from the first page.",
+        failure_signature="ValidationError|INVALID_CURSOR|list_records|cursor is invalid",
+        failure_code="INVALID_CURSOR",
+        environment_version="1",
+    )
+    _refresh(container)
+    with container.services() as services:
+        decision = services.recall.retrieve(
+            RetrievalRequest(
+                context=context_for(workspace_id=workspace_id, environment_version="1"),
+                mode=RetrievalMode.HYBRID_RERANK,
+                final_k=3,
+            )
+        )
+    assert decision.status.value == "selected", decision.reason
+    assert decision.config_snapshot["rerank_applied"] is True
+    assert decision.config_snapshot["reranker"] == "lexical-overlap-v1"
+    assert "rerank" in decision.stage_latency_ms
+    candidate = next(item for item in decision.candidates if item.memory_id == memory.id)
+    assert candidate.branch_ranks.get("rerank") == 1
+
+
 def test_wrong_workspace_is_never_returned(container, workspace_id: str) -> None:
     make_memory(
         container,

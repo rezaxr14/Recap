@@ -37,6 +37,7 @@ recall:
   require_tool_match: false
   no_safe_memory_threshold: 0.35
   max_per_strategy: 2
+  reranker: lexical
 
 reliability:
   beta_prior_alpha: 1.0

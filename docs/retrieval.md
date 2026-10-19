@@ -61,6 +61,27 @@ Native Elasticsearch RRF (`es_rrf`) is implemented in the DSL and selectable via
 `elasticsearch.hybrid_strategy`, but is not the default: the application-side path gives
 per-branch ranks and scores that are persisted in the decision record.
 
+### 2.4 Reranking (`hybrid_rerank`)
+
+Fusion is rank-based and deliberately conservative. `hybrid_rerank` adds a second pass over
+the fused candidates:
+
+- `recall.reranker=lexical` (default) uses `LexicalReranker`
+  (`lexical-overlap-v1`): a deterministic query-coverage/document-precision score
+  (`0.7 * coverage + 0.3 * precision`).
+- `recall.reranker=none` disables the stage.
+
+The reranker can only change candidate **order**. Eligibility, applicability,
+compatibility, and utility are evaluated afterwards, so reranking cannot make an unsafe
+memory selectable. Its rank is recorded as `branch_ranks["rerank"]`, relevance is taken from
+the rerank score, and `config_snapshot.rerank_applied` records whether the stage ran. If the
+reranker raises, the engine logs a warning, keeps fusion order, and marks the decision
+`degraded`.
+
+This is intentionally a lexical reranker rather than a cross-encoder: it is deterministic,
+dependency-free, and makes the mode genuinely distinct from fusion. A cross-encoder can
+implement the same `Reranker` protocol later.
+
 ## 3. Hard filters
 
 Only two constraints are pushed into Elasticsearch:

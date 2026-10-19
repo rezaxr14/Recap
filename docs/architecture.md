@@ -255,7 +255,7 @@ MemoryShiftService.on_incompatible_environment(memory, environment)
 | `EmbeddingProvider` | hashing, fake, sentence-transformers | implement `embed_documents`/`embed_query`, set `embeddings.provider` |
 | `Validator` | static, mock sandbox | implement `validate()`, register in `build_default_registry()` |
 | `CandidateGenerator` | deterministic | implement `generate()`, inject into `RepairCompiler` |
-| Reranker | not wired | add a port and apply between fusion and eligibility |
+| Reranker | `LexicalReranker` (`hybrid_rerank`) | implement the `Reranker` protocol and set `recall.reranker` |
 | Environment | mock API v1/v2 | implement a fingerprint + tool registry |
 
 ## 7. Known architectural gaps

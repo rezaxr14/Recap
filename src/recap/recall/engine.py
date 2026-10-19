@@ -17,7 +17,7 @@ from recap.domain.enums import (
     RetrievalMode,
     SelectionStatus,
 )
-from recap.domain.memories import ExperienceMemory
+from recap.domain.memories import ExperienceMemory, build_embedding_text
 from recap.domain.retrieval import (
     CandidateEvaluation,
     RejectedCandidate,
@@ -132,6 +132,38 @@ class RecallEngine:
             }
         stage_latency["fuse"] = _ms(t0)
 
+        # 5b. Optional reranking (HYBRID_RERANK only). Reranking changes order,
+        # never safety: eligibility/applicability/compatibility run afterwards.
+        rerank_applied = False
+        relevance_by_doc: dict[str, float] = {}
+        if (
+            request.mode is RetrievalMode.HYBRID_RERANK
+            and self.reranker is not None
+            and fused_order
+        ):
+            t0 = time.perf_counter()
+            rerank_ids: list[str] = []
+            rerank_documents: list[str] = []
+            for doc_id in fused_order:
+                memory_id, _, _ = doc_id.partition(":v")
+                memory = self.memories.get_memory(memory_id, context.workspace_id)
+                rerank_ids.append(doc_id)
+                rerank_documents.append(build_embedding_text(memory) if memory else "")
+            try:
+                order = self.reranker.rerank(query_text, rerank_documents, len(rerank_ids))
+                fused_order = [rerank_ids[index] for index, _ in order]
+                relevance_by_doc = {
+                    rerank_ids[index]: max(0.0, min(1.0, score)) for index, score in order
+                }
+                for rank, doc_id in enumerate(fused_order, start=1):
+                    branch_ranks.setdefault(doc_id, {})["rerank"] = rank
+                rerank_applied = True
+            except Exception as exc:  # reranker boundary: degrade to fusion order
+                logger.warning("reranker failed: %s", exc, extra={"event": "reranker_failed"})
+                warnings.append("reranker unavailable; using fusion order")
+                degraded = True
+            stage_latency["rerank"] = _ms(t0)
+
         # 6-9. Eligibility, applicability, compatibility, utility
         t0 = time.perf_counter()
         evaluations: list[CandidateEvaluation] = []
@@ -168,7 +200,11 @@ class RecallEngine:
                 apply_compatibility_filters=strict_policy,
             )
             applicability = evaluate_applicability(memory, context)
-            relevance = _normalize_fused(fused_scores.get(doc_id, 0.0))
+            relevance = (
+                relevance_by_doc.get(doc_id, 0.0)
+                if rerank_applied
+                else _normalize_fused(fused_scores.get(doc_id, 0.0))
+            )
             features = compute_features(
                 memory=memory,
                 context=context,
@@ -314,6 +350,8 @@ class RecallEngine:
                 "rrf_k": self.settings.elasticsearch.rrf_k,
                 "embedding_model_id": self.embeddings.model_id,
                 "no_safe_memory_threshold": self.settings.recall.no_safe_memory_threshold,
+                "rerank_applied": rerank_applied,
+                "reranker": getattr(self.reranker, "name", "none"),
             },
         )
         self._persist(decision, persist)

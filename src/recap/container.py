@@ -39,6 +39,7 @@ from recap.infrastructure.elasticsearch.search_repository import (
 from recap.infrastructure.embeddings import build_embedding_provider
 from recap.memory_shift.service import MemoryShiftService
 from recap.recall.engine import RecallEngine
+from recap.recall.reranker import build_reranker
 from recap.recorder.recorder import RunRecorder
 from recap.repair_compiler.compiler import RepairCompiler
 from recap.repair_compiler.promotion import PromotionService
@@ -142,6 +143,7 @@ class Services:
             compatibility_repository=self.compatibility,
             decision_repository=self.decisions,
             embedding_provider=container.embeddings,
+            reranker=build_reranker(self.settings.recall.reranker),
         )
         self.memory_shift = MemoryShiftService(
             settings=self.settings,

@@ -5,13 +5,12 @@ import pytest
 from recap.domain.enums import (
     ActionType,
     EventType,
-    RepairCandidateStatus,
     ValidationStatus,
 )
 from recap.domain.predicates import Predicate
 from recap.domain.strategies import StrategyAction
 from recap.environments.mock_api import PaginatedApiEnvironment
-from recap.recorder.normalization import normalize_signature
+from recap.errors import ValidationError
 from recap.repair_compiler.candidate_generation import (
     CandidateDraft,
     DeterministicGenerator,
@@ -110,7 +109,7 @@ def test_validate_draft_rejects_invented_event_ids() -> None:
         ],
         postconditions=[Predicate(field="records_collected", operator="gte", value=1)],
     )
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         validate_draft(
             draft,
             window=window,

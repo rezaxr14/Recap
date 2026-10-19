@@ -20,6 +20,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -142,7 +143,9 @@ class MemoryRow(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    last_validated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_validated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 class OutcomeRow(Base):
@@ -178,7 +181,9 @@ class RetrievalDecisionRow(Base):
     policy_version: Mapped[str] = mapped_column(String(32), nullable=False)
     decision_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     total_latency_ms: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
 
 
 class RepairCandidateRow(Base):
@@ -237,9 +242,7 @@ class CompatibilityRow(Base):
 
 class RevalidationJobRow(Base):
     __tablename__ = "revalidation_jobs"
-    __table_args__ = (
-        UniqueConstraint("dedupe_key", name="uq_revalidation_dedupe"),
-    )
+    __table_args__ = (UniqueConstraint("dedupe_key", name="uq_revalidation_dedupe"),)
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     memory_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
@@ -247,7 +250,9 @@ class RevalidationJobRow(Base):
     workspace_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     reason: Mapped[str] = mapped_column(String(32), nullable=False)
     target_environment_id: Mapped[str] = mapped_column(String(128), nullable=False)
-    target_environment_fingerprint: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    target_environment_fingerprint: Mapped[str] = mapped_column(
+        String(128), nullable=False, default=""
+    )
     validation_plan: Mapped[str] = mapped_column(String(64), nullable=False)
     priority: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
     state: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
@@ -276,11 +281,21 @@ class AuditEventRow(Base):
 
 
 class OutboxRow(Base):
-    """Transactional outbox for DB -> Elasticsearch synchronization."""
+    """Transactional outbox for DB -> Elasticsearch synchronization.
+
+    The dedupe key is unique only among *active* rows (pending/processing). A
+    completed row must not block a later reindex of the same memory version.
+    """
 
     __tablename__ = "index_outbox"
     __table_args__ = (
-        UniqueConstraint("dedupe_key", name="uq_outbox_dedupe"),
+        Index(
+            "uq_outbox_dedupe_active",
+            "dedupe_key",
+            unique=True,
+            postgresql_where=text("state IN ('pending', 'processing')"),
+            sqlite_where=text("state IN ('pending', 'processing')"),
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)

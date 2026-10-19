@@ -13,7 +13,7 @@ import hashlib
 import math
 import re
 from collections import Counter
-from typing import Sequence
+from collections.abc import Sequence
 
 TOKEN_RE = re.compile(r"[a-z0-9_]+")
 STOPWORDS = {

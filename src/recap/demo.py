@@ -17,6 +17,7 @@ Everything here is deterministic and requires no external model or API key.
 
 from __future__ import annotations
 
+import contextlib
 import json
 from datetime import UTC, datetime
 from pathlib import Path
@@ -24,16 +25,12 @@ from typing import Any
 
 from recap.container import Container
 from recap.domain.enums import (
-    EventType,
-    MemoryStatus,
     OutcomeStatus,
-    RevalidationReason,
     RetrievalMode,
-    RunStatus,
+    RevalidationReason,
 )
 from recap.domain.feedback import AuditEvent
 from recap.domain.retrieval import RetrievalContext, RetrievalRequest
-from recap.domain.runs import AgentRun, RunEventCreate
 from recap.environments.mock_api import PaginatedApiEnvironment
 from recap.environments.reference_agent import ReferenceAgent
 from recap.logging import get_logger
@@ -80,6 +77,8 @@ def run_demo(container: Container, *, write_report: bool = True) -> dict[str, An
         if sandbox.status.value != "passed":
             raise RuntimeError(f"demo failed: sandbox validation {sandbox.status}")
         refreshed = services.repairs.get(candidate_id)
+        if refreshed is None:
+            raise RuntimeError("demo failed: candidate disappeared before promotion")
         memory_v1 = services.promotion.promote(refreshed)
         memory_v1_id = memory_v1.id
     report["steps"].append(
@@ -135,7 +134,9 @@ def run_demo(container: Container, *, write_report: bool = True) -> dict[str, An
         assert memory is not None
         services.memory_shift.record_outcome(
             memory,
-            outcome=OutcomeStatus.VERIFIED_SUCCESS if applied.success else OutcomeStatus.VERIFIED_FAILURE,
+            outcome=OutcomeStatus.VERIFIED_SUCCESS
+            if applied.success
+            else OutcomeStatus.VERIFIED_FAILURE,
             applied=True,
             environment_id=fingerprint_v1.environment_id,
             environment_fingerprint=fingerprint_v1.fingerprint,
@@ -214,6 +215,8 @@ def run_demo(container: Container, *, write_report: bool = True) -> dict[str, An
         if validation_v2.status.value != "passed":
             raise RuntimeError(f"demo failed: v2 validation {validation_v2.status}")
         refreshed_v2 = services.repairs.get(candidate_v2_id)
+        if refreshed_v2 is None:
+            raise RuntimeError("demo failed: v2 candidate disappeared before promotion")
         memory_v2 = services.promotion.promote(refreshed_v2)
         memory_v2_id = memory_v2.id
     report["steps"].append(
@@ -281,8 +284,8 @@ def _reset_demo_state(container: Container) -> None:
         AuditEventRow,
         CompatibilityRow,
         MemoryRow,
-        OutcomeRow,
         OutboxRow,
+        OutcomeRow,
         RepairCandidateRow,
         RetrievalDecisionRow,
         RevalidationJobRow,
@@ -293,10 +296,11 @@ def _reset_demo_state(container: Container) -> None:
 
     with container.database.session() as session:
         run_ids = [
-            row for row in session.scalars(
-                __import__("sqlalchemy").select(RunRow.id).where(
-                    RunRow.workspace_id.in_([WORKSPACE, "benchmark-workspace"])
-                )
+            row
+            for row in session.scalars(
+                __import__("sqlalchemy")
+                .select(RunRow.id)
+                .where(RunRow.workspace_id.in_([WORKSPACE, "benchmark-workspace"]))
             )
         ]
         if run_ids:
@@ -304,13 +308,15 @@ def _reset_demo_state(container: Container) -> None:
         candidate_ids = [
             row
             for row in session.scalars(
-                __import__("sqlalchemy").select(RepairCandidateRow.id).where(
-                    RepairCandidateRow.workspace_id.in_([WORKSPACE, "benchmark-workspace"])
-                )
+                __import__("sqlalchemy")
+                .select(RepairCandidateRow.id)
+                .where(RepairCandidateRow.workspace_id.in_([WORKSPACE, "benchmark-workspace"]))
             )
         ]
         if candidate_ids:
-            session.execute(delete(ValidationRow).where(ValidationRow.candidate_id.in_(candidate_ids)))
+            session.execute(
+                delete(ValidationRow).where(ValidationRow.candidate_id.in_(candidate_ids))
+            )
         for model in (
             RetrievalDecisionRow,
             RepairCandidateRow,
@@ -323,21 +329,16 @@ def _reset_demo_state(container: Container) -> None:
             RunRow,
         ):
             session.execute(
-                delete(model).where(
-                    model.workspace_id.in_([WORKSPACE, "benchmark-workspace"])
-                )
+                delete(model).where(model.workspace_id.in_([WORKSPACE, "benchmark-workspace"]))
             )
-    try:
+    with contextlib.suppress(Exception):
+        # The index may not exist yet on a truly clean checkout.
         container.es_client.delete_by_query(
             index=container.index_manager.write_index,
-            query={
-                "terms": {"workspace_id": [WORKSPACE, "benchmark-workspace"]}
-            },
+            query={"terms": {"workspace_id": [WORKSPACE, "benchmark-workspace"]}},
             refresh=True,
             conflicts="proceed",
         )
-    except Exception:  # index may not exist yet on a truly clean checkout
-        pass
 
 
 def _record_failed_run(container: Container, environment: PaginatedApiEnvironment) -> str:

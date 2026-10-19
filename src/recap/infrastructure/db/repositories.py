@@ -6,21 +6,22 @@ by workspace where the domain requires it.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
-from typing import Any, Sequence
+from datetime import timedelta
+from typing import Any
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from recap.domain.enums import (
     CompatibilityStatus,
+    CreatedFrom,
+    EventType,
     MemoryStatus,
     OutcomeStatus,
-    RepairCandidateStatus,
     RevalidationState,
+    RiskLevel,
     RunStatus,
-    ValidationStatus,
 )
 from recap.domain.feedback import (
     AuditEvent,
@@ -31,14 +32,14 @@ from recap.domain.feedback import (
 from recap.domain.memories import ExperienceMemory, MemoryContent, OutcomeStats
 from recap.domain.repairs import RepairCandidate, ValidationResult
 from recap.domain.retrieval import RetrievalDecision
-from recap.domain.runs import AgentRun, RunEvent
+from recap.domain.runs import AgentRun, RunEvent, new_id, utc_now
 from recap.errors import ConflictError, NotFoundError
 from recap.infrastructure.db.models import (
     AuditEventRow,
     CompatibilityRow,
     MemoryRow,
-    OutcomeRow,
     OutboxRow,
+    OutcomeRow,
     RepairCandidateRow,
     RetrievalDecisionRow,
     RevalidationJobRow,
@@ -47,7 +48,6 @@ from recap.infrastructure.db.models import (
     ValidationRow,
     WorkspaceRow,
 )
-from recap.domain.runs import new_id, utc_now
 
 
 # --------------------------------------------------------------------- mappers
@@ -87,7 +87,7 @@ def _event_to_domain(row: RunEventRow) -> RunEvent:
         id=row.id,
         run_id=row.run_id,
         sequence_number=row.sequence_number,
-        event_type=row.event_type,
+        event_type=EventType(row.event_type),
         timestamp=row.timestamp,
         payload_schema_version=row.payload_schema_version,
         tool_name=row.tool_name,
@@ -111,8 +111,8 @@ def _memory_to_domain(row: MemoryRow) -> ExperienceMemory:
         content=MemoryContent.model_validate(row.content_json),
         status=MemoryStatus(row.status),
         status_reason=row.status_reason,
-        created_from=row.created_from,
-        risk_level=row.risk_level,
+        created_from=CreatedFrom(row.created_from),
+        risk_level=RiskLevel(row.risk_level),
         access_scope=row.access_scope,
         evidence_trace_ids=row.evidence_trace_ids or [],
         evidence_run_ids=row.evidence_run_ids or [],
@@ -324,8 +324,9 @@ class SqlMemoryRepository:
             stmt = stmt.where(MemoryRow.status == str(status))
         if task_family is not None:
             stmt = stmt.where(
-                func.json_extract_path_text(MemoryRow.content_json, "task_families")
-                .contains(task_family)
+                func.json_extract_path_text(MemoryRow.content_json, "task_families").contains(
+                    task_family
+                )
             )
         stmt = stmt.order_by(MemoryRow.created_at.desc()).limit(limit)
         return [_memory_to_domain(row) for row in self.session.scalars(stmt).all()]
@@ -449,9 +450,7 @@ class SqlOutcomeRepository:
             for row in rows
         ]
 
-    def context_stats(
-        self, memory_id: str, environment_fingerprint: str
-    ) -> dict[str, int]:
+    def context_stats(self, memory_id: str, environment_fingerprint: str) -> dict[str, int]:
         rows = self.session.scalars(
             select(OutcomeRow).where(
                 OutcomeRow.memory_id == memory_id,
@@ -672,9 +671,7 @@ class SqlCompatibilityRepository:
         self.session.flush()
         return result
 
-    def get(
-        self, memory_id: str, environment_fingerprint: str
-    ) -> CompatibilityResult | None:
+    def get(self, memory_id: str, environment_fingerprint: str) -> CompatibilityResult | None:
         row = self.session.scalar(
             select(CompatibilityRow).where(
                 CompatibilityRow.memory_id == memory_id,
@@ -815,7 +812,9 @@ class SqlEnvironmentRepository:
     def __init__(self, session: Session) -> None:
         self.session = session
 
-    def upsert(self, workspace_id: str, fingerprint, metadata: dict[str, Any] | None = None) -> None:  # type: ignore[no-untyped-def]
+    def upsert(
+        self, workspace_id: str, fingerprint, metadata: dict[str, Any] | None = None
+    ) -> None:
         from recap.infrastructure.db.models import EnvironmentRow
 
         row = self.session.get(EnvironmentRow, fingerprint.environment_id)
@@ -916,7 +915,5 @@ class SqlOutboxRepository:
 
 def ensure_workspace(session: Session, workspace_id: str, name: str | None = None) -> None:
     if session.get(WorkspaceRow, workspace_id) is None:
-        session.add(
-            WorkspaceRow(id=workspace_id, name=name or workspace_id, created_at=utc_now())
-        )
+        session.add(WorkspaceRow(id=workspace_id, name=name or workspace_id, created_at=utc_now()))
         session.flush()

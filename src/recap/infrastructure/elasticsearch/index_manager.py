@@ -8,10 +8,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from elasticsearch import Elasticsearch, exceptions as es_exceptions
+from elasticsearch import Elasticsearch
+from elasticsearch import exceptions as es_exceptions
 
 from recap.config import ElasticsearchSettings
 from recap.errors import SearchUnavailable
+from recap.infrastructure.elasticsearch.client import TRANSPORT_ERRORS
 from recap.infrastructure.elasticsearch.mappings import memory_index_body
 from recap.logging import get_logger
 
@@ -38,7 +40,7 @@ class IndexManager:
     def index_exists(self, name: str | None = None) -> bool:
         try:
             return bool(self.client.indices.exists(index=name or self.write_index))
-        except es_exceptions.ConnectionError as exc:
+        except TRANSPORT_ERRORS as exc:
             raise SearchUnavailable("cannot connect to Elasticsearch") from exc
 
     def initialize(self) -> dict[str, Any]:
@@ -55,7 +57,7 @@ class IndexManager:
             self._ensure_alias(index, self.write_alias)
             self._ensure_read_alias(index)
             self.client.indices.refresh(index=index)
-        except es_exceptions.ConnectionError as exc:
+        except TRANSPORT_ERRORS as exc:
             raise SearchUnavailable(
                 "cannot connect to Elasticsearch during index initialization"
             ) from exc
@@ -82,8 +84,9 @@ class IndexManager:
 
     def _ensure_read_alias(self, index: str) -> None:
         """Atomically move the read alias to the current write index."""
+        existing: dict[str, Any]
         try:
-            existing = self.client.indices.get_alias(name=self.read_alias)
+            existing = dict(self.client.indices.get_alias(name=self.read_alias))
         except es_exceptions.NotFoundError:
             existing = {}
         actions: list[dict[str, Any]] = []
@@ -97,19 +100,17 @@ class IndexManager:
         index = name or self.write_index
         try:
             self.client.indices.delete(index=index, ignore_unavailable=True)
-        except es_exceptions.ConnectionError as exc:
+        except TRANSPORT_ERRORS as exc:
             raise SearchUnavailable("cannot connect to Elasticsearch") from exc
 
     def health(self) -> dict[str, Any]:
         try:
             return {
                 "index_exists": bool(self.client.indices.exists(index=self.write_index)),
-                "read_alias_exists": bool(
-                    self.client.indices.exists_alias(name=self.read_alias)
-                ),
+                "read_alias_exists": bool(self.client.indices.exists_alias(name=self.read_alias)),
                 "document_count": int(self.client.count(index=self.write_index)["count"]),
             }
-        except es_exceptions.ConnectionError as exc:
+        except TRANSPORT_ERRORS as exc:
             raise SearchUnavailable("cannot connect to Elasticsearch") from exc
         except es_exceptions.NotFoundError:
             return {"index_exists": False, "read_alias_exists": False, "document_count": 0}

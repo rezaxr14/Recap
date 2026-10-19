@@ -10,7 +10,7 @@ import hashlib
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 from recap.domain.enums import CreatedFrom, MemoryStatus, RiskLevel, SideEffectClass
 from recap.domain.environments import canonical_json
@@ -172,41 +172,56 @@ def compute_content_hash(content: MemoryContent) -> str:
 def build_search_document(memory: ExperienceMemory) -> dict[str, Any]:
     """Canonical Elasticsearch document (see docs/retrieval.md).
 
-    Only allowlisted fields are indexed. Trace payloads and secrets never are.
+    Only allowlisted fields are indexed. Trace payloads and secrets never are:
+    every free-text field is passed through the redaction filter again at the
+    indexing boundary, so a manually authored memory cannot leak a credential
+    into the search index.
     """
+    from recap.recorder.redaction import redact_text
+
+    def clean(value: str) -> str:
+        return redact_text(value)[0]
+
     content = memory.content
     preconditions_text = " ".join(
-        f"{p.field} {p.operator} {p.value if p.value is not None else ''}" for p in content.preconditions
+        f"{p.field} {p.operator} {p.value if p.value is not None else ''}"
+        for p in content.preconditions
     )
     postconditions_text = " ".join(
-        f"{p.field} {p.operator} {p.value if p.value is not None else ''}" for p in content.postconditions
+        f"{p.field} {p.operator} {p.value if p.value is not None else ''}"
+        for p in content.postconditions
     )
     strategy_text = " ".join(
-        [content.strategy.summary] + [a.description for a in content.strategy.actions if a.description]
+        [content.strategy.summary]
+        + [a.description for a in content.strategy.actions if a.description]
     )
     return {
         "memory_id": memory.id,
         "memory_version": memory.memory_version,
         "workspace_id": memory.workspace_id,
         "status": str(memory.status),
-        "title": content.title,
-        "summary": content.summary,
+        "title": clean(content.title),
+        "summary": clean(content.summary),
         "failure_signature": content.failure_signature,
         "failure_code": content.failure_code,
         "task_families": content.task_families,
         "tool_names": content.tool_names,
         "tool_versions": [f"{k}:{v}" for k, v in content.tool_versions.items()],
-        "tool_schema_fingerprints": [f"{k}:{v}" for k, v in content.tool_schema_fingerprints.items()],
+        "tool_schema_fingerprints": [
+            f"{k}:{v}" for k, v in content.tool_schema_fingerprints.items()
+        ],
         "environment_id": memory.environment_id,
         "environment_fingerprint": memory.environment_fingerprint,
         "environment_type": content.environment_type,
-        "preconditions_text": preconditions_text,
-        "strategy_text": strategy_text,
-        "postconditions_text": postconditions_text,
-        "limitations_text": " ".join(content.known_limitations),
+        "preconditions_text": clean(preconditions_text),
+        "strategy_text": clean(strategy_text),
+        "postconditions_text": clean(postconditions_text),
+        "limitations_text": clean(" ".join(content.known_limitations)),
         "evidence_summary": f"runs={len(memory.evidence_run_ids)} traces={len(memory.evidence_trace_ids)}",
         "created_at": memory.created_at.isoformat(),
-        "last_validated_at": memory.last_validated_at.isoformat() if memory.last_validated_at else None,
+        "last_validated_at": memory.last_validated_at.isoformat()
+        if memory.last_validated_at
+        else None,
         "active_for_retrieval": memory.status is MemoryStatus.ACTIVE,
         "compatibility_status": "compatible" if memory.status is MemoryStatus.ACTIVE else "unknown",
         "embedding_model_id": memory.embedding_model_id,
@@ -220,18 +235,25 @@ def build_search_document(memory: ExperienceMemory) -> dict[str, Any]:
 
 
 def build_embedding_text(memory: ExperienceMemory) -> str:
+    from recap.recorder.redaction import redact_text
+
     content = memory.content
     lines = [
         f"Title: {content.title}",
         f"Failure signature: {content.failure_signature}",
         f"Failure code: {content.failure_code}",
         f"When applicable: {content.summary}",
-        "Preconditions: " + "; ".join(p.description or f"{p.field} {p.operator} {p.value}" for p in content.preconditions),
+        "Preconditions: "
+        + "; ".join(
+            p.description or f"{p.field} {p.operator} {p.value}" for p in content.preconditions
+        ),
         f"Strategy: {content.strategy.summary}",
         "Expected postconditions: "
-        + "; ".join(p.description or f"{p.field} {p.operator} {p.value}" for p in content.postconditions),
+        + "; ".join(
+            p.description or f"{p.field} {p.operator} {p.value}" for p in content.postconditions
+        ),
         "Known limitations: " + "; ".join(content.known_limitations),
         "Tools: " + ", ".join(content.tool_names),
         "Environment: " + content.environment_type,
     ]
-    return "\n".join(line for line in lines if line.strip())
+    return redact_text("\n".join(line for line in lines if line.strip()))[0]

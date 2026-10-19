@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
 
-from recap.domain.enums import MemoryStatus, OutcomeStatus
+from recap.domain.enums import MemoryStatus, OutcomeStatus, RiskLevel
 from recap.domain.memories import MemoryContent
-from recap.errors import NotFoundError, ValidationError
+from recap.errors import NotFoundError
 
 router = APIRouter(tags=["memories"])
 
@@ -52,7 +52,7 @@ def create_memory(payload: MemoryCreateRequest, request: Request) -> dict[str, A
             status=MemoryStatus.DRAFT,
             status_reason="created manually",
             created_from=CreatedFrom.MANUAL,
-            risk_level=payload.risk_level,
+            risk_level=RiskLevel(payload.risk_level),
             environment_id=payload.environment_id,
             environment_fingerprint=payload.environment_fingerprint,
             evidence_run_ids=payload.evidence_run_ids,
@@ -62,7 +62,7 @@ def create_memory(payload: MemoryCreateRequest, request: Request) -> dict[str, A
             index_generation=services.settings.elasticsearch.index_generation,
         )
         created = services.memories.create_memory(memory)
-        return created.model_dump(mode="json")
+        return cast(dict[str, Any], created.model_dump(mode="json"))
 
 
 @router.get("/memories")
@@ -97,7 +97,9 @@ def get_memory(memory_id: str, request: Request, workspace_id: str) -> dict[str,
 
 
 @router.post("/memories/{memory_id}/transition")
-def transition(memory_id: str, payload: TransitionRequest, request: Request, workspace_id: str) -> dict[str, Any]:
+def transition(
+    memory_id: str, payload: TransitionRequest, request: Request, workspace_id: str
+) -> dict[str, Any]:
     container = request.app.state.get_container()
     with container.services() as services:
         memory = services.memories.get_memory(memory_id, workspace_id)
@@ -117,11 +119,13 @@ def transition(memory_id: str, payload: TransitionRequest, request: Request, wor
                 reason=payload.reason,
             )
         )
-        return updated.model_dump(mode="json")
+        return cast(dict[str, Any], updated.model_dump(mode="json"))
 
 
 @router.post("/memories/{memory_id}/observe-outcome")
-def observe_outcome(memory_id: str, payload: OutcomeRequest, request: Request, workspace_id: str) -> dict[str, Any]:
+def observe_outcome(
+    memory_id: str, payload: OutcomeRequest, request: Request, workspace_id: str
+) -> dict[str, Any]:
     container = request.app.state.get_container()
     with container.services() as services:
         memory = services.memories.get_memory(memory_id, workspace_id)
@@ -138,7 +142,7 @@ def observe_outcome(memory_id: str, payload: OutcomeRequest, request: Request, w
             severity=payload.severity,
             notes=payload.notes,
         )
-        return record.model_dump(mode="json")
+        return cast(dict[str, Any], record.model_dump(mode="json"))
 
 
 @router.get("/memories/{memory_id}/compatibility")

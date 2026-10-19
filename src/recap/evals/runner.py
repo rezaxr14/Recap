@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from recap.container import Container
-from recap.domain.enums import MemoryStatus, OutcomeStatus, RetrievalMode
+from recap.domain.enums import MemoryStatus, RetrievalMode
 from recap.domain.retrieval import RetrievalContext, RetrievalRequest
 from recap.environments.mock_api import PaginatedApiEnvironment
 from recap.environments.reference_agent import ReferenceAgent
@@ -64,9 +64,7 @@ def run_benchmark(
     per_task: list[dict[str, Any]] = []
     for baseline, mode in BASELINES:
         for task in tasks:
-            per_task.append(
-                _run_task(container, workspace_id, task, baseline=baseline, mode=mode)
-            )
+            per_task.append(_run_task(container, workspace_id, task, baseline=baseline, mode=mode))
 
     summary = _summarize(per_task)
     output = Path(output_dir)
@@ -88,9 +86,7 @@ def run_benchmark(
             "agent": "deterministic-reference-agent-v1",
             "provider": "deterministic",
             "environment": "mock-api",
-            "note": (
-                "Deterministic mock pipeline test. Not evidence of real LLM performance."
-            ),
+            "note": ("Deterministic mock pipeline test. Not evidence of real LLM performance."),
         },
     }
     json_path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
@@ -149,6 +145,7 @@ def _seed_memories(container: Container, workspace_id: str, tasks: list[Benchmar
                 logger.warning("benchmark seed validation failed for v%s", version)
                 continue
             refreshed = services.repairs.get(candidate_id)
+            assert refreshed is not None
             services.promotion.promote(refreshed)
 
 
@@ -167,7 +164,9 @@ def _run_task(
     selected_ids: list[str] = []
     status = "not_retrieved"
     ranked_ids: list[str] = []
-    error_code = "UNKNOWN_PARAMETER" if task.failure_mode == "renamed_parameter" else "INVALID_CURSOR"
+    error_code = (
+        "UNKNOWN_PARAMETER" if task.failure_mode == "renamed_parameter" else "INVALID_CURSOR"
+    )
     error_message = (
         "unknown parameter 'cursor'; this API version requires 'page_token'"
         if task.failure_mode == "renamed_parameter"
@@ -209,9 +208,8 @@ def _run_task(
         with container.services() as services:
             decision_memory = services.memories.get_memory(selected_ids[0], workspace_id)
             if decision_memory is not None:
-                from recap.recall.engine import _to_selected
-
                 from recap.domain.retrieval import CandidateEvaluation
+                from recap.recall.engine import _to_selected
 
                 memory = _to_selected(
                     decision_memory,
@@ -222,7 +220,9 @@ def _run_task(
                         status=str(decision_memory.status),
                     ),
                 )
-        result = agent.run(environment, memory=memory) if memory is not None else agent.run(environment)
+        result = (
+            agent.run(environment, memory=memory) if memory is not None else agent.run(environment)
+        )
     else:
         result = agent.run(environment)
 
@@ -303,7 +303,7 @@ def _count_incompatible_selected(
             )
             if (
                 compatibility.value == "incompatible"
-                or not applicability.result.value == "satisfied"
+                or applicability.result.value != "satisfied"
                 or not schema_ok
             ):
                 count += 1
@@ -317,7 +317,10 @@ def _relevant_ids(container: Container, workspace_id: str, task: BenchmarkTask) 
         )
     relevant = set()
     for memory in memories:
-        if memory.environment_fingerprint and task.environment_version == memory.environment_id.rsplit("-v", 1)[-1]:
+        if (
+            memory.environment_fingerprint
+            and task.environment_version == memory.environment_id.rsplit("-v", 1)[-1]
+        ):
             relevant.add(memory.id)
     return relevant
 
@@ -338,7 +341,9 @@ def _summarize(per_task: list[dict[str, Any]]) -> dict[str, Any]:
             "recall_at_3": mean([row["recall_at_3"] for row in rows]),
             "mrr": mean([row["mrr"] for row in rows]),
             "ndcg_at_3": mean([row["ndcg_at_3"] for row in rows]),
-            "harmful_transfer_rate": mean([1.0 if row["harmful_transfer"] else 0.0 for row in rows]),
+            "harmful_transfer_rate": mean(
+                [1.0 if row["harmful_transfer"] else 0.0 for row in rows]
+            ),
             "incompatible_selection_rate": mean(
                 [1.0 if row["incompatible_selected"] else 0.0 for row in rows]
             ),
@@ -391,7 +396,15 @@ def _render_markdown(payload: dict[str, Any]) -> str:
             "influences selection, so it cannot flatter any baseline.",
         ]
     )
-    lines.extend(["", "## Per-task results", "", "| task | baseline | success | status | error |", "|---|---|---|---|---|"])
+    lines.extend(
+        [
+            "",
+            "## Per-task results",
+            "",
+            "| task | baseline | success | status | error |",
+            "|---|---|---|---|---|",
+        ]
+    )
     for row in payload["per_task"]:
         error = row["error"] or ""
         lines.append(

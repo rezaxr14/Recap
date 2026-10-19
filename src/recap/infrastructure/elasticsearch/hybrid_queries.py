@@ -32,9 +32,7 @@ def _base_filters(
         {"terms": {"status": allowed_statuses}},
     ]
     if not include_incompatible:
-        filters.append(
-            {"bool": {"must_not": [{"term": {"compatibility_status": "incompatible"}}]}}
-        )
+        filters.append({"bool": {"must_not": [{"term": {"compatibility_status": "incompatible"}}]}})
     return filters
 
 

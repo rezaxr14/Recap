@@ -67,6 +67,4 @@ class RepairStrategy(BaseModel):
     @property
     def action_signature(self) -> str:
         """Stable signature used for diversity caps and deduplication."""
-        return "|".join(
-            f"{action.action_type}:{action.tool_name}" for action in self.actions
-        )
+        return "|".join(f"{action.action_type}:{action.tool_name}" for action in self.actions)

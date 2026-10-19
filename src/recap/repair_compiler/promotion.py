@@ -7,7 +7,7 @@ enforces every promotion requirement from plan section 8.2 / 11.8.
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 from recap.config import Settings
 from recap.domain.enums import (
@@ -59,7 +59,9 @@ class PromotionService:
         check("postconditions_present", bool(candidate.postconditions))
         check("environment_recorded", bool(candidate.environment_fingerprint))
         check(
-            "no_secret_leakage", not contains_secret(candidate.model_dump_json()), "candidate payload"
+            "no_secret_leakage",
+            not contains_secret(candidate.model_dump_json()),
+            "candidate payload",
         )
         check(
             "no_destructive_actions",
@@ -79,7 +81,9 @@ class PromotionService:
         failed = [item["check"] for item in checks if not item["passed"]]
         return PromotionDecision(
             approved=approved,
-            reason="all promotion checks passed" if approved else "failed checks: " + ", ".join(failed),
+            reason="all promotion checks passed"
+            if approved
+            else "failed checks: " + ", ".join(failed),
             checks=checks,
         )
 
@@ -90,6 +94,11 @@ class PromotionService:
         reviewer: str = "system",
         force_review_approval: bool = False,
     ) -> ExperienceMemory:
+        if candidate.status is RepairCandidateStatus.PROMOTED:
+            raise PromotionRejected(
+                "candidate has already been promoted",
+                details={"candidate_id": candidate.id, "memory_id": candidate.promoted_memory_id},
+            )
         decision = self.evaluate(candidate)
         if not decision.approved:
             raise PromotionRejected(
@@ -116,7 +125,9 @@ class PromotionService:
             activated_at=now,
             last_validated_at=now,
         )
-        created = self.memories.create_memory(memory, index_status="pending")
+        created = cast(
+            ExperienceMemory, self.memories.create_memory(memory, index_status="pending")
+        )
         candidate.status = RepairCandidateStatus.PROMOTED
         candidate.promotion_decision = "approved"
         candidate.promotion_reason = decision.reason

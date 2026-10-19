@@ -34,7 +34,8 @@ def record_reference_run(
         run = AgentRun(
             workspace_id=workspace_id,
             agent_id="reference-agent",
-            task_id=task_id or f"paginate-{environment.version}-{datetime.now(UTC).timestamp():.0f}",
+            task_id=task_id
+            or f"paginate-{environment.version}-{datetime.now(UTC).timestamp():.0f}",
             task_family="api_pagination",
             environment_id=fingerprint.environment_id,
             environment_fingerprint=fingerprint.fingerprint,

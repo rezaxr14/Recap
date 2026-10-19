@@ -8,7 +8,7 @@ for a deterministic embedder with real lexical signal.
 from __future__ import annotations
 
 import hashlib
-from typing import Sequence
+from collections.abc import Sequence
 
 
 class FakeEmbeddingProvider:

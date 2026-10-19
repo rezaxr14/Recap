@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
@@ -54,7 +54,9 @@ def get_candidate(candidate_id: str, request: Request) -> dict[str, Any]:
 
 
 @router.post("/repairs/{candidate_id}/validate")
-def validate_candidate(candidate_id: str, payload: ValidateRequest, request: Request) -> dict[str, Any]:
+def validate_candidate(
+    candidate_id: str, payload: ValidateRequest, request: Request
+) -> dict[str, Any]:
     container = request.app.state.get_container()
     with container.services() as services:
         result = services.repair_compiler.validate(
@@ -63,7 +65,7 @@ def validate_candidate(candidate_id: str, payload: ValidateRequest, request: Req
             validator_name=payload.validator_name,
             attempt=payload.attempt,
         )
-        return result.model_dump(mode="json")
+        return cast(dict[str, Any], result.model_dump(mode="json"))
 
 
 @router.get("/repairs/{candidate_id}/validation")
@@ -79,11 +81,13 @@ def validation_history(candidate_id: str, request: Request) -> dict[str, Any]:
 
 
 @router.post("/repairs/{candidate_id}/promote")
-def promote_candidate(candidate_id: str, payload: PromoteRequest, request: Request) -> dict[str, Any]:
+def promote_candidate(
+    candidate_id: str, payload: PromoteRequest, request: Request
+) -> dict[str, Any]:
     container = request.app.state.get_container()
     with container.services() as services:
         candidate = services.repairs.get(candidate_id)
         if candidate is None:
             raise NotFoundError(f"candidate {candidate_id} not found")
         memory = services.promotion.promote(candidate, reviewer=payload.reviewer)
-        return memory.model_dump(mode="json")
+        return cast(dict[str, Any], memory.model_dump(mode="json"))

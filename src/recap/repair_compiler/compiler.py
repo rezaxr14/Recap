@@ -13,7 +13,6 @@ from recap.config import Settings
 from recap.domain.enums import RepairCandidateStatus, ValidationStatus
 from recap.domain.environments import EnvironmentFingerprint
 from recap.domain.repairs import RepairCandidate
-from recap.domain.runs import AgentRun
 from recap.errors import NotFoundError, ValidationError
 from recap.logging import get_logger
 from recap.repair_compiler.candidate_generation import (

@@ -8,7 +8,8 @@ when the payload matches.
 from __future__ import annotations
 
 import hashlib
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any, cast
 
 from recap.domain.environments import canonical_json
 from recap.domain.runs import AgentRun, RunEvent, RunEventCreate, new_id, utc_now
@@ -43,7 +44,7 @@ class RunRecorder:
     def start_run(self, run: AgentRun) -> AgentRun:
         if not run.workspace_id:
             raise ValidationError("workspace_id is required")
-        return self.repository.create_run(run)
+        return cast(AgentRun, self.repository.create_run(run))
 
     def append_event(self, run: AgentRun, event: RunEventCreate) -> RunEvent:
         if run.status.value not in {"running"}:
@@ -65,7 +66,7 @@ class RunRecorder:
             if duplicate is not None:
                 redacted, _ = redact_payload(event.payload)
                 if payload_hash(redacted) == duplicate.payload_hash:
-                    return duplicate
+                    return cast(RunEvent, duplicate)
                 raise ConflictError(
                     "sequence number already used with a different payload",
                     details={"sequence_number": event.sequence_number},
@@ -78,14 +79,14 @@ class RunRecorder:
             raise ValidationError("sequence number jump too large")
 
         redacted, applied = redact_payload(event.payload)
-        from recap.domain.runs import new_id
 
         record = RunEvent(
             id=event.id or new_id("evt"),
             run_id=run.id,
             sequence_number=event.sequence_number,
             event_type=event.event_type,
-            timestamp=event.timestamp or __import__("recap.domain.runs", fromlist=["utc_now"]).utc_now(),
+            timestamp=event.timestamp
+            or __import__("recap.domain.runs", fromlist=["utc_now"]).utc_now(),
             tool_name=event.tool_name,
             tool_version=event.tool_version,
             correlation_id=event.correlation_id,
@@ -100,7 +101,6 @@ class RunRecorder:
         return record
 
     def finish_run(self, run: AgentRun, **fields: Any) -> AgentRun:
-        from recap.domain.runs import utc_now
 
         finished = run.model_copy(deep=True)
         for key, value in fields.items():
@@ -108,11 +108,9 @@ class RunRecorder:
                 setattr(finished, key, value)
         finished.finished_at = utc_now()
         finished.updated_at = utc_now()
-        return self.repository.update_run(finished)
+        return cast(AgentRun, self.repository.update_run(finished))
 
-    def build_failure_context(
-        self, run: AgentRun, events: Sequence[RunEvent]
-    ) -> dict[str, Any]:
+    def build_failure_context(self, run: AgentRun, events: Sequence[RunEvent]) -> dict[str, Any]:
         """Derive a redacted failure context used by retrieval and repair."""
         failed = [event for event in events if event.event_type.value == "tool_call_failed"]
         last = failed[-1] if failed else None
@@ -147,4 +145,4 @@ class RunRecorder:
         run = self.repository.get_run(run_id)
         if run is None:
             raise NotFoundError(f"run {run_id} not found")
-        return run
+        return cast(AgentRun, run)

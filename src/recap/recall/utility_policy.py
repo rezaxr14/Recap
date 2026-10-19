@@ -44,7 +44,7 @@ def _recency_score(last_validated: datetime | None) -> float:
         last_validated = last_validated.replace(tzinfo=UTC)
     age_days = max((now - last_validated).total_seconds() / 86_400, 0.0)
     # Half-life of 90 days; age alone never invalidates, it only adjusts priority.
-    return 0.5 ** (age_days / 90.0)
+    return float(0.5 ** (age_days / 90.0))
 
 
 def compute_features(
@@ -61,9 +61,7 @@ def compute_features(
     content = memory.content
     exact_signature = 0.0
     if context.failure_signature and content.failure_signature:
-        exact_signature = (
-            1.0 if context.failure_signature == content.failure_signature else 0.0
-        )
+        exact_signature = 1.0 if context.failure_signature == content.failure_signature else 0.0
     error_code_match = 0.0
     if context.error_code and content.failure_code:
         error_code_match = 1.0 if context.error_code == content.failure_code else 0.0
@@ -81,9 +79,7 @@ def compute_features(
     ):
         environment_match = 1.0
 
-    mean, stddev = memory.stats.posterior(
-        reliability.beta_prior_alpha, reliability.beta_prior_beta
-    )
+    mean, stddev = memory.stats.posterior(reliability.beta_prior_alpha, reliability.beta_prior_beta)
     observations = memory.stats.verified_successes + memory.stats.verified_failures
     evidence_strength = min(observations / 5.0, 1.0)
     negative = 0.0
@@ -99,10 +95,7 @@ def compute_features(
         CompatibilityStatus.INCOMPATIBLE: 1.0,
     }[compatibility]
     staleness_penalty = 0.0
-    if memory.last_validated_at is None:
-        staleness_penalty = 0.5
-    else:
-        staleness_penalty = 1.0 - validation_recency
+    staleness_penalty = 0.5 if memory.last_validated_at is None else 1.0 - validation_recency
     uncertainty_penalty = stddev if observations < 5 else stddev * 0.5
     if applicability is PredicateResult.UNKNOWN:
         uncertainty_penalty = min(1.0, uncertainty_penalty + 0.3)
@@ -171,7 +164,9 @@ def build_score_components(features: UtilityFeatures) -> list[ScoreComponent]:
             )
         )
     components.append(
-        ScoreComponent(name="total", value=features.total, weight=1.0, explanation="normalized final utility")
+        ScoreComponent(
+            name="total", value=features.total, weight=1.0, explanation="normalized final utility"
+        )
     )
     return components
 

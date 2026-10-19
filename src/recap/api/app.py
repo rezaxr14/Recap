@@ -2,16 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from recap import __version__
-from recap.config import get_settings
-from recap.container import Container
-from recap.errors import RecapError
-from recap.logging import configure_logging, correlation_id
 from recap.api.routes import (
     environments,
     health,
@@ -20,6 +17,10 @@ from recap.api.routes import (
     retrieval,
     runs,
 )
+from recap.config import get_settings
+from recap.container import Container
+from recap.errors import RecapError
+from recap.logging import configure_logging, correlation_id
 
 
 def create_app(container: Container | None = None) -> FastAPI:
@@ -33,14 +34,16 @@ def create_app(container: Container | None = None) -> FastAPI:
     app.state.container = container
 
     def get_container() -> Container:
-        if app.state.container is None:
-            app.state.container = Container.build(settings)
-        return app.state.container
+        container: Container | None = app.state.container
+        if container is None:
+            container = Container.build(settings)
+            app.state.container = container
+        return container
 
     app.state.get_container = get_container
 
     @app.middleware("http")
-    async def correlation_middleware(request: Request, call_next):  # type: ignore[no-untyped-def]
+    async def correlation_middleware(request: Request, call_next: Callable[[Request], Any]) -> Any:
         header = request.headers.get("x-correlation-id")
         token = correlation_id.set(header or None)
         try:

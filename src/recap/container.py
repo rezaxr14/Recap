@@ -6,13 +6,16 @@ the same semantics.
 
 from __future__ import annotations
 
-from contextlib import contextmanager
+from collections.abc import Iterator
+from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
-from typing import Iterator
+from types import TracebackType
 
 from elasticsearch import Elasticsearch
+from sqlalchemy.orm import Session
 
 from recap.config import Settings, get_settings
+from recap.domain.memories import ExperienceMemory
 from recap.errors import SearchUnavailable
 from recap.infrastructure.db.models import Base
 from recap.infrastructure.db.repositories import (
@@ -21,8 +24,8 @@ from recap.infrastructure.db.repositories import (
     SqlDecisionRepository,
     SqlEnvironmentRepository,
     SqlMemoryRepository,
-    SqlOutcomeRepository,
     SqlOutboxRepository,
+    SqlOutcomeRepository,
     SqlRepairRepository,
     SqlRevalidationRepository,
     SqlRunRepository,
@@ -39,7 +42,7 @@ from recap.recall.engine import RecallEngine
 from recap.recorder.recorder import RunRecorder
 from recap.repair_compiler.compiler import RepairCompiler
 from recap.repair_compiler.promotion import PromotionService
-from recap.repair_compiler.validation import build_default_registry
+from recap.repair_compiler.validation import ValidatorRegistry, build_default_registry
 
 
 @dataclass
@@ -50,10 +53,12 @@ class Container:
     embeddings: object
     index_manager: IndexManager
     search_repository: ElasticsearchMemoryRepository
-    validators: object
+    validators: ValidatorRegistry
 
     @classmethod
-    def build(cls, settings: Settings | None = None, *, es_client: Elasticsearch | None = None) -> Container:
+    def build(
+        cls, settings: Settings | None = None, *, es_client: Elasticsearch | None = None
+    ) -> Container:
         settings = settings or get_settings()
         engine = build_engine(settings.storage.postgres_url)
         database = Database(engine)
@@ -96,18 +101,18 @@ class Container:
         return result
 
     @contextmanager
-    def unit_of_work(self) -> Iterator["Services"]:
+    def unit_of_work(self) -> Iterator[Services]:
         with self.database.session() as session:
             yield Services(self, session)
 
-    def services(self) -> "ServicesContext":
+    def services(self) -> ServicesContext:
         return ServicesContext(self)
 
 
 class Services:
     """Services bound to one database session."""
 
-    def __init__(self, container: Container, session) -> None:  # type: ignore[no-untyped-def]
+    def __init__(self, container: Container, session: Session) -> None:
         self.container = container
         self.session = session
         self.settings = container.settings
@@ -165,13 +170,18 @@ class Services:
 class ServicesContext:
     def __init__(self, container: Container) -> None:
         self.container = container
-        self._context = None
+        self._context: AbstractContextManager[Services] | None = None
 
     def __enter__(self) -> Services:
         self._context = self.container.unit_of_work()
         return self._context.__enter__()
 
-    def __exit__(self, exc_type, exc, tb):  # type: ignore[no-untyped-def]
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> bool | None:
         assert self._context is not None
         return self._context.__exit__(exc_type, exc, tb)
 
@@ -197,7 +207,7 @@ class IndexSynchronizer:
         self.outbox = outbox
         self.settings = settings
 
-    def __call__(self, memory) -> bool:  # type: ignore[no-untyped-def]
+    def __call__(self, memory: ExperienceMemory) -> bool:
         from recap.domain.memories import build_embedding_text
 
         text = build_embedding_text(memory)

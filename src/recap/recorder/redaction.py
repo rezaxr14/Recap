@@ -8,6 +8,7 @@ covered by security tests.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from typing import Any
 
 REDACTION_RULE_VERSION = "redaction-v1"
@@ -39,8 +40,13 @@ SENSITIVE_KEYS = {
 # Key fragments that indicate a sensitive key (e.g. x-api-key).
 SENSITIVE_KEY_FRAGMENTS = ("password", "secret", "token", "api_key", "apikey", "private_key")
 
-PATTERNS: list[tuple[re.Pattern[str], str]] = [
-    (re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----", re.S), "[REDACTED_PRIVATE_KEY]"),
+Replacement = str | Callable[[re.Match[str]], str]
+
+PATTERNS: list[tuple[re.Pattern[str], Replacement]] = [
+    (
+        re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----", re.S),
+        "[REDACTED_PRIVATE_KEY]",
+    ),
     (re.compile(r"\bBearer\s+[A-Za-z0-9._\-~+/]{12,}", re.I), f"Bearer {REDACTED}"),
     (re.compile(r"\b(sk|pk|rk)[-_](live|test|proj)[-_][A-Za-z0-9]{10,}\b"), REDACTED),
     (re.compile(r"\bsk-[A-Za-z0-9]{16,}\b"), REDACTED),
@@ -48,6 +54,11 @@ PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}\b"), REDACTED),
     (re.compile(r"\bxox[abprs]-[A-Za-z0-9-]{10,}\b"), REDACTED),
     (re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b"), REDACTED),
+    # Credentials embedded in URLs/DSNs: scheme://user:password@host
+    (
+        re.compile(r"(?i)\b([a-z][a-z0-9+.\-]*://)([^/\s:@]+):([^/\s@]+)@"),
+        lambda m: f"{m.group(1)}{m.group(2)}:{REDACTED}@",
+    ),
     (
         re.compile(
             r"(?i)\b(api[_-]?key|access[_-]?token|refresh[_-]?token|token|password|secret)"
@@ -72,7 +83,7 @@ def _is_sensitive_key(key: str) -> bool:
 def redact_text(text: str) -> tuple[str, bool]:
     applied = False
     for pattern, replacement in PATTERNS:
-        new_text, count = pattern.subn(replacement, text)  # type: ignore[arg-type]
+        new_text, count = pattern.subn(replacement, text)
         if count:
             applied = True
             text = new_text

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import Annotated
 
 import typer
 from rich.console import Console
@@ -37,7 +37,7 @@ app.add_typer(eval_app, name="eval")
 console = Console()
 
 
-def _container(config: Optional[str] = None) -> Container:
+def _container(config: str | None = None) -> Container:
     settings = load_settings(config) if config else get_settings()
     return Container.build(settings)
 
@@ -61,7 +61,7 @@ def version() -> None:
 
 
 @app.command()
-def health(config: Optional[str] = None) -> None:
+def health(config: str | None = None) -> None:
     """Check database and Elasticsearch readiness."""
     try:
         container = _container(config)
@@ -74,7 +74,7 @@ def health(config: Optional[str] = None) -> None:
 
 # ---------------------------------------------------------------------- db
 @db_app.command("migrate")
-def db_migrate(config: Optional[str] = None) -> None:
+def db_migrate(config: str | None = None) -> None:
     """Apply database migrations (Alembic)."""
     from alembic import command
     from alembic.config import Config
@@ -93,7 +93,7 @@ def db_migrate(config: Optional[str] = None) -> None:
 
 
 @db_app.command("init")
-def db_init(config: Optional[str] = None) -> None:
+def db_init(config: str | None = None) -> None:
     """Create the baseline schema directly (development shortcut)."""
     try:
         container = _container(config)
@@ -106,7 +106,7 @@ def db_init(config: Optional[str] = None) -> None:
 
 # ------------------------------------------------------------------ search
 @search_app.command("init")
-def search_init(config: Optional[str] = None) -> None:
+def search_init(config: str | None = None) -> None:
     """Create the versioned index and aliases idempotently."""
     try:
         container = _container(config)
@@ -118,7 +118,7 @@ def search_init(config: Optional[str] = None) -> None:
 
 
 @search_app.command("health")
-def search_health(config: Optional[str] = None) -> None:
+def search_health(config: str | None = None) -> None:
     """Show index/alias health and document count."""
     try:
         container = _container(config)
@@ -130,7 +130,7 @@ def search_health(config: Optional[str] = None) -> None:
 
 
 @search_app.command("reconcile")
-def search_reconcile(config: Optional[str] = None) -> None:
+def search_reconcile(config: str | None = None) -> None:
     """Reindex all active memories from the database into Elasticsearch."""
     try:
         container = _container(config)
@@ -148,7 +148,9 @@ def search_reconcile(config: Optional[str] = None) -> None:
     except Exception as exc:
         _fail(exc)
         return
-    console.print(f"indexed={indexed} failed={failed} pending_outbox={services.outbox.pending_count()}")
+    console.print(
+        f"indexed={indexed} failed={failed} pending_outbox={services.outbox.pending_count()}"
+    )
 
 
 # ------------------------------------------------------------------ memory
@@ -161,7 +163,7 @@ def memory_search(
     task_family: Annotated[str, typer.Option("--task-family")] = "",
     error_code: Annotated[str, typer.Option("--error-code")] = "",
     final_k: Annotated[int, typer.Option("--final-k")] = 5,
-    config: Optional[str] = None,
+    config: str | None = None,
 ) -> None:
     """Search memories with a selected retrieval mode."""
     try:
@@ -197,7 +199,9 @@ def memory_search(
 
 
 @memory_app.command("show")
-def memory_show(memory_id: str, workspace: Annotated[str, typer.Option("--workspace")] = "demo-workspace") -> None:
+def memory_show(
+    memory_id: str, workspace: Annotated[str, typer.Option("--workspace")] = "demo-workspace"
+) -> None:
     """Show a memory with status, evidence, and compatibility."""
     try:
         container = _container()

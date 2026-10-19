@@ -6,8 +6,8 @@ tests of persistence logic. Production paths must use PostgreSQL.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import Iterator
 
 from sqlalchemy import Engine, create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
@@ -29,11 +29,13 @@ def build_engine(url: str, *, echo: bool = False) -> Engine:
         kwargs["max_overflow"] = 10
     engine = create_engine(url, **kwargs)
     if url.startswith("sqlite"):
+
         @event.listens_for(engine, "connect")
-        def _sqlite_fk(dbapi_connection, _record):  # type: ignore[no-untyped-def]
+        def _sqlite_fk(dbapi_connection, _record):
             cursor = dbapi_connection.cursor()
             cursor.execute("PRAGMA foreign_keys=ON")
             cursor.close()
+
     return engine
 
 

@@ -63,12 +63,12 @@ class Predicate(BaseModel):
             return self
         if self.value is None:
             raise ValueError(f"operator {self.operator} requires a value")
-        if self.operator in {"in", "not_in"}:
-            if not isinstance(self.value, list):
-                raise ValueError(f"operator {self.operator} requires a list value")
-        if self.operator in {"version_gte", "version_lt"}:
-            if not isinstance(self.value, str) or not _VERSION_RE.match(self.value):
-                raise ValueError("version predicates require a dotted numeric version")
+        if self.operator in {"in", "not_in"} and not isinstance(self.value, list):
+            raise ValueError(f"operator {self.operator} requires a list value")
+        if self.operator in {"version_gte", "version_lt"} and (
+            not isinstance(self.value, str) or not _VERSION_RE.match(self.value)
+        ):
+            raise ValueError("version predicates require a dotted numeric version")
         if self.operator in {"gte", "lte"} and not isinstance(self.value, (int, float)):
             raise ValueError("numeric bounds require a number")
         return self

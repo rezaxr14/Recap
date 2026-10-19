@@ -6,7 +6,7 @@ No hardcoded numbers. Every metric takes observed ranks/outcomes as input.
 from __future__ import annotations
 
 import math
-from typing import Sequence
+from collections.abc import Sequence
 
 
 def recall_at_k(relevant: set[str], retrieved: Sequence[str], k: int) -> float:
@@ -33,7 +33,9 @@ def ndcg_at_k(relevant: set[str], retrieved: Sequence[str], k: int) -> float:
     def gain(doc_id: str) -> float:
         return 1.0 if doc_id in relevant else 0.0
 
-    dcg = sum(gain(doc_id) / math.log2(index + 1) for index, doc_id in enumerate(retrieved[:k], start=1))
+    dcg = sum(
+        gain(doc_id) / math.log2(index + 1) for index, doc_id in enumerate(retrieved[:k], start=1)
+    )
     ideal_hits = min(len(relevant), k)
     idcg = sum(1.0 / math.log2(index + 1) for index in range(1, ideal_hits + 1))
     return dcg / idcg if idcg else 0.0
@@ -76,7 +78,7 @@ def paired_difference_ci(
 ) -> tuple[float, float, float]:
     if len(baseline) != len(treatment) or not baseline:
         raise ValueError("paired comparison requires equal, non-empty samples")
-    diffs = [t - b for b, t in zip(baseline, treatment)]
+    diffs = [t - b for b, t in zip(baseline, treatment, strict=True)]
     observed = sum(diffs) / len(diffs)
     lower, upper = bootstrap_ci(diffs, samples=samples, seed=seed)
     return observed, lower, upper

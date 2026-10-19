@@ -12,8 +12,9 @@ or ``blocked``, never ``passed``.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import Any, Callable
+from typing import Any
 
 from recap.domain.enums import ActionType, PredicateResult, ValidationStatus
 from recap.domain.environments import EnvironmentFingerprint
@@ -118,7 +119,9 @@ class MockSandboxValidator:
         *,
         environment_factory: Callable[[str], PaginatedApiEnvironment] | None = None,
     ) -> None:
-        self.environment_factory = environment_factory or (lambda version: PaginatedApiEnvironment(version=version))
+        self.environment_factory = environment_factory or (
+            lambda version: PaginatedApiEnvironment(version=version)
+        )
 
     def validate(
         self,
@@ -142,7 +145,9 @@ class MockSandboxValidator:
             else:
                 # v2 renamed the parameter; replay the legacy call shape.
                 first = sandbox.list_records(tenant=sandbox.tenant, cursor="start")
-            reproduction_ok = not first.ok and (first.error or {}).get("error_code") == expected_code
+            reproduction_ok = (
+                not first.ok and (first.error or {}).get("error_code") == expected_code
+            )
             checks.append(
                 {
                     "check": "failure_reproduced",
@@ -164,7 +169,9 @@ class MockSandboxValidator:
             "error_code": expected_code,
         }
         precondition_results = [evaluate_predicate(p, state) for p in candidate.preconditions]
-        preconditions_ok = all(result is PredicateResult.SATISFIED for result, _ in precondition_results)
+        preconditions_ok = all(
+            result is PredicateResult.SATISFIED for result, _ in precondition_results
+        )
         checks.append(
             {
                 "check": "preconditions_hold_in_sandbox",
@@ -236,7 +243,9 @@ class MockSandboxValidator:
             observed="verified_success" if passed else "verified_failure",
         )
 
-    def _apply(self, candidate: RepairCandidate, sandbox: PaginatedApiEnvironment) -> tuple[bool, str]:
+    def _apply(
+        self, candidate: RepairCandidate, sandbox: PaginatedApiEnvironment
+    ) -> tuple[bool, str]:
         """Interpret allowlisted actions against the sandbox tool only."""
         token: str | None = None
         collected = 0
@@ -261,7 +270,7 @@ class MockSandboxValidator:
                 mapping = action.parameters or {}
                 old = mapping.get("from", "cursor")
                 new = mapping.get("to", "page_token")
-                parameters = {"tenant": sandbox.tenant, new: "start"}
+                mapped_parameters: dict[str, Any] = {"tenant": sandbox.tenant, new: "start"}
                 if sandbox.version == "2" and old == "cursor":
                     # Mapped parameter name is valid in v2; the value must be refreshed.
                     first = sandbox.list_records(tenant=sandbox.tenant)
@@ -270,7 +279,7 @@ class MockSandboxValidator:
                     collected += len(first.payload.get("items", []))
                     token = first.payload.get("page_token")
                 else:
-                    result = sandbox.list_records(**parameters)
+                    result = sandbox.list_records(**mapped_parameters)
                     if not result.ok:
                         return False, "mapped parameter call failed"
                     collected += len(result.payload.get("items", []))
@@ -286,17 +295,22 @@ class MockSandboxValidator:
             return collected > 0, "no pagination token produced"
         # Complete pagination to prove the repair works end to end.
         while token is not None:
-            parameters: dict[str, Any] = {"tenant": sandbox.tenant}
+            continuation: dict[str, Any] = {"tenant": sandbox.tenant}
             if sandbox.version == "1":
-                parameters["cursor"] = token
+                continuation["cursor"] = token
             else:
-                parameters["page_token"] = token
-            page = sandbox.list_records(**parameters)
+                continuation["page_token"] = token
+            page = sandbox.list_records(**continuation)
             if not page.ok:
-                return False, f"pagination continuation failed: {(page.error or {}).get('error_code')}"
+                return (
+                    False,
+                    f"pagination continuation failed: {(page.error or {}).get('error_code')}",
+                )
             collected += len(page.payload.get("items", []))
             token = page.payload.get("cursor") or page.payload.get("page_token")
-        return collected == len(sandbox.records), f"collected {collected}/{len(sandbox.records)} records"
+        return collected == len(
+            sandbox.records
+        ), f"collected {collected}/{len(sandbox.records)} records"
 
 
 class ValidatorRegistry:

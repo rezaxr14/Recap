@@ -39,7 +39,9 @@ def extract_failure_window(
     # Prefer the earliest distinct failing signature to avoid anchoring on a retry.
     anchor = failures[0]
     payload = _as_dict(anchor)
-    message = str(payload.get("error_message") or payload.get("message") or payload.get("detail") or "")
+    message = str(
+        payload.get("error_message") or payload.get("message") or payload.get("detail") or ""
+    )
     error_type = str(payload.get("error_type") or payload.get("exception") or "")
     error_code = str(payload.get("error_code") or payload.get("code") or "")
     tool_name = anchor.tool_name or ""
@@ -51,18 +53,23 @@ def extract_failure_window(
     start_index = max(0, anchor_index - max_events // 2)
     end_index = min(len(events) - 1, anchor_index + max_events // 2)
     window = events[start_index : end_index + 1]
-    retry_count = sum(
-        1
-        for event in events
-        if event.event_type is EventType.TOOL_CALL_FAILED
-        and normalize_signature(
-            message=str(_as_dict(event).get("error_message") or _as_dict(event).get("message") or ""),
-            error_type=str(_as_dict(event).get("error_type") or ""),
-            error_code=str(_as_dict(event).get("error_code") or ""),
-            tool_name=event.tool_name or "",
+    retry_count = (
+        sum(
+            1
+            for event in events
+            if event.event_type is EventType.TOOL_CALL_FAILED
+            and normalize_signature(
+                message=str(
+                    _as_dict(event).get("error_message") or _as_dict(event).get("message") or ""
+                ),
+                error_type=str(_as_dict(event).get("error_type") or ""),
+                error_code=str(_as_dict(event).get("error_code") or ""),
+                tool_name=event.tool_name or "",
+            )
+            == signature
         )
-        == signature
-    ) - 1
+        - 1
+    )
 
     category = _categorize(error_code=error_code, error_type=error_type, message=message)
     notes: list[str] = []

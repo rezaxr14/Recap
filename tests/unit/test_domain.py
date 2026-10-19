@@ -3,8 +3,13 @@ from __future__ import annotations
 import pytest
 
 from recap.config import load_settings
-from recap.domain.environments import EnvironmentFingerprint, ToolDescriptor, build_fingerprint, hash_tool_schema
 from recap.domain.enums import ActionType, MemoryStatus, PredicateResult, SideEffectClass
+from recap.domain.environments import (
+    EnvironmentFingerprint,
+    ToolDescriptor,
+    build_fingerprint,
+    hash_tool_schema,
+)
 from recap.domain.memories import ExperienceMemory, MemoryContent
 from recap.domain.predicates import Predicate, evaluate_all, evaluate_predicate
 from recap.domain.strategies import RepairStrategy, StrategyAction
@@ -101,8 +106,12 @@ def test_normalization_collapses_volatile_ids() -> None:
 
 
 def test_normalization_keeps_different_errors_distinct() -> None:
-    a = normalize_signature(message="rate limit exceeded", error_type="TransientError", error_code="RATE_LIMITED")
-    b = normalize_signature(message="cursor invalid", error_type="ValidationError", error_code="INVALID_CURSOR")
+    a = normalize_signature(
+        message="rate limit exceeded", error_type="TransientError", error_code="RATE_LIMITED"
+    )
+    b = normalize_signature(
+        message="cursor invalid", error_type="ValidationError", error_code="INVALID_CURSOR"
+    )
     assert a != b
 
 
@@ -171,7 +180,9 @@ def test_fingerprint_is_stable_and_sensitive_to_schema() -> None:
         environment_id="mock-api-v1",
         environment_type="mock_api",
         environment_version="1",
-        tools=[ToolDescriptor(name="list_records", version="1", schema_hash=hash_tool_schema(schema))],
+        tools=[
+            ToolDescriptor(name="list_records", version="1", schema_hash=hash_tool_schema(schema))
+        ],
         api_schema=schema,
     )
     assert first.fingerprint == second.fingerprint
@@ -179,7 +190,9 @@ def test_fingerprint_is_stable_and_sensitive_to_schema() -> None:
         environment_id="mock-api-v2",
         environment_type="mock_api",
         environment_version="2",
-        tools=[ToolDescriptor(name="list_records", version="2", schema_hash=hash_tool_schema({"x": 1}))],
+        tools=[
+            ToolDescriptor(name="list_records", version="2", schema_hash=hash_tool_schema({"x": 1}))
+        ],
         api_schema={"x": 1},
     )
     assert changed.fingerprint != first.fingerprint

@@ -111,6 +111,7 @@ class SelectionStatus(StrEnum):
 
 class RevalidationReason(StrEnum):
     VERSION_CHANGE = "version_change"
+    ENVIRONMENT_CHANGED = "environment_changed"
     RELIABILITY_DROP = "reliability_drop"
     AGE_REVIEW = "age_review"
     CONFLICT = "conflict"

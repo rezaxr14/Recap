@@ -9,7 +9,8 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
-from pydantic import BaseModel, Field, ValidationError as PydanticValidationError
+from pydantic import BaseModel, Field
+from pydantic import ValidationError as PydanticValidationError
 
 from recap.config import RepairCompilerSettings
 from recap.domain.enums import ActionType, RiskLevel, SideEffectClass
@@ -57,7 +58,6 @@ class DeterministicGenerator:
             return []
         category = window.failure_category
         tool = window.tool_name or "list_records"
-        environment_version = str(environment.get("environment_version", ""))
         schema_hash = str(environment.get("tool_schema_hash", ""))
         evidence = window.event_ids[:10]
 

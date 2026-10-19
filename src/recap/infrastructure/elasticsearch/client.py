@@ -8,13 +8,22 @@ from __future__ import annotations
 
 from typing import Any
 
-from elasticsearch import Elasticsearch, exceptions as es_exceptions
+from elasticsearch import Elasticsearch
+from elasticsearch import exceptions as es_exceptions
 
 from recap.config import ElasticsearchSettings
 from recap.errors import SearchUnavailable
 from recap.logging import get_logger
 
 logger = get_logger(__name__)
+
+# ``elastic_transport.ConnectionTimeout`` is NOT a subclass of
+# ``elasticsearch.exceptions.ConnectionError``. Both must be handled or a
+# network timeout escapes the SearchUnavailable boundary.
+TRANSPORT_ERRORS: tuple[type[BaseException], ...] = (
+    es_exceptions.ConnectionError,
+    es_exceptions.ConnectionTimeout,
+)
 
 
 def build_client(settings: ElasticsearchSettings) -> Elasticsearch:
@@ -33,10 +42,14 @@ def check_cluster(client: Elasticsearch) -> dict[str, Any]:
     try:
         info = client.info()
         health = client.cluster.health(wait_for_status="yellow", timeout="5s")
-    except es_exceptions.ConnectionError as exc:
-        raise SearchUnavailable("cannot connect to Elasticsearch", details={"error": str(exc)}) from exc
+    except TRANSPORT_ERRORS as exc:
+        raise SearchUnavailable(
+            "cannot connect to Elasticsearch", details={"error": str(exc)}
+        ) from exc
     except es_exceptions.ApiError as exc:  # pragma: no cover - cluster-side
-        raise SearchUnavailable("Elasticsearch returned an error", details={"error": str(exc)}) from exc
+        raise SearchUnavailable(
+            "Elasticsearch returned an error", details={"error": str(exc)}
+        ) from exc
     return {
         "version": info.get("version", {}).get("number", "unknown"),
         "cluster_name": info.get("cluster_name", ""),

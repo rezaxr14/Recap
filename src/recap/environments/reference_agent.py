@@ -116,14 +116,17 @@ class ReferenceAgent:
         error_code = (failed_call.error or {}).get("error_code", "")
         for action in memory.actions:
             action_type = action.get("action_type")
-            if action_type == ActionType.RETRY_WITH_BACKOFF.value:
+            if action_type == ActionType.RETRY_WITH_BACKOFF.value and error_code in {
+                "RATE_LIMITED",
+                "TIMEOUT",
+                "UNAVAILABLE",
+            }:
                 # Retrying with the same parameters is only safe for transient errors.
-                if error_code in {"RATE_LIMITED", "TIMEOUT", "UNAVAILABLE"}:
-                    return (
-                        True,
-                        failed_parameters.get(parameter_name),
-                        parameter_name,
-                    )
+                return (
+                    True,
+                    failed_parameters.get(parameter_name),
+                    parameter_name,
+                )
             if action_type == ActionType.REFRESH_PAGINATION_CURSOR.value:
                 # Start a fresh page sequence instead of reusing the invalid cursor.
                 return True, None, parameter_name

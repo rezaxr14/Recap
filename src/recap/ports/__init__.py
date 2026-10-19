@@ -6,7 +6,8 @@ lets Elasticsearch/embedding/provider changes stay at the adapter boundary.
 
 from __future__ import annotations
 
-from typing import Any, Protocol, Sequence
+from collections.abc import Sequence
+from typing import Any, Protocol
 
 from recap.domain.environments import EnvironmentFingerprint
 from recap.domain.memories import ExperienceMemory
@@ -27,7 +28,9 @@ class EmbeddingProvider(Protocol):
 class Reranker(Protocol):
     name: str
 
-    def rerank(self, query: str, documents: Sequence[str], top_k: int) -> list[tuple[int, float]]: ...
+    def rerank(
+        self, query: str, documents: Sequence[str], top_k: int
+    ) -> list[tuple[int, float]]: ...
 
 
 class LLMProvider(Protocol):

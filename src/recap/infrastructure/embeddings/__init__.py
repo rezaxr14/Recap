@@ -7,6 +7,8 @@ available when the optional dependency is installed.
 
 from __future__ import annotations
 
+from typing import Any
+
 from recap.config import EmbeddingSettings
 from recap.errors import ConfigurationError, EmbeddingUnavailable
 from recap.infrastructure.embeddings.fake import FakeEmbeddingProvider
@@ -24,9 +26,9 @@ class SentenceTransformerEmbeddingProvider:
     def __init__(self, model_id: str, dimension: int) -> None:
         self.model_id = model_id
         self.dimension = dimension
-        self._model = None
+        self._model: Any = None
 
-    def _load(self):  # type: ignore[no-untyped-def]
+    def _load(self) -> Any:
         if self._model is None:
             try:
                 from sentence_transformers import SentenceTransformer
@@ -44,12 +46,12 @@ class SentenceTransformerEmbeddingProvider:
                 )
         return self._model
 
-    def embed_documents(self, texts):  # type: ignore[no-untyped-def]
+    def embed_documents(self, texts: Any) -> list[list[float]]:
         model = self._load()
         vectors = model.encode(list(texts), normalize_embeddings=True)
         return [list(map(float, vector)) for vector in vectors]
 
-    def embed_query(self, text):  # type: ignore[no-untyped-def]
+    def embed_query(self, text: str) -> list[float]:
         return self.embed_documents([text])[0]
 
 

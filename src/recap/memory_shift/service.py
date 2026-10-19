@@ -7,7 +7,7 @@ statistics, minimum-sample safeguards, and explicit reasons.
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 from recap.config import Settings
 from recap.domain.enums import (
@@ -24,7 +24,6 @@ from recap.domain.feedback import (
     RevalidationJob,
 )
 from recap.domain.memories import ExperienceMemory
-from recap.domain.runs import new_id
 from recap.errors import NotFoundError
 from recap.logging import get_logger
 
@@ -130,8 +129,10 @@ class MemoryShiftService:
         notes: str = "",
         evidence: dict[str, Any] | None = None,
     ) -> OutcomeEvidence:
-        if environment_fingerprint and memory.environment_fingerprint and (
-            environment_fingerprint != memory.environment_fingerprint
+        if (
+            environment_fingerprint
+            and memory.environment_fingerprint
+            and (environment_fingerprint != memory.environment_fingerprint)
         ):
             self.audit.append(
                 AuditEvent(
@@ -233,6 +234,60 @@ class MemoryShiftService:
             )
 
     # -------------------------------------------------------- revalidation
+    def on_incompatible_environment(
+        self,
+        memory: ExperienceMemory,
+        *,
+        environment_id: str,
+        environment_fingerprint: str = "",
+        tool_schema_fingerprints: dict[str, str] | None = None,
+    ) -> RevalidationJob:
+        """Handle a memory observed against an incompatible environment.
+
+        The memory is *not* silently kept active. It is moved to ``suspect``
+        (so it can no longer be selected operationally), the compatibility
+        finding is persisted, and a revalidation job is queued. It is never
+        auto-retired or auto-rewritten: a human or a new validated memory must
+        replace it.
+        """
+        compatibility = self.evaluate_compatibility(
+            memory,
+            environment_id=environment_id,
+            environment_fingerprint=environment_fingerprint,
+            tool_schema_fingerprints=tool_schema_fingerprints,
+        )
+        if (
+            compatibility.status is CompatibilityStatus.INCOMPATIBLE
+            and memory.status is MemoryStatus.ACTIVE
+        ):
+            transitioned = memory.transition(
+                MemoryStatus.SUSPECT,
+                "incompatible_environment:" + ",".join(compatibility.reasons),
+            )
+            self.memories.update_status(transitioned)
+            if self.index_sync is not None:
+                self.index_sync(transitioned)
+            self.audit.append(
+                AuditEvent(
+                    workspace_id=memory.workspace_id,
+                    entity_type="memory",
+                    entity_id=memory.id,
+                    action="transition:active->suspect",
+                    reason="incompatible_environment",
+                    before={"status": str(memory.status)},
+                    after={"status": str(MemoryStatus.SUSPECT)},
+                )
+            )
+            memory = transitioned
+        return self.enqueue_revalidation(
+            memory,
+            reason=RevalidationReason.ENVIRONMENT_CHANGED,
+            environment_id=environment_id,
+            environment_fingerprint=environment_fingerprint,
+            validation_plan="mock_sandbox",
+            priority=1,
+        )
+
     def enqueue_revalidation(
         self,
         memory: ExperienceMemory,
@@ -255,7 +310,8 @@ class MemoryShiftService:
             priority=priority,
             dedupe_key=dedupe_key,
         )
-        return self.revalidation.enqueue(job)
+        result: RevalidationJob = self.revalidation.enqueue(job)
+        return result
 
     def run_revalidation_job(self, job_id: str, validator: Any) -> RevalidationJob:
         job = self.revalidation.get(job_id)
@@ -283,11 +339,11 @@ class MemoryShiftService:
         except Exception as exc:
             job.state = RevalidationState.INCONCLUSIVE
             job.error = str(exc)
-        self.revalidation.update(job)
-        return job
+        updated: RevalidationJob = self.revalidation.update(job)
+        return updated
 
     def compatibility_report(self, memory_id: str, workspace_id: str) -> list[CompatibilityResult]:
         memory = self.memories.get_memory(memory_id, workspace_id)
         if memory is None:
             raise NotFoundError(f"memory {memory_id} not found")
-        return self.compatibility.list_for_memory(memory_id)
+        return cast(list[CompatibilityResult], self.compatibility.list_for_memory(memory_id))

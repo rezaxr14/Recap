@@ -3,10 +3,11 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from tests.unit.test_domain import _content
 
 from recap.config import RecallSettings, ReliabilitySettings
 from recap.domain.enums import CompatibilityStatus, MemoryStatus, PredicateResult
-from recap.domain.memories import ExperienceMemory, MemoryContent, OutcomeStats
+from recap.domain.memories import ExperienceMemory, OutcomeStats
 from recap.domain.retrieval import RetrievalContext
 from recap.recall.eligibility import check_eligibility
 from recap.recall.utility_policy import (
@@ -14,7 +15,6 @@ from recap.recall.utility_policy import (
     compute_stats_after_outcome,
     should_select,
 )
-from tests.unit.test_domain import _content
 
 
 def _memory(**overrides) -> ExperienceMemory:

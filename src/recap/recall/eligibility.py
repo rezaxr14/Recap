@@ -61,9 +61,11 @@ def check_eligibility(
     if apply_compatibility_filters:
         if compatibility is CompatibilityStatus.INCOMPATIBLE:
             reasons.append("incompatible_environment")
-        elif compatibility is CompatibilityStatus.SUSPECT:
-            if not settings.allow_suspect_operational_memories:
-                reasons.append("suspect_compatibility")
+        elif (
+            compatibility is CompatibilityStatus.SUSPECT
+            and not settings.allow_suspect_operational_memories
+        ):
+            reasons.append("suspect_compatibility")
 
     # Tool/schema mismatch is a hard filter when the memory declares them.
     if apply_compatibility_filters:
@@ -72,9 +74,13 @@ def check_eligibility(
             if actual and expected_hash and actual != expected_hash:
                 reasons.append(f"tool_schema_mismatch:{tool}")
                 details.append(f"expected {expected_hash}, got {actual}")
-    if settings.require_tool_match and memory.content.tool_names:
-        if context.tool_names and not set(memory.content.tool_names) & set(context.tool_names):
-            reasons.append("tool_not_relevant")
+    if (
+        settings.require_tool_match
+        and memory.content.tool_names
+        and context.tool_names
+        and not set(memory.content.tool_names) & set(context.tool_names)
+    ):
+        reasons.append("tool_not_relevant")
 
     # A memory pinned to a different environment fingerprint is not applicable.
     if (

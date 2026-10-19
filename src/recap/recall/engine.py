@@ -14,7 +14,6 @@ from typing import Any
 from recap.config import Settings
 from recap.domain.enums import (
     CompatibilityStatus,
-    PredicateResult,
     RetrievalMode,
     SelectionStatus,
 )
@@ -111,7 +110,6 @@ class RecallEngine:
         )
         degraded = degraded or branch_payload.get("degraded", False)
         warnings.extend(branch_payload.get("warnings", []))
-        hits: dict[str, dict[str, Any]] = branch_payload["hits"]
         branches: dict[str, dict[str, Any]] = branch_payload["branches"]
         stage_latency["search"] = _ms(t0)
 
@@ -123,9 +121,11 @@ class RecallEngine:
             fused_scores = {hit.doc_id: hit.score for hit in fused}
             branch_ranks = {hit.doc_id: hit.ranks for hit in fused}
         else:
-            only = next(iter(branches.values()), {"ids": [], "scores": {}})
+            only: dict[str, Any] = dict(next(iter(branches.values()), {"ids": [], "scores": {}}))
             fused_order = list(only.get("ids", []))[: self.settings.recall.max_candidates]
-            fused_scores = {doc_id: only.get("scores", {}).get(doc_id, 0.0) for doc_id in fused_order}
+            fused_scores = {
+                doc_id: only.get("scores", {}).get(doc_id, 0.0) for doc_id in fused_order
+            }
             branch_ranks = {
                 doc_id: {next(iter(branches), "bm25"): index}
                 for index, doc_id in enumerate(fused_order, start=1)
@@ -185,12 +185,13 @@ class RecallEngine:
             )
             reasons = list(eligibility.reasons)
             if strict_policy:
-                if request.require_compatible_environment and compatibility in {
-                    CompatibilityStatus.INCOMPATIBLE,
-                    CompatibilityStatus.SUSPECT,
-                }:
-                    if "suspect_compatibility" not in reasons:
-                        reasons.append(f"compatibility_{compatibility}")
+                if (
+                    request.require_compatible_environment
+                    and compatibility
+                    in {CompatibilityStatus.INCOMPATIBLE, CompatibilityStatus.SUSPECT}
+                    and "suspect_compatibility" not in reasons
+                ):
+                    reasons.append(f"compatibility_{compatibility}")
                 if not is_operationally_applicable(applicability):
                     reasons.append(f"preconditions_{applicability.result}")
 
@@ -279,9 +280,7 @@ class RecallEngine:
             strategy_counts[signature] = strategy_counts.get(signature, 0) + 1
             selected_memories.append(_to_selected(memory, candidate))
 
-        status = (
-            SelectionStatus.SELECTED if selected_memories else SelectionStatus.NO_SAFE_MEMORY
-        )
+        status = SelectionStatus.SELECTED if selected_memories else SelectionStatus.NO_SAFE_MEMORY
         reason = (
             f"selected {len(selected_memories)} memory(ies)"
             if selected_memories

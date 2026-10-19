@@ -8,9 +8,7 @@ from recap.domain.predicates import ApplicabilityResult, evaluate_all
 from recap.domain.retrieval import RetrievalContext
 
 
-def build_state_snapshot(
-    memory: ExperienceMemory, context: RetrievalContext
-) -> dict[str, object]:
+def build_state_snapshot(memory: ExperienceMemory, context: RetrievalContext) -> dict[str, object]:
     """Bounded state used for predicate evaluation.
 
     Includes caller state plus environment facts the engine knows. No secrets.
@@ -71,11 +69,17 @@ def combine_compatibility(
                 if tool in context.tool_schema_fingerprints
             )
         ):
-            return CompatibilityStatus.SUSPECT, "environment fingerprint changed but tool schemas match"
+            return (
+                CompatibilityStatus.SUSPECT,
+                "environment fingerprint changed but tool schemas match",
+            )
         return CompatibilityStatus.SUSPECT, "environment fingerprint differs from memory origin"
     if stored is CompatibilityStatus.SUSPECT:
         return CompatibilityStatus.SUSPECT, "stored compatibility is suspect"
-    if memory.environment_fingerprint and memory.environment_fingerprint == context.environment_fingerprint:
+    if (
+        memory.environment_fingerprint
+        and memory.environment_fingerprint == context.environment_fingerprint
+    ):
         return CompatibilityStatus.COMPATIBLE, "environment fingerprint matches"
     if not memory.environment_fingerprint:
         return CompatibilityStatus.UNKNOWN, "memory has no environment fingerprint"

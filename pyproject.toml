@@ -30,6 +30,7 @@ dev = [
   "pytest-asyncio>=0.24,<0.25",
   "ruff>=0.17,<0.18",
   "mypy>=1.13,<1.14",
+  "types-PyYAML>=6.0,<7",
 ]
 sentence-transformers = [
   "sentence-transformers>=3.0,<4",
@@ -44,11 +45,16 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"
+asyncio_default_fixture_loop_scope = "function"
 markers = [
   "integration: requires Postgres and Elasticsearch",
   "e2e: full local vertical slice",
 ]
-filterwarnings = ["error::DeprecationWarning:recap.*"]
+filterwarnings = [
+  "error::DeprecationWarning:recap.*",
+  "ignore:The anyio.abc.BlockingPortal alias is deprecated:DeprecationWarning",
+  "ignore:The configuration option \"asyncio_default_fixture_loop_scope\":DeprecationWarning",
+]
 
 [tool.ruff]
 line-length = 100

@@ -11,16 +11,17 @@ no real credentials, no irreversible operations.
 from __future__ import annotations
 
 import copy
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
+from recap.domain.enums import SideEffectClass
 from recap.domain.environments import (
     EnvironmentFingerprint,
     ToolDescriptor,
     build_fingerprint,
     hash_tool_schema,
 )
-from recap.domain.enums import SideEffectClass
 
 V1_TOOL_SCHEMA = {
     "name": "list_records",
@@ -134,7 +135,11 @@ class PaginatedApiEnvironment:
 
     # --------------------------------------------------------------- tools
     def list_records(
-        self, tenant: str, cursor: str | None = None, page_token: str | None = None, limit: int | None = None
+        self,
+        tenant: str,
+        cursor: str | None = None,
+        page_token: str | None = None,
+        limit: int | None = None,
     ) -> ToolCallResult:
         self._calls += 1
         self._access_log.append(
@@ -156,7 +161,9 @@ class PaginatedApiEnvironment:
         self, tenant: str, cursor: str | None, page_token: str | None, limit: int | None
     ) -> dict[str, Any]:
         if tenant != self.tenant:
-            raise MockApiError("NotFoundError", "TENANT_NOT_FOUND", f"tenant {tenant!r} not found", 404)
+            raise MockApiError(
+                "NotFoundError", "TENANT_NOT_FOUND", f"tenant {tenant!r} not found", 404
+            )
         # The declared schema sets additionalProperties=false, so reject the
         # parameter name that belongs to the other API version.
         if self.version == "1" and page_token is not None:

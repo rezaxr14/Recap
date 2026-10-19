@@ -7,7 +7,7 @@ machinery behaves as designed, using:
 
 - a deterministic mock API with two schema versions
 - a deterministic reference agent that follows memory-mapped parameter names
-- a deterministic embedding provider
+- a deterministic, non-semantic hashing embedding provider
 - a small, hand-built task suite
 
 It is **not** a measurement of LLM agent performance. The reports embed that statement, and
@@ -178,8 +178,10 @@ In rough priority order:
    only become informative with n >> 2.
 2. **A real agent.** An LLM agent with a fixed model, temperature, and tool budget. The
    reference agent is a correctness harness, not a capability measurement.
-3. **A neural embedder.** The hashing provider captures token overlap only; the vector
-   baseline understates what a real embedder does.
+3. **A real embedding model.** The hashing provider captures token overlap only; the vector
+   baseline understates what a neural embedder does. Configure `EMBEDDING_PROVIDER=openai_compatible`
+   and record the model, dimension, and index generation in the report. A real-model run must
+   never be mixed with a deterministic run in the same comparison.
 4. **Ablations beyond retrieval mode.** Compatibility-only, utility-only, reliability-only,
    and reranker-on/off, so the contribution of each policy component is separable.
 5. **Adversarial memories.** Deliberately misleading but highly similar memories, to measure

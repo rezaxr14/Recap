@@ -10,13 +10,31 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Sequence
 
+from recap.providers.base import ProviderCapabilities
+
 
 class FakeEmbeddingProvider:
     model_id = "fake-test-embedding"
     model_version = "1"
+    provider_type = "fake"
 
     def __init__(self, dimension: int = 256) -> None:
         self.dimension = dimension
+        self.capabilities = ProviderCapabilities(
+            provider_type=self.provider_type,
+            model=self.model_id,
+            embeddings=True,
+            semantic_embeddings=False,
+            notes=("test-only synthetic vectors; never evidence of semantic retrieval",),
+        )
+
+    def health(self) -> dict[str, object]:
+        return {
+            "status": "ok",
+            "mode": "test_only",
+            "semantic": False,
+            "model": self.model_id,
+        }
 
     def _embed(self, text: str) -> list[float]:
         digest = hashlib.sha256(text.encode("utf-8")).digest()

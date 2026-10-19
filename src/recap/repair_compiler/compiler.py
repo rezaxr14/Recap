@@ -67,7 +67,7 @@ class RepairCompiler:
             "tool_schema_hash": next(iter(environment.tool_schema_hashes.values()), ""),
             "tool_schema_hashes": environment.tool_schema_hashes,
         }
-        drafts = self.generator.generate(window=window, environment=environment_info)
+        drafts = self.generator.generate(window=window, environment=environment_info, events=events)
         allowed_event_ids = {event.id for event in events}
         candidates: list[RepairCandidate] = []
         for draft in drafts:

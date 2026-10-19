@@ -21,10 +21,62 @@ elasticsearch:
   rrf_k: 60
 
 embeddings:
+  # RECAP is API-first. Production semantic retrieval requires:
+  #   provider: openai_compatible
+  #   base_url: https://<host>/v1
+  #   model_id: <real embedding model>
+  #   dimension: <model dimension, must match elasticsearch.vector_dimension>
+  # Set the API key via EMBEDDING_API_KEY; never commit it.
+  #
+  # `hashing` is a deterministic lexical feature hash, not a neural embedder.
+  # It is the local-development default and reports semantic_retrieval=false.
+  # `fake` is reserved for unit tests and must never satisfy real-model
+  # acceptance. `sentence-transformers` loads only an existing model_path
+  # directory and never downloads weights.
   provider: hashing
   model_id: recap-hashing-embedding-v1
+  model_version: "1"
   dimension: 256
   batch_size: 32
+  base_url: ""
+  api_key: ""
+  timeout_seconds: 30.0
+  max_retries: 2
+  retry_backoff_seconds: 0.5
+  send_dimensions: false
+  model_path: ""
+  allow_degraded: false
+
+llm:
+  # Agent-facing chat role used for tool-calling runs. Disabled unless a real
+  # endpoint is configured; RECAP never silently substitutes a fake model.
+  # Credentials come from LLM_API_KEY (or a secret manager injected into env).
+  provider: disabled
+  base_url: ""
+  api_key: ""
+  model: ""
+  timeout_seconds: 60.0
+  max_retries: 2
+  retry_backoff_seconds: 0.5
+  temperature: 0.0
+  max_tokens: 0
+  structured_mode: json_schema
+
+repair_llm:
+  # Optional LLM used only for typed repair-candidate proposals. Output is
+  # validated by the same schema/evidence checks as deterministic drafts and
+  # must pass sandbox validation before promotion.
+  # Credentials come from REPAIR_LLM_API_KEY.
+  provider: disabled
+  base_url: ""
+  api_key: ""
+  model: ""
+  timeout_seconds: 60.0
+  max_retries: 2
+  retry_backoff_seconds: 0.5
+  temperature: 0.0
+  max_tokens: 0
+  structured_mode: json_schema
 
 recall:
   default_mode: outcome_aware
@@ -49,6 +101,8 @@ reliability:
 
 repair_compiler:
   enabled: true
+  # deterministic | llm (llm requires a configured repair_llm role)
+  generator: deterministic
   max_failure_window_events: 20
   max_candidate_generation_attempts: 2
   require_validation_for_promotion: true

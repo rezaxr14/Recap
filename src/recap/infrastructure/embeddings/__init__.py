@@ -1,32 +1,67 @@
 """Embedding provider factory.
 
-The default is the deterministic hashing provider so the whole pipeline runs
-without network access or paid keys. A real sentence-transformers adapter is
-available when the optional dependency is installed.
+RECAP is API-first: the production path is ``openai_compatible`` against an
+already-running endpoint. The deterministic hashing and fake providers exist for
+local development and tests and are reported as non-semantic. The optional
+sentence-transformers adapter only loads an explicitly configured local
+directory; it never downloads weights.
 """
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+from pathlib import Path
 from typing import Any
+
+import httpx
 
 from recap.config import EmbeddingSettings
 from recap.errors import ConfigurationError, EmbeddingUnavailable
 from recap.infrastructure.embeddings.fake import FakeEmbeddingProvider
 from recap.infrastructure.embeddings.hashing import HashingEmbeddingProvider
+from recap.providers.base import ProviderCapabilities
+from recap.providers.openai_compatible import OpenAICompatibleEmbeddingProvider
 
 
 class SentenceTransformerEmbeddingProvider:
-    """Real local embedding adapter (optional dependency).
+    """Local embedding adapter for an already-downloaded model directory.
 
-    The model is loaded lazily so importing RECAP does not require torch.
+    ``local_files_only=True`` is enforced and the path must exist as a directory.
+    There is deliberately no model-ID download path.
     """
 
+    provider_type = "sentence_transformers_local"
     model_version = "1"
 
-    def __init__(self, model_id: str, dimension: int) -> None:
-        self.model_id = model_id
+    def __init__(self, model_path: str, dimension: int) -> None:
+        path = Path(model_path).expanduser()
+        if not path.is_dir():
+            raise ConfigurationError(
+                "sentence-transformers requires an existing local model directory; "
+                "RECAP does not download model weights",
+                details={"model_path": str(path)},
+            )
+        self.model_path = str(path)
+        self.model_id = path.name
         self.dimension = dimension
         self._model: Any = None
+        self.capabilities = ProviderCapabilities(
+            provider_type=self.provider_type,
+            model=self.model_id,
+            embeddings=True,
+            semantic_embeddings=True,
+            notes=("local model directory only; remote downloads are disabled",),
+        )
+
+    def health(self) -> dict[str, object]:
+        return {
+            "status": "ok",
+            "mode": "local_model",
+            "semantic": True,
+            "model": self.model_id,
+            "model_path": self.model_path,
+            "dimension": self.dimension,
+        }
 
     def _load(self) -> Any:
         if self._model is None:
@@ -35,18 +70,24 @@ class SentenceTransformerEmbeddingProvider:
             except ImportError as exc:  # pragma: no cover - optional dependency
                 raise EmbeddingUnavailable(
                     "sentence-transformers is not installed; install the "
-                    "'sentence-transformers' extra or use provider=hashing"
+                    "'sentence-transformers' extra or configure an API embedding provider"
                 ) from exc
-            self._model = SentenceTransformer(self.model_id)
+            try:
+                self._model = SentenceTransformer(self.model_path, local_files_only=True)
+            except TypeError:  # pragma: no cover - older library versions
+                raise EmbeddingUnavailable(
+                    "the installed sentence-transformers version cannot enforce local-only "
+                    "loading; upgrade it or configure an API embedding provider"
+                ) from None
             actual = int(self._model.get_sentence_embedding_dimension())
             if actual != self.dimension:
                 raise ConfigurationError(
-                    "configured embedding dimension does not match model",
+                    "configured embedding dimension does not match the local model",
                     details={"configured": self.dimension, "model": actual},
                 )
         return self._model
 
-    def embed_documents(self, texts: Any) -> list[list[float]]:
+    def embed_documents(self, texts: Sequence[str]) -> list[list[float]]:
         model = self._load()
         vectors = model.encode(list(texts), normalize_embeddings=True)
         return [list(map(float, vector)) for vector in vectors]
@@ -55,11 +96,17 @@ class SentenceTransformerEmbeddingProvider:
         return self.embed_documents([text])[0]
 
 
-def build_embedding_provider(settings: EmbeddingSettings):
+def build_embedding_provider(
+    settings: EmbeddingSettings,
+    *,
+    transport: httpx.BaseTransport | None = None,
+) -> Any:
     if settings.provider == "hashing":
         return HashingEmbeddingProvider(dimension=settings.dimension)
     if settings.provider == "fake":
         return FakeEmbeddingProvider(dimension=settings.dimension)
+    if settings.provider == "openai_compatible":
+        return OpenAICompatibleEmbeddingProvider(settings, transport=transport)
     if settings.provider == "sentence-transformers":
-        return SentenceTransformerEmbeddingProvider(settings.model_id, settings.dimension)
+        return SentenceTransformerEmbeddingProvider(settings.model_path, settings.dimension)
     raise ConfigurationError(f"unknown embedding provider: {settings.provider}")

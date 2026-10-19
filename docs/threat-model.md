@@ -21,6 +21,8 @@ recovery knowledge, validates it, and serves it back. The assets worth protectin
                                         |
                                         +------->  Elasticsearch (trusted-ish, rebuildable)
                                         |
+                                        +------->  configured model endpoint (external)
+                                        |
                                         +------->  sandboxed mock environment (untrusted content)
 ```
 
@@ -52,6 +54,9 @@ keys. They get stored in `run_events`, indexed into Elasticsearch, or printed in
   `build_embedding_text`) because manually-created memories bypass the recorder.
 - `StaticValidator` and `PromotionService` scan candidate payloads for secrets before
   promotion.
+- Provider API keys are read from environment/secrets, excluded from `safe_dump`,
+  diagnostics, logs, and CLI output. Authorization headers are never logged. Credential-bearing
+  base URLs are redacted in logs and errors.
 - `.env` is gitignored; `.env.example` contains only local defaults.
 
 **Residual risk:** pattern redaction is best-effort. An unusual secret format will pass
@@ -75,6 +80,11 @@ later causes harmful actions.
   `no_safe_memory`.
 - Reliability degrades with verified failures, so a memory that works once and fails
   repeatedly is demoted.
+- LLM-generated candidates are hypotheses: they must match the strict typed schema, cite only
+  real event IDs from the bounded failure window, and pass the same sandbox validation. The
+  model cannot mark its own output as validated.
+- Provider endpoints and model IDs are recorded with the retrieval decision and candidate so
+  a change in generator/embedder is auditable.
 
 **Residual risk:** a memory that is correct in the sandbox but wrong in production can pass.
 Mitigated, not eliminated, by reliability tracking and drift detection.
@@ -188,6 +198,31 @@ confident garbage.
 - `SideEffectClass.DESTRUCTIVE` is rejected by both validators and by promotion.
 - The sandbox has no destructive capability at all.
 
+### 3.10 Provider credential leakage and external inference
+
+**Threat:** a provider API key is printed in logs, diagnostics, or an error; or sensitive run
+evidence is sent to an endpoint the operator did not intend to trust.
+
+**Controls:**
+
+- Credentials are supplied through environment variables/secrets and are never stored in the
+  database or repository.
+- Authorization headers are never logged. Error details include a bounded response-body
+  snippet and a redacted base URL, not request headers.
+- `Settings.safe_dump()` replaces every provider key with `***`; `recap providers`,
+  `recap doctor`, and `/diagnostics` use redacted views.
+- Only bounded, already-redacted events from the failure window are placed in prompts.
+- The adapter targets exactly the configured endpoint and never scans the network, discovers
+  credentials, or downloads models.
+- Real-provider failures raise actionable errors; there is no fallback to a fake provider that
+  would hide the outage.
+
+**Residual risk:** the remote endpoint necessarily sees the submitted evidence, and its own
+retention/logging policy is outside RECAP's control. Operators must choose a provider and data
+classification that match their policy, use TLS, and scope keys to the minimum required
+permissions. A compromised provider can return malicious output; typed schema validation and
+sandbox execution reduce, but do not eliminate, that risk.
+
 ## 4. Non-goals
 
 RECAP explicitly does **not**:
@@ -207,6 +242,7 @@ The current implementation assumes:
 
 - a trusted network boundary in front of the API
 - Postgres and Elasticsearch not exposed publicly
+- model endpoints are chosen and trusted by the operator; TLS is expected for remote hosts
 - Elasticsearch security may be disabled **only** for local development
 - the host agent treats memory as data, not instructions
 
@@ -233,6 +269,8 @@ authentication would violate the model in this document.
 - invalid payloads are rejected with structured errors
 
 Unit tests cover the redaction patterns directly and the promotion gate's secret check.
+`tests/unit/test_providers.py` covers provider auth/error mapping, no-secret reporting,
+dimension rejection, bounded retries, and fail-closed tool/structured output.
 
 ## 7. Reporting
 

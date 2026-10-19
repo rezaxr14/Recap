@@ -52,10 +52,15 @@ load balancer can distinguish "process alive" from "can serve".
 
 ```bash
 recap health
+recap providers
+recap doctor [--live]
 recap search health
 ```
 
 `recap search health` reports `index_exists`, `read_alias_exists`, `document_count`.
+`recap providers` is offline and prints every role, model, and capability without secrets.
+`recap doctor` probes only configured endpoints; `--live` adds one small chat call and one
+real embedding call. It exits non-zero when a configured dependency fails.
 
 ## 4. API surface
 
@@ -101,7 +106,8 @@ GET  /api/v1/diagnostics
 
 Error codes map to HTTP statuses: `validation_error` 422, `not_found` 404, `conflict` 409,
 `invalid_transition` 409, `promotion_rejected` 422, `safety_violation` 403,
-`search_unavailable` 503, `embedding_unavailable` 503, `configuration_error` 500.
+`search_unavailable` 503, `embedding_unavailable` 503, `provider_unavailable` 503,
+`provider_auth_error` 502, `provider_response_error` 502, `configuration_error` 500.
 
 ## 5. Common tasks
 
@@ -177,6 +183,18 @@ recap repair promote <candidate_id>
 Promotion fails with `promotion_rejected` and a list of failed checks if the candidate is
 not eligible. That is the gate working, not a bug.
 
+### Inspect model providers
+
+```bash
+recap providers
+recap doctor
+recap doctor --live
+```
+
+`providers` does not touch the network. `doctor` performs only configured endpoint probes and
+never scans the network. See [`providers.md`](providers.md) for role configuration, the
+no-download policy, and the live test gate.
+
 ### Demo
 
 ```bash
@@ -209,6 +227,11 @@ Reports in `benchmark/reports/`. Gitignored; regenerate rather than commit.
 | Promotion rejected | failed check | response lists each check and result |
 | Duplicate event conflict | same sequence with different payload | client bug; inspect `details.sequence_number` |
 | Outbox rows stuck pending | ES down or worker not scheduled | `recap search drain`; inspect `last_error`; check cron |
+| `provider_auth_error` | wrong/missing API key | set the role's `*_API_KEY`; the key is never echoed |
+| `provider_unavailable` | model endpoint down/rate-limited | `recap doctor`, check endpoint and retry/backoff settings |
+| `provider_response_error` | malformed/truncated output, bad tool args, wrong embedding dimension | inspect provider logs; verify model and schema support; do not bypass validation |
+| `search init` rejects embedding dimension | model/dimension changed | use a new `index_generation`; reconcile with the new provider |
+| `recap doctor` says degraded | hashing/fake embeddings | configure a real embedding endpoint or explicitly accept degraded mode |
 
 ## 7. Database operations
 
@@ -280,6 +303,11 @@ search relevance quietly rots.
 - There is no API authentication. Do not expose the API beyond a trusted network.
 - Redaction runs before persistence and before indexing. It is pattern-based and best-effort;
   treat stored data as potentially sensitive and protect the database accordingly.
+- Provider credentials (`EMBEDDING_API_KEY`, `LLM_API_KEY`, `REPAIR_LLM_API_KEY`) live in
+  environment/secrets only. They are excluded from `safe_dump`, diagnostics, logs, and CLI
+  output.
+- Sending run evidence to a remote model endpoint is a data-processing decision. Apply your
+  own retention and provider policy.
 - `.env` is gitignored. `.env.example` has no real credentials.
 
 See [`threat-model.md`](threat-model.md).
@@ -300,6 +328,16 @@ Integration tests use:
 They never touch `recap` or `recap-memories-*`. A unique `workspace_id` is generated per
 test.
 
+Live model-endpoint tests are separately gated:
+
+```bash
+export RECAP_RUN_PROVIDER_INTEGRATION=1
+pytest tests/integration/test_live_providers.py --run-integration
+```
+
+They skip when no real endpoint is configured and must never be replaced by a fake. CI does
+not set the flag.
+
 CI (`.github/workflows/ci.yml`) runs lint/typecheck, unit, then integration with real
 service containers, followed by the demo and benchmark.
 
@@ -317,8 +355,9 @@ service containers, followed by the demo and benchmark.
 
 1. Back up Postgres.
 2. `recap db migrate`.
-3. If the embedding model or dimension changed: bump `index_generation`, `recap search init`,
-   `recap search reconcile`.
+3. If the embedding model or dimension changed: configure the new provider, bump
+   `index_generation`, `recap search init`, `recap search reconcile`. Never point a new
+   dimension at an existing index.
 4. Run `python scripts/run_smoke_test.py`.
 5. Run `recap eval run --split test` and compare against the previous report.
 6. Deploy.

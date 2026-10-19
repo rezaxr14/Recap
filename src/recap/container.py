@@ -16,7 +16,13 @@ from sqlalchemy.orm import Session
 
 from recap.config import Settings, get_settings
 from recap.domain.memories import ExperienceMemory
-from recap.errors import SearchUnavailable
+from recap.errors import (
+    EmbeddingUnavailable,
+    ProviderAuthenticationError,
+    ProviderResponseError,
+    ProviderUnavailable,
+    SearchUnavailable,
+)
 from recap.infrastructure.db.models import Base
 from recap.infrastructure.db.repositories import (
     SqlAuditRepository,
@@ -38,9 +44,12 @@ from recap.infrastructure.elasticsearch.search_repository import (
 )
 from recap.infrastructure.embeddings import build_embedding_provider
 from recap.memory_shift.service import MemoryShiftService
+from recap.providers.base import ChatMessage, ChatProvider
+from recap.providers.factory import build_chat_provider, provider_report
 from recap.recall.engine import RecallEngine
 from recap.recall.reranker import build_reranker
 from recap.recorder.recorder import RunRecorder
+from recap.repair_compiler.candidate_generation import LLMCandidateGenerator
 from recap.repair_compiler.compiler import RepairCompiler
 from recap.repair_compiler.promotion import PromotionService
 from recap.repair_compiler.validation import ValidatorRegistry, build_default_registry
@@ -55,6 +64,8 @@ class Container:
     index_manager: IndexManager
     search_repository: ElasticsearchMemoryRepository
     validators: ValidatorRegistry
+    llm: ChatProvider | None = None
+    repair_llm: ChatProvider | None = None
 
     @classmethod
     def build(
@@ -65,6 +76,8 @@ class Container:
         database = Database(engine)
         client = es_client or build_client(settings.elasticsearch)
         embeddings = build_embedding_provider(settings.embeddings)
+        llm = build_chat_provider("llm", settings.llm)
+        repair_llm = build_chat_provider("repair_llm", settings.repair_llm)
         index_manager = IndexManager(client, settings.elasticsearch)
         search_repository = ElasticsearchMemoryRepository(
             client,
@@ -79,13 +92,101 @@ class Container:
             index_manager=index_manager,
             search_repository=search_repository,
             validators=build_default_registry(),
+            llm=llm,
+            repair_llm=repair_llm,
         )
 
     def migrate(self) -> None:
         Base.metadata.create_all(self.database.engine)
 
     def init_search(self) -> dict[str, object]:
+        # Validate the embedding role against the configured dimension before
+        # creating/moving the index. This is what prevents silently mixing
+        # incompatible vector spaces.
+        probe = self.embeddings.embed_query("recap embedding dimension probe")  # type: ignore[attr-defined]
+        actual = len(probe)
+        if actual != self.settings.embeddings.dimension:
+            from recap.errors import ConfigurationError
+
+            raise ConfigurationError(
+                "embedding provider returned an unexpected dimension",
+                details={
+                    "expected": self.settings.embeddings.dimension,
+                    "received": actual,
+                    "provider": self.settings.embeddings.provider,
+                    "model": self.settings.embeddings.model_id,
+                },
+            )
         return self.index_manager.initialize()
+
+    def provider_status(self) -> dict[str, object]:
+        return provider_report(
+            llm_settings=self.settings.llm,
+            repair_llm_settings=self.settings.repair_llm,
+            embedding_settings=self.settings.embeddings,
+            llm=self.llm,
+            repair_llm=self.repair_llm,
+            embeddings=self.embeddings,  # type: ignore[arg-type]
+        )
+
+    def provider_health(self, *, live: bool = False) -> dict[str, object]:
+        """Probe configured providers. Never prints or returns credentials."""
+        results: dict[str, object] = {}
+        for role, provider in (("agent_llm", self.llm), ("repair_llm", self.repair_llm)):
+            role_result: dict[str, object] = {"status": "disabled"}
+            if provider is not None:
+                try:
+                    role_result = dict(provider.health())
+                except Exception as exc:  # health boundary
+                    role_result = {
+                        "status": "error",
+                        "error": f"{type(exc).__name__}: {exc}",
+                    }
+                if live:
+                    try:
+                        reply = provider.chat([_probe_message()], max_tokens=16)
+                        role_result["live_chat"] = {
+                            "status": "ok",
+                            "content_length": len(reply.content),
+                            "tool_calls": len(reply.tool_calls),
+                        }
+                    except Exception as exc:  # health boundary
+                        role_result["live_chat"] = {
+                            "status": "error",
+                            "error": f"{type(exc).__name__}: {exc}",
+                        }
+            results[role] = role_result
+        embedding_health = getattr(self.embeddings, "health", None)
+        if callable(embedding_health):
+            try:
+                results["embeddings"] = embedding_health()
+            except Exception as exc:  # health boundary
+                results["embeddings"] = {
+                    "status": "error",
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+        else:
+            results["embeddings"] = {"status": "unknown"}
+        embedding_result = results["embeddings"]
+        if not isinstance(embedding_result, dict):
+            embedding_result = {"status": "unknown"}
+            results["embeddings"] = embedding_result
+        if live:
+            try:
+                vector = self.embeddings.embed_query("recap health probe")  # type: ignore[attr-defined]
+                embedding_result["live_embedding"] = {
+                    "status": "ok"
+                    if len(vector) == self.settings.embeddings.dimension
+                    else "error",
+                    "dimension": len(vector),
+                    "expected": self.settings.embeddings.dimension,
+                }
+            except Exception as exc:  # health boundary
+                embedding_result["live_embedding"] = {
+                    "status": "error",
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+        return results
 
     def health(self) -> dict[str, object]:
         result: dict[str, object] = {"database": "unknown", "elasticsearch": "unknown"}
@@ -99,6 +200,16 @@ class Container:
             result["elasticsearch"] = check_cluster(self.es_client)
         except SearchUnavailable as exc:
             result["elasticsearch"] = {"status": "unavailable", "detail": exc.message}
+        result["providers"] = {
+            "semantic_retrieval": bool(
+                getattr(
+                    getattr(self.embeddings, "capabilities", None), "semantic_embeddings", False
+                )
+            ),
+            "agent_llm": self.settings.llm.provider,
+            "repair_llm": self.settings.repair_llm.provider,
+            "embeddings": self.settings.embeddings.provider,
+        }
         return result
 
     @contextmanager
@@ -156,11 +267,21 @@ class Services:
             audit_repository=self.audit,
             index_sync=self.index_sync,
         )
+        generator = None
+        if self.settings.repair_compiler.generator == "llm":
+            if container.repair_llm is None:
+                from recap.errors import ConfigurationError
+
+                raise ConfigurationError(
+                    "repair_compiler.generator=llm requires a configured repair_llm provider"
+                )
+            generator = LLMCandidateGenerator(container.repair_llm)
         self.repair_compiler = RepairCompiler(
             settings=self.settings,
             run_repository=self.runs,
             repair_repository=self.repairs,
             validators=container.validators,
+            generator=generator,
         )
         self.promotion = PromotionService(
             settings=self.settings,
@@ -193,8 +314,10 @@ class ServicesContext:
 class IndexSynchronizer:
     """Index a memory and record the outbox entry atomically with the DB write.
 
-    If Elasticsearch fails, the outbox row remains pending so a later reconcile
-    run can repair the index without losing durable state.
+    The intent row is written before the embedding call so an embedding or
+    Elasticsearch outage leaves retryable work behind instead of losing it. If
+    Elasticsearch fails, the outbox row remains pending so a later worker run can
+    repair the index without losing durable state.
     """
 
     def __init__(
@@ -216,7 +339,6 @@ class IndexSynchronizer:
         from recap.domain.memories import build_embedding_text
 
         text = build_embedding_text(memory)
-        embedding = self.embeddings.embed_documents([text])[0]  # type: ignore[attr-defined]
         dedupe = f"index:{memory.id}:v{memory.memory_version}"
         self.outbox.enqueue(
             workspace_id=memory.workspace_id,
@@ -224,6 +346,17 @@ class IndexSynchronizer:
             operation="index",
             dedupe_key=dedupe,
         )
+        try:
+            embedding = self.embeddings.embed_documents([text])[0]  # type: ignore[attr-defined]
+        except (
+            EmbeddingUnavailable,
+            ProviderUnavailable,
+            ProviderAuthenticationError,
+            ProviderResponseError,
+        ) as exc:
+            self.last_error = exc.message
+            self.memories.mark_indexed(memory.id, 0, success=False)
+            return False
         try:
             self.search.index_memory(memory, embedding)
             self.memories.mark_indexed(
@@ -236,3 +369,7 @@ class IndexSynchronizer:
             self.last_error = exc.message
             self.memories.mark_indexed(memory.id, 0, success=False)
             return False
+
+
+def _probe_message() -> ChatMessage:
+    return ChatMessage(role="user", content="Reply with the single word: ok")

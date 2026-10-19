@@ -36,13 +36,17 @@ Elasticsearch 8.19.3 node. There are no stub endpoints in the implemented paths.
 | Benchmark with 6 baselines + safety audit | Working | `recap eval run`, `benchmark/reports/` |
 | Transactional outbox + retry worker | Working | `tests/unit/test_outbox_worker.py`, `recap search drain` |
 | Explicit memory versions + supersession | Working | `tests/unit/test_memory_versions.py`, `tests/e2e/test_lifecycle.py` |
+| API-first chat/embedding providers (OpenAI-compatible) | Implemented; live endpoint not configured in CI | `tests/unit/test_providers.py`, opt-in `tests/integration/test_live_providers.py` |
+| LLM repair-candidate generation with typed validation | Working when `REPAIR_GENERATOR=llm` | `tests/unit/test_llm_generator.py` |
 | End-to-end demo (10 steps) | Working | `recap demo run` |
 
 Honest limitations are listed in [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md). The
-most important one: the default embedding provider is a deterministic **hashing lexical
-embedder**, not a neural model, and the benchmark agent is a deterministic reference agent.
-Benchmark numbers therefore measure pipeline behaviour and safety properties, not LLM
-capability. Reports say so in their own headers.
+most important ones: the default embedding provider is a deterministic **hashing lexical
+embedder**, not a neural model, and the agent loop is still a deterministic reference agent.
+The real-model provider layer is implemented and unit-tested against the exact wire format,
+but no real endpoint is configured in CI, so live-provider tests skip there. Benchmark
+numbers measure pipeline behaviour and safety properties, not LLM capability. Reports and
+`recap providers` say which mode produced a result.
 
 ---
 
@@ -80,7 +84,33 @@ python scripts/run_smoke_test.py
 `run_smoke_test.py` is operator-facing: it prints each check as `PASS`/`FAIL` and exits
 non-zero on any deviation.
 
-### 4. Run the demo
+### 4. Configure real models (API-first)
+
+RECAP never downloads model weights. Point it at an already-running OpenAI-compatible
+endpoint:
+
+```bash
+export EMBEDDING_PROVIDER=openai_compatible
+export EMBEDDING_BASE_URL=https://api.example.com/v1
+export EMBEDDING_API_KEY=...
+export EMBEDDING_MODEL=text-embedding-3-small
+export EMBEDDING_DIMENSIONS=1536
+
+export LLM_PROVIDER=openai_compatible
+export LLM_BASE_URL=https://api.example.com/v1
+export LLM_API_KEY=...
+export LLM_MODEL=gpt-4.1-mini
+
+recap providers          # offline capability report, no secrets
+recap doctor --live      # probes configured endpoints, one small chat + embedding
+```
+
+`hashing`/`fake` embeddings remain available for offline development and unit tests, but they
+are reported as non-semantic. Production rejects them unless `EMBEDDING_ALLOW_DEGRADED=true`
+is explicitly set. The embedding dimension must match the Elasticsearch mapping; changing
+models requires a new index generation. Details: [`docs/providers.md`](docs/providers.md).
+
+### 5. Run the demo
 
 ```bash
 recap demo run
@@ -100,7 +130,7 @@ This executes the whole story end to end and writes `demo_report.md`:
 9. The v2 memory is retrieved and the run succeeds.
 10. Run the benchmark and emit JSON/CSV/Markdown reports.
 
-### 5. Benchmark
+### 6. Benchmark
 
 ```bash
 recap eval run --split dev
@@ -111,7 +141,7 @@ Reports land in `benchmark/reports/`. See
 [`docs/evaluation-methodology.md`](docs/evaluation-methodology.md) for what the numbers do
 and do not mean.
 
-### 6. HTTP API
+### 7. HTTP API
 
 ```bash
 recap serve --port 8000
@@ -127,6 +157,8 @@ recap serve --port 8000
 ```
 recap version
 recap health
+recap providers
+recap doctor [--live]
 recap serve
 
 recap db migrate | init
@@ -144,15 +176,17 @@ Every command performs real work. Nothing prints success for an operation that d
 ## Architecture in one paragraph
 
 PostgreSQL is the source of truth. Elasticsearch is a rebuildable index behind
-`recap-memories-read` / `recap-memories-write` aliases with a versioned index name. A run is
-recorded as an ordered event stream; a failure window is extracted from that stream; the
-RepairCompiler turns it into a typed, allowlisted strategy; validators execute it in a
-disposable mock environment; the PromotionService is the only path to `active`; and the
-RecallEngine fuses lexical and vector branches, applies hard filters, evaluates
-preconditions and compatibility, scores utility with logged features, and persists the full
-decision including *why each candidate was rejected*. MemoryShift watches outcomes and
-environment fingerprints, downgrades memories to `suspect`, and queues revalidation instead
-of silently rewriting history.
+`recap-memories-read` / `recap-memories-write` aliases with a versioned index name. Model
+access is isolated behind `ChatProvider`/`EmbeddingProvider` ports with independent agent,
+repair, and embedding roles; the remote adapters speak the OpenAI-compatible API and never
+download weights. A run is recorded as an ordered event stream; a failure window is extracted
+from that stream; the RepairCompiler turns it into a typed, allowlisted strategy; validators
+execute it in a disposable mock environment; the PromotionService is the only path to
+`active`; and the RecallEngine fuses lexical and vector branches, applies hard filters,
+evaluates preconditions and compatibility, scores utility with logged features, and persists
+the full decision including *why each candidate was rejected*. MemoryShift watches outcomes
+and environment fingerprints, downgrades memories to `suspect`, and queues revalidation
+instead of silently rewriting history.
 
 Deeper reading:
 
@@ -162,6 +196,7 @@ Deeper reading:
 - [`docs/repair-validation.md`](docs/repair-validation.md) — failure windows, validators, promotion
 - [`docs/drift-detection.md`](docs/drift-detection.md) — compatibility, degradation, revalidation
 - [`docs/evaluation-methodology.md`](docs/evaluation-methodology.md) — baselines, metrics, leakage
+- [`docs/providers.md`](docs/providers.md) — model roles, API endpoints, degraded mode, live tests
 - [`docs/threat-model.md`](docs/threat-model.md) — assets, attackers, controls, non-goals
 - [`docs/operations.md`](docs/operations.md) — runbook, health, recovery, failure modes
 
@@ -204,6 +239,16 @@ pytest --run-integration       # + live Postgres/Elasticsearch
 Integration tests are opt-in and use an isolated database (`recap_test`) and index prefix
 (`recap-test-*`), so they cannot touch development data.
 
+Live model-endpoint tests are additionally gated:
+
+```bash
+export RECAP_RUN_PROVIDER_INTEGRATION=1
+pytest tests/integration/test_live_providers.py --run-integration
+```
+
+They skip when no real endpoint is configured. They are the only acceptable evidence for
+real-model integration; mocked transport tests and the deterministic demo are not.
+
 Windows note: `make` is often unavailable. `scripts/dev_targets.py` mirrors the Makefile
 targets; `Makefile` works on Unix and in CI.
 
@@ -216,6 +261,7 @@ src/recap/
   recall/            query building, eligibility, applicability, utility policy, engine
   repair_compiler/   failure windows, generation, validation, promotion
   memory_shift/      compatibility, degradation, revalidation
+  providers/         ChatProvider/EmbeddingProvider ports + OpenAI-compatible adapters
   infrastructure/    SQLAlchemy, Elasticsearch, embeddings
   environments/      deterministic mock API + reference agent
   evals/             datasets, metrics, benchmark runner

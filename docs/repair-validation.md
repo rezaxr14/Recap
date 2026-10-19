@@ -66,7 +66,7 @@ run events
 [extract_failure_window]  bounded to N events, normalized signature, error code
    |
    v
-[DeterministicGenerator]  drafts from allowlisted templates
+[CandidateGenerator]        deterministic templates or configured repair LLM
    |
    v
 [validate_draft]          schema, bounds, evidence linkage, secret check
@@ -110,13 +110,16 @@ is what makes a memory reusable across runs rather than tied to one literal mess
 | not found | `verify_resource_exists` |
 | unrecognized | no candidate |
 
-The generator is deterministic by design. An LLM generator would be a drop-in behind the
-`CandidateGenerator` protocol, but it would not change the validation contract: generated
-content is untrusted until it passes execution.
+The default generator is deterministic by design. The optional LLM generator
+(`REPAIR_GENERATOR=llm`) calls the configured `repair_llm` role and receives only bounded,
+already-redacted events from the failure window. It is behind the same `CandidateGenerator`
+protocol and the same validation contract: model output is untrusted until it passes schema,
+real-event-ID, and execution checks. The model has no field that can claim validation passed
+and no path to promotion.
 
 `validate_draft` rejects drafts that:
 
-- reference evidence events not in the run
+- reference evidence events not in the run or outside the failure window
 - use a non-allowlisted action type
 - exceed `max_strategy_actions`
 - omit preconditions or postconditions

@@ -66,6 +66,27 @@ class EmbeddingUnavailable(RecapError):
     http_status = 503
 
 
+class ProviderUnavailable(RecapError):
+    """A configured model endpoint is unreachable, rate-limited, or failing."""
+
+    code = "provider_unavailable"
+    http_status = 503
+
+
+class ProviderAuthenticationError(RecapError):
+    """The provider rejected the configured credentials."""
+
+    code = "provider_auth_error"
+    http_status = 502
+
+
+class ProviderResponseError(RecapError):
+    """The provider responded, but not with a usable result."""
+
+    code = "provider_response_error"
+    http_status = 502
+
+
 class ConfigurationError(RecapError):
     code = "configuration_error"
     http_status = 500

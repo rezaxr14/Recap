@@ -73,6 +73,72 @@ def health(config: str | None = None) -> None:
     console.print_json(json.dumps(result, default=str))
 
 
+@app.command()
+def providers(config: str | None = None) -> None:
+    """Report configured model roles, models, and declared capabilities.
+
+    No network request is made and no credential is printed. Use ``recap doctor``
+    to probe reachability.
+    """
+    try:
+        container = _container(config)
+        report = container.provider_status()
+    except Exception as exc:
+        _fail(exc)
+        return
+    console.print_json(json.dumps(report, indent=2, default=str))
+
+
+@app.command()
+def doctor(
+    config: str | None = None,
+    live: Annotated[
+        bool, typer.Option("--live", help="Make a small real chat/embedding call")
+    ] = False,
+) -> None:
+    """Check database, Elasticsearch, and configured provider endpoints."""
+    try:
+        container = _container(config)
+        result = container.health()
+        result["providers_health"] = container.provider_health(live=live)
+    except Exception as exc:
+        _fail(exc)
+        return
+    console.print_json(json.dumps(result, indent=2, default=str))
+
+    failures: list[str] = []
+    if result.get("database") != "ok":
+        failures.append("database")
+    elasticsearch = result.get("elasticsearch")
+    if isinstance(elasticsearch, dict) and elasticsearch.get("status") in {
+        "unavailable",
+        "error",
+    }:
+        failures.append("elasticsearch")
+    provider_health = result.get("providers_health")
+    if isinstance(provider_health, dict):
+        for role, status in provider_health.items():
+            if not isinstance(status, dict):
+                continue
+            if status.get("status") in {"error"}:
+                failures.append(role)
+            for key in ("live_chat", "live_embedding"):
+                check = status.get(key)
+                if isinstance(check, dict) and check.get("status") == "error":
+                    failures.append(f"{role}:{key}")
+    if failures:
+        console.print(f"[red]doctor found failures: {', '.join(failures)}[/red]")
+        raise typer.Exit(code=1)
+    providers_info = result.get("providers")
+    semantic = isinstance(providers_info, dict) and bool(providers_info.get("semantic_retrieval"))
+    if not semantic:
+        console.print(
+            "[yellow]degraded mode: semantic retrieval is disabled "
+            "(lexical/test embedding provider)[/yellow]"
+        )
+    console.print("[green]all checks passed[/green]")
+
+
 # ---------------------------------------------------------------------- db
 @db_app.command("migrate")
 def db_migrate(config: str | None = None) -> None:

@@ -108,10 +108,10 @@ failed run events
 extract_failure_window      (bounded, normalized signature, error code)
       |
       v
-DeterministicGenerator      (typed drafts from allowlisted templates)
+CandidateGenerator          (deterministic templates or configured repair LLM)
       |
       v
-validate_draft              (schema, bounds, evidence linkage)
+validate_draft              (schema, bounds, real event-ID linkage)
       |
       v
 StaticValidator             (no execution)
@@ -123,8 +123,11 @@ MockSandboxValidator        (real execution in a disposable environment)
 PromotionService            (the only path to `active`)
 ```
 
-The compiler may return no candidates. "No repair" is a valid, recorded outcome and is
-preferable to a plausible-looking but unvalidated one.
+The deterministic generator is the default and keeps the demo reproducible. The LLM
+generator passes only bounded, already-redacted events from the failure window and has no
+capability to bypass validation, widen permissions, or promote itself. The compiler may
+return no candidates. "No repair" is a valid, recorded outcome and is preferable to a
+plausible-looking but unvalidated one.
 
 ### 2.5 MemoryShift (`src/recap/memory_shift/`)
 
@@ -144,7 +147,15 @@ revalidation; the old version and its audit trail remain intact.
   production and dev, SQLite tolerated for fast tests.
 - `infrastructure/elasticsearch/`: client, mappings, index manager, query DSL, hybrid
   fusion, search repository.
-- `infrastructure/embeddings/`: provider protocol + hashing/fake/sentence-transformers.
+- `infrastructure/embeddings/`: embedding factory: hashing/fake/local adapters plus the
+  OpenAI-compatible API adapter.
+- `providers/`: `ChatProvider`/`EmbeddingProvider` ports, capability metadata,
+  OpenAI-compatible HTTP client (retries, auth mapping, structured output, tool calls), and
+  redacted role reporting. Model access never leaks into domain policy.
+
+All remote model calls go through `providers/`. The adapters speak the OpenAI-compatible
+wire format and require an already-running endpoint; RECAP does not download weights. There
+is no silent fallback from a real provider to a fake one.
 
 All Elasticsearch DSL is confined to `infrastructure/elasticsearch/`. Version-sensitive
 syntax never leaks into business logic.
@@ -252,9 +263,10 @@ MemoryShiftService.on_incompatible_environment(memory, environment)
 
 | Port | Current implementation | How to extend |
 |---|---|---|
-| `EmbeddingProvider` | hashing, fake, sentence-transformers | implement `embed_documents`/`embed_query`, set `embeddings.provider` |
+| `EmbeddingProvider` | OpenAI-compatible API, hashing, fake, local sentence-transformers | implement `embed_documents`/`embed_query`, add capabilities, set `embeddings.provider` |
+| `ChatProvider` | OpenAI-compatible API (agent and repair roles) | implement `chat`/`generate_structured`, set `llm.provider` or `repair_llm.provider` |
 | `Validator` | static, mock sandbox | implement `validate()`, register in `build_default_registry()` |
-| `CandidateGenerator` | deterministic | implement `generate()`, inject into `RepairCompiler` |
+| `CandidateGenerator` | deterministic; LLM adapter wired | implement `generate(events=...)`, inject into `RepairCompiler` |
 | Reranker | `LexicalReranker` (`hybrid_rerank`) | implement the `Reranker` protocol and set `recall.reranker` |
 | Environment | mock API v1/v2 | implement a fingerprint + tool registry |
 
@@ -266,4 +278,8 @@ ones:
 - no always-on scheduler: the outbox worker (`recap search drain`) is pull-based and
   revalidation jobs are processed on demand
 - no run-level memory snapshot pinning
+- the agent loop is still the deterministic reference agent; the configured `llm` role is
+  wired into the provider layer but does not yet drive tool selection
+- live-provider acceptance requires an operator-configured endpoint and is not exercised by CI
+- benchmark reports currently use deterministic/hashing components, not real-model numbers
 - no authentication layer; `workspace_id` is a data boundary, not an identity

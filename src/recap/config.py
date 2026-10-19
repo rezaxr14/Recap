@@ -56,17 +56,66 @@ class ElasticsearchSettings(BaseModel):
 
 
 class EmbeddingSettings(BaseModel):
+    """Embedding role. Never downloads weights; ``openai_compatible`` calls an API."""
+
     provider: str = "hashing"
     model_id: str = "recap-hashing-embedding-v1"
     model_version: str = "1"
     dimension: int = 256
     batch_size: int = 32
+    base_url: str = ""
+    api_key: str = ""
+    timeout_seconds: float = 30.0
+    max_retries: int = 2
+    retry_backoff_seconds: float = 0.5
+    send_dimensions: bool = False
+    model_path: str = ""
+    # A lexical hashing/fake embedder is allowed in local development and
+    # tests. Production and any deployment that claims semantic RAG must set a
+    # real provider, or explicitly acknowledge the degraded mode here.
+    allow_degraded: bool = False
 
     @field_validator("provider")
     @classmethod
     def _known_provider(cls, value: str) -> str:
-        if value not in {"hashing", "fake", "sentence-transformers"}:
-            raise ValueError("provider must be hashing|fake|sentence-transformers")
+        if value not in {
+            "hashing",
+            "fake",
+            "openai_compatible",
+            "sentence-transformers",
+        }:
+            raise ValueError(
+                "provider must be hashing|fake|openai_compatible|sentence-transformers"
+            )
+        return value
+
+
+class LlmSettings(BaseModel):
+    """One chat/completions role (agent or repair compiler)."""
+
+    provider: str = "disabled"
+    base_url: str = ""
+    api_key: str = ""
+    model: str = ""
+    timeout_seconds: float = 60.0
+    max_retries: int = 2
+    retry_backoff_seconds: float = 0.5
+    temperature: float = 0.0
+    max_tokens: int = 0
+    structured_mode: str = "json_schema"
+
+    @field_validator("provider")
+    @classmethod
+    def _known_provider(cls, value: str) -> str:
+        if value not in {"disabled", "openai_compatible"}:
+            raise ValueError("provider must be disabled|openai_compatible")
+        return value
+
+    @field_validator("structured_mode")
+    @classmethod
+    def _known_structured_mode(cls, value: str) -> str:
+        if value not in {"json_schema", "json_object"}:
+            raise ValueError("structured_mode must be json_schema|json_object")
         return value
 
 
@@ -102,11 +151,19 @@ class ReliabilitySettings(BaseModel):
 
 class RepairCompilerSettings(BaseModel):
     enabled: bool = True
+    generator: str = "deterministic"
     max_failure_window_events: int = 20
     max_candidate_generation_attempts: int = 2
     require_validation_for_promotion: bool = True
     max_validation_trials: int = 10
     max_strategy_actions: int = 8
+
+    @field_validator("generator")
+    @classmethod
+    def _known_generator(cls, value: str) -> str:
+        if value not in {"deterministic", "llm"}:
+            raise ValueError("generator must be deterministic|llm")
+        return value
 
 
 class MemoryShiftSettings(BaseModel):
@@ -129,6 +186,8 @@ class Settings(BaseModel):
     storage: StorageSettings = Field(default_factory=StorageSettings)
     elasticsearch: ElasticsearchSettings = Field(default_factory=ElasticsearchSettings)
     embeddings: EmbeddingSettings = Field(default_factory=EmbeddingSettings)
+    llm: LlmSettings = Field(default_factory=LlmSettings)
+    repair_llm: LlmSettings = Field(default_factory=LlmSettings)
     recall: RecallSettings = Field(default_factory=RecallSettings)
     reliability: ReliabilitySettings = Field(default_factory=ReliabilitySettings)
     repair_compiler: RepairCompilerSettings = Field(default_factory=RepairCompilerSettings)
@@ -137,8 +196,12 @@ class Settings(BaseModel):
 
     def safe_dump(self) -> dict[str, Any]:
         data = self.model_dump()
-        data["storage"]["postgres_url"] = _redact_url(data["storage"]["postgres_url"])
+        data["storage"]["postgres_url"] = redact_url(data["storage"]["postgres_url"])
+        data["elasticsearch"]["url"] = redact_url(data["elasticsearch"]["url"])
         data["elasticsearch"]["api_key"] = "***" if self.elasticsearch.api_key else ""
+        for section in ("embeddings", "llm", "repair_llm"):
+            data[section]["api_key"] = "***" if data[section].get("api_key") else ""
+            data[section]["base_url"] = redact_url(data[section].get("base_url") or "")
         return data
 
     def validate_consistency(self) -> None:
@@ -152,9 +215,59 @@ class Settings(BaseModel):
             )
         if not 0.0 <= self.recall.no_safe_memory_threshold <= 1.0:
             raise ConfigurationError("recall.no_safe_memory_threshold must be within [0, 1]")
+        self._validate_embedding_role()
+        self._validate_llm_role("llm", self.llm)
+        self._validate_llm_role("repair_llm", self.repair_llm)
+        if self.repair_compiler.generator == "llm" and self.repair_llm.provider == "disabled":
+            raise ConfigurationError(
+                "repair_compiler.generator=llm requires a configured repair_llm provider; "
+                "set REPAIR_LLM_PROVIDER/REPAIR_LLM_BASE_URL/REPAIR_LLM_MODEL or switch the "
+                "generator back to deterministic"
+            )
+        if (
+            self.app.environment == "production"
+            and self.embeddings.provider in {"hashing", "fake"}
+            and not self.embeddings.allow_degraded
+        ):
+            raise ConfigurationError(
+                "production requires a real embedding provider (openai_compatible) unless "
+                "embeddings.allow_degraded is explicitly true; RECAP must not silently claim "
+                "semantic retrieval while using a lexical hash embedder"
+            )
+
+    def _validate_embedding_role(self) -> None:
+        embeddings = self.embeddings
+        if embeddings.dimension < 1:
+            raise ConfigurationError("embeddings.dimension must be >= 1")
+        if embeddings.provider == "openai_compatible":
+            if not embeddings.base_url.strip():
+                raise ConfigurationError(
+                    "embeddings.base_url is required for provider=openai_compatible"
+                )
+            if not embeddings.model_id.strip() or embeddings.model_id == (
+                "recap-hashing-embedding-v1"
+            ):
+                raise ConfigurationError(
+                    "embeddings.model_id is required for provider=openai_compatible; the "
+                    "hashing default is not a real embedding model"
+                )
+        if embeddings.provider == "sentence-transformers" and not embeddings.model_path:
+            raise ConfigurationError(
+                "provider=sentence-transformers requires embeddings.model_path pointing at an "
+                "already-downloaded local model directory; RECAP never downloads weights"
+            )
+
+    @staticmethod
+    def _validate_llm_role(role: str, settings: LlmSettings) -> None:
+        if settings.provider == "disabled":
+            return
+        if not settings.base_url.strip():
+            raise ConfigurationError(f"{role}.base_url is required for provider=openai_compatible")
+        if not settings.model.strip():
+            raise ConfigurationError(f"{role}.model is required for provider=openai_compatible")
 
 
-def _redact_url(url: str) -> str:
+def redact_url(url: str) -> str:
     if "@" not in url:
         return url
     scheme, _, rest = url.partition("://")
@@ -163,28 +276,108 @@ def _redact_url(url: str) -> str:
 
 
 def _apply_env_overrides(raw: dict[str, Any]) -> dict[str, Any]:
-    mapping = {
-        "DATABASE_URL": ("storage", "postgres_url"),
-        "ELASTICSEARCH_URL": ("elasticsearch", "url"),
-        "ELASTICSEARCH_API_KEY": ("elasticsearch", "api_key"),
-        "RECAP_LOG_LEVEL": ("app", "log_level"),
-        "RECAP_ENVIRONMENT": ("app", "environment"),
-        "RECAP_EMBEDDING_PROVIDER": ("embeddings", "provider"),
-        "RECAP_EMBEDDING_DIMENSION": ("embeddings", "dimension"),
-        "RECAP_VECTOR_DIMENSION": ("elasticsearch", "vector_dimension"),
-        "RECAP_INDEX_GENERATION": ("elasticsearch", "index_generation"),
-        "RECAP_RERANKER": ("recall", "reranker"),
-    }
-    for env_name, (section, key) in mapping.items():
-        value = os.environ.get(env_name)
-        if value is None or value == "":
+    """Apply supported environment variables, later entries winning.
+
+    Unprefixed names follow the README/provider conventions; ``RECAP_``-prefixed
+    aliases are kept for existing deployments and take precedence.
+    """
+
+    dimension_from_embedding_env = False
+    vector_dimension_explicit = bool(
+        os.environ.get("RECAP_VECTOR_DIMENSION") or os.environ.get("ELASTICSEARCH_VECTOR_DIMENSION")
+    )
+
+    mapping: list[tuple[str, str, str, str]] = [
+        ("DATABASE_URL", "storage", "postgres_url", "str"),
+        ("ELASTICSEARCH_URL", "elasticsearch", "url", "str"),
+        ("ELASTICSEARCH_API_KEY", "elasticsearch", "api_key", "str"),
+        ("RECAP_LOG_LEVEL", "app", "log_level", "str"),
+        ("RECAP_ENVIRONMENT", "app", "environment", "str"),
+        # Embedding role.
+        ("EMBEDDING_PROVIDER", "embeddings", "provider", "str"),
+        ("EMBEDDING_BASE_URL", "embeddings", "base_url", "str"),
+        ("EMBEDDING_API_KEY", "embeddings", "api_key", "str"),
+        ("EMBEDDING_MODEL", "embeddings", "model_id", "str"),
+        ("EMBEDDING_MODEL_VERSION", "embeddings", "model_version", "str"),
+        ("EMBEDDING_DIMENSIONS", "embeddings", "dimension", "int"),
+        ("EMBEDDING_BATCH_SIZE", "embeddings", "batch_size", "int"),
+        ("EMBEDDING_TIMEOUT_SECONDS", "embeddings", "timeout_seconds", "float"),
+        ("EMBEDDING_MAX_RETRIES", "embeddings", "max_retries", "int"),
+        ("EMBEDDING_SEND_DIMENSIONS", "embeddings", "send_dimensions", "bool"),
+        ("EMBEDDING_MODEL_PATH", "embeddings", "model_path", "str"),
+        ("EMBEDDING_ALLOW_DEGRADED", "embeddings", "allow_degraded", "bool"),
+        ("RECAP_EMBEDDING_PROVIDER", "embeddings", "provider", "str"),
+        ("RECAP_EMBEDDING_DIMENSION", "embeddings", "dimension", "int"),
+        ("RECAP_EMBEDDING_ALLOW_DEGRADED", "embeddings", "allow_degraded", "bool"),
+        # Agent LLM role.
+        ("LLM_PROVIDER", "llm", "provider", "str"),
+        ("LLM_BASE_URL", "llm", "base_url", "str"),
+        ("LLM_API_KEY", "llm", "api_key", "str"),
+        ("LLM_MODEL", "llm", "model", "str"),
+        ("LLM_TIMEOUT_SECONDS", "llm", "timeout_seconds", "float"),
+        ("LLM_MAX_RETRIES", "llm", "max_retries", "int"),
+        ("LLM_TEMPERATURE", "llm", "temperature", "float"),
+        ("LLM_MAX_TOKENS", "llm", "max_tokens", "int"),
+        ("LLM_STRUCTURED_MODE", "llm", "structured_mode", "str"),
+        ("RECAP_LLM_PROVIDER", "llm", "provider", "str"),
+        # RepairCompiler LLM role.
+        ("REPAIR_LLM_PROVIDER", "repair_llm", "provider", "str"),
+        ("REPAIR_LLM_BASE_URL", "repair_llm", "base_url", "str"),
+        ("REPAIR_LLM_API_KEY", "repair_llm", "api_key", "str"),
+        ("REPAIR_LLM_MODEL", "repair_llm", "model", "str"),
+        ("REPAIR_LLM_TIMEOUT_SECONDS", "repair_llm", "timeout_seconds", "float"),
+        ("REPAIR_LLM_MAX_RETRIES", "repair_llm", "max_retries", "int"),
+        ("REPAIR_LLM_TEMPERATURE", "repair_llm", "temperature", "float"),
+        ("REPAIR_LLM_MAX_TOKENS", "repair_llm", "max_tokens", "int"),
+        ("REPAIR_LLM_STRUCTURED_MODE", "repair_llm", "structured_mode", "str"),
+        ("RECAP_REPAIR_LLM_PROVIDER", "repair_llm", "provider", "str"),
+        # Compiler and retrieval.
+        ("REPAIR_GENERATOR", "repair_compiler", "generator", "str"),
+        ("RECAP_REPAIR_GENERATOR", "repair_compiler", "generator", "str"),
+        ("RECAP_RERANKER", "recall", "reranker", "str"),
+        ("RECAP_VECTOR_DIMENSION", "elasticsearch", "vector_dimension", "int"),
+        ("ELASTICSEARCH_VECTOR_DIMENSION", "elasticsearch", "vector_dimension", "int"),
+        ("RECAP_INDEX_GENERATION", "elasticsearch", "index_generation", "int"),
+    ]
+    for env_name, section, key, kind in mapping:
+        value = _read_env(env_name, kind)
+        if value is None:
             continue
         raw.setdefault(section, {})
-        if key in {"dimension", "vector_dimension", "index_generation"}:
-            raw[section][key] = int(value)
-        else:
-            raw[section][key] = value
+        raw[section][key] = value
+        if section == "embeddings" and key == "dimension":
+            dimension_from_embedding_env = True
+
+    reranker_enabled = _read_env("RERANKER_ENABLED", "bool")
+    if reranker_enabled is False:
+        raw.setdefault("recall", {})["reranker"] = "none"
+
+    # A single embedding dimension should not require setting the ES mapping
+    # dimension twice. An explicit vector dimension still wins.
+    if dimension_from_embedding_env and not vector_dimension_explicit:
+        raw.setdefault("elasticsearch", {})["vector_dimension"] = raw["embeddings"]["dimension"]
     return raw
+
+
+def _read_env(name: str, kind: str) -> Any:
+    value = os.environ.get(name)
+    if value is None or value.strip() == "":
+        return None
+    try:
+        if kind == "int":
+            return int(value)
+        if kind == "float":
+            return float(value)
+        if kind == "bool":
+            lowered = value.strip().lower()
+            if lowered in {"1", "true", "yes", "on"}:
+                return True
+            if lowered in {"0", "false", "no", "off"}:
+                return False
+            raise ValueError(f"{name} must be a boolean")
+        return value
+    except ValueError as exc:
+        raise ConfigurationError(f"invalid value for {name}: {value}") from exc
 
 
 def load_settings(path: str | Path | None = None) -> Settings:

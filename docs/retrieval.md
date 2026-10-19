@@ -37,13 +37,20 @@ matching dominates when present.
 
 ### 2.2 Dense vector
 
-`knn` over `content_embedding` (cosine, HNSW, 256 dimensions by default).
+`knn` over `content_embedding` (cosine, HNSW; dimension comes from
+`embeddings.dimension` and must match the mapping).
 
-**Important:** the default embedder is `HashingEmbeddingProvider` — a deterministic lexical
-hash projection, not a neural model. It exists so the vector branch is exercised without a
-model download or API key. It captures token overlap, not semantics. A real neural provider
-can be enabled with `pip install -e ".[sentence-transformers]"` and
-`RECAP_EMBEDDING_PROVIDER=sentence-transformers`.
+**Important:** semantic retrieval requires a real embedding endpoint. Configure
+`EMBEDDING_PROVIDER=openai_compatible` with `EMBEDDING_BASE_URL`, `EMBEDDING_MODEL`, and
+`EMBEDDING_DIMENSIONS`; RECAP calls an already-running API and never downloads weights. The
+default local embedder is `HashingEmbeddingProvider` — a deterministic lexical hash
+projection, not a neural model. It exists so the pipeline runs offline, captures token
+overlap rather than semantics, and is reported as `semantic_retrieval=false`. A local
+`sentence-transformers` directory can be used with `EMBEDDING_MODEL_PATH`, but it must already
+exist; downloads are disabled.
+
+Changing the model or dimension requires a new index generation and a full reconcile. A
+mismatch fails before the index is created or written; vectors are never truncated or padded.
 
 ### 2.3 Hybrid fusion
 

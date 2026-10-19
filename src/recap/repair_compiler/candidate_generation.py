@@ -7,6 +7,8 @@ validated identically: schema, allowlist, evidence references, and size limits.
 
 from __future__ import annotations
 
+import json
+from collections.abc import Sequence
 from typing import Any, Protocol
 
 from pydantic import BaseModel, Field
@@ -16,6 +18,7 @@ from recap.config import RepairCompilerSettings
 from recap.domain.enums import ActionType, RiskLevel, SideEffectClass
 from recap.domain.predicates import Predicate
 from recap.domain.repairs import DiagnosisHypothesis, FailureWindow, RepairCandidate
+from recap.domain.runs import RunEvent
 from recap.domain.strategies import RepairStrategy, StrategyAction
 from recap.errors import ValidationError
 
@@ -39,7 +42,11 @@ class CandidateGenerator(Protocol):
     name: str
 
     def generate(
-        self, *, window: FailureWindow, environment: dict[str, Any]
+        self,
+        *,
+        window: FailureWindow,
+        environment: dict[str, Any],
+        events: Sequence[RunEvent] | None = None,
     ) -> list[CandidateDraft]: ...
 
 
@@ -52,7 +59,11 @@ class DeterministicGenerator:
     name = "deterministic-generator-v1"
 
     def generate(
-        self, *, window: FailureWindow, environment: dict[str, Any]
+        self,
+        *,
+        window: FailureWindow,
+        environment: dict[str, Any],
+        events: Sequence[RunEvent] | None = None,
     ) -> list[CandidateDraft]:
         if window.incomplete:
             return []
@@ -264,27 +275,45 @@ class LLMCandidateGenerator:
 
     Model output is validated with the same strict schema and evidence checks as
     deterministic drafts. Malformed output raises; it is never silently promoted.
+    The prompt contains only redacted, bounded event evidence from the failure
+    window, and the model is told that its proposal is a hypothesis.
     """
 
     name = "llm-generator-v1"
+    MAX_EVENT_CHARS = 800
 
     def __init__(self, provider: Any) -> None:
         self.provider = provider
 
     def generate(
-        self, *, window: FailureWindow, environment: dict[str, Any]
+        self,
+        *,
+        window: FailureWindow,
+        environment: dict[str, Any],
+        events: Sequence[RunEvent] | None = None,
     ) -> list[CandidateDraft]:
         schema = CandidateDraft.model_json_schema()
-        prompt = (
-            "Return JSON matching the schema. Cite only these event ids: "
-            f"{window.event_ids}. Failure category: {window.failure_category}."
+        evidence = _bounded_evidence(window, events)
+        user_prompt = (
+            "Propose one minimal, typed recovery strategy for the failure below.\n"
+            "Return only a JSON object matching the provided schema.\n"
+            "Cite only event ids that appear in the evidence. Do not invent observations, "
+            "do not claim that validation passed, and do not use destructive actions.\n\n"
+            f"Failure window:\n{json.dumps(window.model_dump(mode='json'), default=str, indent=2)}\n\n"
+            f"Environment:\n{json.dumps(environment, default=str, indent=2)}\n\n"
+            f"Evidence events (already redacted):\n"
+            f"{json.dumps(evidence, default=str, indent=2)}\n\n"
+            f"JSON schema:\n{json.dumps(schema, indent=2)}"
         )
         raw = self.provider.generate_structured(
             system_prompt=(
-                "You propose a minimal recovery strategy as a hypothesis. You cannot claim "
-                "validation passed. Use only allowlisted typed actions."
+                "You are RepairCompiler. You propose a single recovery hypothesis from "
+                "execution evidence. The proposal is untrusted until it is independently "
+                "validated by running it in an approved environment. Use only allowlisted "
+                "typed actions and cite real evidence event ids. Return only JSON that "
+                "matches the supplied schema."
             ),
-            user_prompt=prompt,
+            user_prompt=user_prompt,
             schema=schema,
         )
         try:
@@ -292,3 +321,36 @@ class LLMCandidateGenerator:
         except PydanticValidationError as exc:
             raise ValidationError(f"invalid candidate schema: {exc}") from exc
         return [draft]
+
+
+def _bounded_evidence(
+    window: FailureWindow, events: Sequence[RunEvent] | None
+) -> list[dict[str, Any]]:
+    """Bounded, redacted evidence for the prompt.
+
+    Payloads are already redacted at persistence. This function only bounds size
+    and never adds facts that were absent from the trace.
+    """
+    if events is None:
+        return [{"event_id": event_id} for event_id in window.event_ids[:20]]
+    wanted = set(window.event_ids)
+    evidence: list[dict[str, Any]] = []
+    for event in events:
+        if event.id not in wanted:
+            continue
+        payload = event.payload_redacted or {}
+        serialized = json.dumps(payload, default=str, sort_keys=True)
+        if len(serialized) > LLMCandidateGenerator.MAX_EVENT_CHARS:
+            serialized = serialized[: LLMCandidateGenerator.MAX_EVENT_CHARS] + "...[truncated]"
+        evidence.append(
+            {
+                "event_id": event.id,
+                "sequence_number": event.sequence_number,
+                "event_type": str(event.event_type),
+                "tool_name": event.tool_name or "",
+                "payload": serialized,
+            }
+        )
+        if len(evidence) >= 20:
+            break
+    return evidence

@@ -15,6 +15,8 @@ import re
 from collections import Counter
 from collections.abc import Sequence
 
+from recap.providers.base import ProviderCapabilities
+
 TOKEN_RE = re.compile(r"[a-z0-9_]+")
 STOPWORDS = {
     "the",
@@ -67,11 +69,29 @@ def tokenize(text: str) -> list[str]:
 class HashingEmbeddingProvider:
     model_id = "recap-hashing-embedding-v1"
     model_version = "1"
+    provider_type = "hashing"
 
     def __init__(self, dimension: int = 256) -> None:
         if dimension < 16:
             raise ValueError("embedding dimension must be >= 16")
         self.dimension = dimension
+        self.capabilities = ProviderCapabilities(
+            provider_type=self.provider_type,
+            model=self.model_id,
+            embeddings=True,
+            semantic_embeddings=False,
+            notes=("deterministic lexical feature hashing; not a neural semantic model",),
+        )
+
+    def health(self) -> dict[str, object]:
+        return {
+            "status": "ok",
+            "mode": "local_deterministic",
+            "semantic": False,
+            "model": self.model_id,
+            "dimension": self.dimension,
+            "detail": "lexical hashing embedder; semantic RAG is disabled",
+        }
 
     def _embed(self, text: str) -> list[float]:
         counts = Counter(tokenize(text))

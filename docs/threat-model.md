@@ -170,7 +170,9 @@ confident garbage.
 
 **Controls:**
 
-- `max_event_payload_bytes` (64 KiB default).
+- `max_event_payload_bytes` (64 KiB default). Enforced in `RunRecorder` on the canonical
+  encoding **before** redaction, hashing, or persistence; oversized events are rejected with
+  a structured `validation_error` and no row is written.
 - `max_failure_window_events` (20).
 - `max_candidates` (100), `max_strategy_actions` (8), `max_validation_trials` (10).
 - Sequence-jump guard (10,000).
@@ -213,7 +215,13 @@ authentication would violate the model in this document.
 
 ## 6. Security test coverage
 
-`tests/integration/test_security.py` (13 tests) covers, among other things:
+`tests/integration/test_security.py` (16 tests) covers, among other things:
+
+- prompt-shaped memory text is returned as inert data and never becomes an action
+- oversized event payloads are rejected before persistence (unit: `test_run_recorder.py`)
+- a visually confusable failure code (digit zero vs uppercase O) does not satisfy a
+  precondition
+- SQL metacharacters in `workspace_id` cannot escape scope in SQL or Elasticsearch
 
 - secret values do not appear in stored event payloads
 - secret values do not appear in API responses

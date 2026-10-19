@@ -127,7 +127,9 @@ class Services:
         self.revalidation = SqlRevalidationRepository(session)
         self.environments = SqlEnvironmentRepository(session)
         self.outbox = SqlOutboxRepository(session)
-        self.recorder = RunRecorder(self.runs)
+        self.recorder = RunRecorder(
+            self.runs, max_payload_bytes=self.settings.storage.max_event_payload_bytes
+        )
 
         self.index_sync = IndexSynchronizer(
             container.search_repository,

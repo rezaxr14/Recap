@@ -120,6 +120,46 @@ def test_secrets_are_redacted_before_persistence(recorder: RunRecorder) -> None:
     assert stored.redaction_applied is True
 
 
+def test_oversized_payload_is_rejected_before_persistence(recorder: RunRecorder) -> None:
+    run = recorder.start_run(_run())
+    with pytest.raises(ValidationError) as error:
+        recorder.append_event(
+            run,
+            RunEventCreate(
+                sequence_number=1,
+                event_type=EventType.TASK_OBSERVATION,
+                payload={"blob": "x" * 70_000},
+            ),
+        )
+    assert error.value.code == "validation_error"
+    assert error.value.details["max_payload_bytes"] == 65_536
+    assert error.value.details["payload_bytes"] > 65_536
+    assert recorder.repository.list_events(run.id) == []
+
+
+def test_custom_payload_limit_is_enforced() -> None:
+    database = Database(build_engine("sqlite+pysqlite:///:memory:"))
+    database.create_all()
+    session = database.session_factory()
+    try:
+        with pytest.raises(ValueError):
+            RunRecorder(SqlRunRepository(session), max_payload_bytes=0)
+        recorder = RunRecorder(SqlRunRepository(session), max_payload_bytes=64)
+        run = recorder.start_run(_run())
+        with pytest.raises(ValidationError):
+            recorder.append_event(
+                run,
+                RunEventCreate(
+                    sequence_number=1,
+                    event_type=EventType.TASK_OBSERVATION,
+                    payload={"detail": "x" * 64},
+                ),
+            )
+        assert recorder.repository.list_events(run.id) == []
+    finally:
+        session.close()
+
+
 def test_cannot_append_to_finished_run(recorder: RunRecorder) -> None:
     run = recorder.start_run(_run())
     finished = recorder.finish_run(run, status=RunStatus.FAILED, failure_type="x")

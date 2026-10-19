@@ -27,6 +27,9 @@ def payload_hash(payload: dict[str, Any]) -> str:
     return f"sha256:{hashlib.sha256(canonical_json(payload).encode()).hexdigest()}"
 
 
+DEFAULT_MAX_EVENT_PAYLOAD_BYTES = 65_536
+
+
 class RunRecorder:
     """Domain service for run recording. Storage-agnostic.
 
@@ -38,8 +41,13 @@ class RunRecorder:
       - list_events(run_id) -> list[RunEvent]
     """
 
-    def __init__(self, repository: Any) -> None:
+    def __init__(
+        self, repository: Any, *, max_payload_bytes: int = DEFAULT_MAX_EVENT_PAYLOAD_BYTES
+    ) -> None:
+        if max_payload_bytes < 1:
+            raise ValueError("max_payload_bytes must be >= 1")
         self.repository = repository
+        self.max_payload_bytes = max_payload_bytes
 
     def start_run(self, run: AgentRun) -> AgentRun:
         if not run.workspace_id:
@@ -77,6 +85,19 @@ class RunRecorder:
             )
         if event.sequence_number - last_sequence > MAX_SEQUENCE_GAP:
             raise ValidationError("sequence number jump too large")
+
+        # Bound the payload before redaction/hashing so an oversized event cannot
+        # be used to exhaust memory, storage, or later validation work. This is a
+        # resource guard, enforced on the canonical encoding that would be stored.
+        payload_bytes = len(canonical_json(event.payload).encode("utf-8"))
+        if payload_bytes > self.max_payload_bytes:
+            raise ValidationError(
+                "event payload exceeds the configured limit",
+                details={
+                    "payload_bytes": payload_bytes,
+                    "max_payload_bytes": self.max_payload_bytes,
+                },
+            )
 
         redacted, applied = redact_payload(event.payload)
 

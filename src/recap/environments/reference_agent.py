@@ -56,19 +56,19 @@ class ReferenceAgent:
         collected: list[dict[str, Any]] = []
         token: str | None = None
         first = True
+        # The agent's belief about the pagination parameter name. It starts from
+        # its own prior ("cursor") and is only changed by a retrieved memory or
+        # by an explicit error that names the required parameter. It never peeks
+        # at the environment version.
+        parameter_name = "cursor"
         while result.tool_calls < max_tool_calls:
-            parameters: dict[str, Any]
+            parameters: dict[str, Any] = {"tenant": self.tenant}
             if first:
                 # A naive agent guesses a cursor value on the first call.
-                parameters = {"tenant": self.tenant, "cursor": "start"}
+                parameters[parameter_name] = "start"
                 first = False
-            else:
-                parameters = {"tenant": self.tenant}
-                if token is not None:
-                    if environment.version == "1":
-                        parameters["cursor"] = token
-                    else:
-                        parameters["page_token"] = token
+            elif token is not None:
+                parameters[parameter_name] = token
             call = environment.list_records(**parameters)
             result.tool_calls += 1
             result.steps.append(
@@ -83,8 +83,8 @@ class ReferenceAgent:
             if not call.ok:
                 result.final_error = (call.error or {}).get("error_message", "tool call failed")
                 if memory is not None:
-                    recovered, recovery_token = self._recover(
-                        environment, memory, parameters, call
+                    recovered, recovery_token, parameter_name = self._recover(
+                        environment, memory, parameters, call, parameter_name
                     )
                     if not recovered:
                         return result
@@ -106,11 +106,12 @@ class ReferenceAgent:
         memory: SelectedMemory,
         failed_parameters: dict[str, Any],
         failed_call: ToolCallResult,
-    ) -> tuple[bool, str | None]:
+        parameter_name: str,
+    ) -> tuple[bool, str | None, str]:
         """Apply only allowlisted typed actions; never execute free-form text.
 
-        Returns ``(recovered, next_token)``. ``recovered`` is False when no safe
-        action applies or the strategy explicitly halts.
+        Returns ``(recovered, next_token, parameter_name)``. ``recovered`` is
+        False when no safe action applies or the strategy explicitly halts.
         """
         error_code = (failed_call.error or {}).get("error_code", "")
         for action in memory.actions:
@@ -118,10 +119,14 @@ class ReferenceAgent:
             if action_type == ActionType.RETRY_WITH_BACKOFF.value:
                 # Retrying with the same parameters is only safe for transient errors.
                 if error_code in {"RATE_LIMITED", "TIMEOUT", "UNAVAILABLE"}:
-                    return True, failed_parameters.get("cursor") or failed_parameters.get("page_token")
+                    return (
+                        True,
+                        failed_parameters.get(parameter_name),
+                        parameter_name,
+                    )
             if action_type == ActionType.REFRESH_PAGINATION_CURSOR.value:
                 # Start a fresh page sequence instead of reusing the invalid cursor.
-                return True, None
+                return True, None, parameter_name
             if action_type == ActionType.MAP_PARAMETER.value:
                 mapping = action.get("parameters", {})
                 old = mapping.get("from")
@@ -130,15 +135,15 @@ class ReferenceAgent:
                     value = failed_parameters[old]
                     if value in {None, "", "start"}:
                         # The value itself is invalid; a fresh token is required.
-                        return True, None
-                    return True, str(value)
-                return True, None
+                        return True, None, new
+                    return True, str(value), new
+                return True, None, parameter_name
             if action_type in {
                 ActionType.REQUEST_MISSING_FIELD.value,
                 ActionType.HALT.value,
             }:
-                return False, None
-        return False, None
+                return False, None, parameter_name
+        return False, None, parameter_name
 
     def run_task(
         self,

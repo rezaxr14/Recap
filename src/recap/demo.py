@@ -227,10 +227,10 @@ def run_demo(container: Container, *, write_report: bool = True) -> dict[str, An
 
     decision_v2_fresh = _retrieve(
         container,
-        query="API requires page_token and rejected cursor",
+        query="API requires page_token and rejected the legacy cursor parameter",
         fingerprint=fingerprint_v2,
-        error_code="INVALID_CURSOR",
-        error_message="page_token is invalid or expired",
+        error_code="UNKNOWN_PARAMETER",
+        error_message="unknown parameter 'cursor'; this API version requires 'page_token'",
         tool_name="list_records",
     )
     report["steps"].append(

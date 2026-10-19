@@ -30,6 +30,7 @@ def check_eligibility(
     mode: RetrievalMode,
     allow_unvalidated: bool = False,
     compatibility: CompatibilityStatus | None = None,
+    apply_compatibility_filters: bool = True,
 ) -> EligibilityResult:
     reasons: list[str] = []
     details: list[str] = []
@@ -57,25 +58,28 @@ def check_eligibility(
             details.append("unvalidated historical candidate (diagnostic mode)")
 
     # Known-incompatible environments are never operationally eligible.
-    if compatibility is CompatibilityStatus.INCOMPATIBLE:
-        reasons.append("incompatible_environment")
-    elif compatibility is CompatibilityStatus.SUSPECT:
-        if not settings.allow_suspect_operational_memories:
-            reasons.append("suspect_compatibility")
+    if apply_compatibility_filters:
+        if compatibility is CompatibilityStatus.INCOMPATIBLE:
+            reasons.append("incompatible_environment")
+        elif compatibility is CompatibilityStatus.SUSPECT:
+            if not settings.allow_suspect_operational_memories:
+                reasons.append("suspect_compatibility")
 
     # Tool/schema mismatch is a hard filter when the memory declares them.
-    for tool, expected_hash in memory.content.tool_schema_fingerprints.items():
-        actual = context.tool_schema_fingerprints.get(tool)
-        if actual and expected_hash and actual != expected_hash:
-            reasons.append(f"tool_schema_mismatch:{tool}")
-            details.append(f"expected {expected_hash}, got {actual}")
+    if apply_compatibility_filters:
+        for tool, expected_hash in memory.content.tool_schema_fingerprints.items():
+            actual = context.tool_schema_fingerprints.get(tool)
+            if actual and expected_hash and actual != expected_hash:
+                reasons.append(f"tool_schema_mismatch:{tool}")
+                details.append(f"expected {expected_hash}, got {actual}")
     if settings.require_tool_match and memory.content.tool_names:
         if context.tool_names and not set(memory.content.tool_names) & set(context.tool_names):
             reasons.append("tool_not_relevant")
 
     # A memory pinned to a different environment fingerprint is not applicable.
     if (
-        memory.environment_fingerprint
+        apply_compatibility_filters
+        and memory.environment_fingerprint
         and context.environment_fingerprint
         and memory.environment_fingerprint != context.environment_fingerprint
     ):

@@ -119,7 +119,13 @@ def _seed_memories(container: Container, workspace_id: str, tasks: list[Benchmar
         existing = services.memories.list_memories(
             workspace_id, status=MemoryStatus.ACTIVE, limit=100
         )
-    if existing:
+    # Seed per environment version so adding a new version to a split does not
+    # silently reuse an incomplete memory set.
+    seeded_versions = {
+        memory.environment_id.rsplit("-v", 1)[-1] for memory in existing if memory.environment_id
+    }
+    versions = [version for version in versions if version not in seeded_versions]
+    if not versions:
         return
 
     for version in versions:
@@ -161,6 +167,13 @@ def _run_task(
     selected_ids: list[str] = []
     status = "not_retrieved"
     ranked_ids: list[str] = []
+    error_code = "UNKNOWN_PARAMETER" if task.failure_mode == "renamed_parameter" else "INVALID_CURSOR"
+    error_message = (
+        "unknown parameter 'cursor'; this API version requires 'page_token'"
+        if task.failure_mode == "renamed_parameter"
+        else "cursor is invalid or expired"
+    )
+    request: RetrievalRequest | None = None
     if mode is not None:
         with container.services() as services:
             request = RetrievalRequest(
@@ -176,8 +189,8 @@ def _run_task(
                     tool_versions=fingerprint.tool_versions,
                     tool_schema_fingerprints=fingerprint.tool_schema_hashes,
                     error_type="ValidationError",
-                    error_code="INVALID_CURSOR",
-                    error_message="cursor is invalid or expired",
+                    error_code=error_code,
+                    error_message=error_message,
                     state={"tool_schema_fingerprints": fingerprint.tool_schema_hashes},
                 ),
                 mode=mode,
@@ -214,6 +227,9 @@ def _run_task(
         result = agent.run(environment)
 
     relevant = _relevant_ids(container, workspace_id, task)
+    incompatible_selected = _count_incompatible_selected(
+        container, workspace_id, selected_ids, task, error_code=error_code
+    )
     return {
         "task_id": task.task_id,
         "baseline": baseline,
@@ -230,8 +246,68 @@ def _run_task(
         "retries": result.retries,
         "used_memory_id": result.used_memory_id,
         "harmful_transfer": bool(result.used_memory_id and not result.success),
-        "error": result.final_error,
+        "incompatible_selected": incompatible_selected,
+        "error": None if result.success else result.final_error,
     }
+
+
+def _count_incompatible_selected(
+    container: Container,
+    workspace_id: str,
+    selected_ids: list[str],
+    task: BenchmarkTask,
+    *,
+    error_code: str,
+) -> int:
+    """Independently re-evaluate selected memories against the task context.
+
+    This is a *safety* metric, not an outcome metric: it counts memories that a
+    policy-free baseline selected even though their declared preconditions or
+    schema compatibility do not hold for this environment version. It is
+    computed with the same evaluators used by the outcome-aware policy, but it
+    never influences selection, so it cannot flatter any baseline.
+    """
+    if not selected_ids:
+        return 0
+    from recap.recall.applicability import combine_compatibility, evaluate_applicability
+
+    environment = PaginatedApiEnvironment(version=task.environment_version)
+    fingerprint = environment.fingerprint()
+    context = RetrievalContext(
+        workspace_id=workspace_id,
+        query=task.instruction,
+        task_family=task.task_family,
+        environment_id=fingerprint.environment_id,
+        environment_fingerprint=fingerprint.fingerprint,
+        environment_version=fingerprint.environment_version,
+        environment_type=fingerprint.environment_type,
+        tool_names=["list_records"],
+        tool_versions=fingerprint.tool_versions,
+        tool_schema_fingerprints=fingerprint.tool_schema_hashes,
+        error_type="ValidationError",
+        error_code=error_code,
+        state={"tool_schema_fingerprints": fingerprint.tool_schema_hashes},
+    )
+    count = 0
+    with container.services() as services:
+        for memory_id in selected_ids:
+            memory = services.memories.get_memory(memory_id, workspace_id)
+            if memory is None:
+                continue
+            compatibility, _ = combine_compatibility(memory, context, None)
+            applicability = evaluate_applicability(memory, context)
+            schema_ok = all(
+                context.tool_schema_fingerprints.get(tool) == expected
+                for tool, expected in memory.content.tool_schema_fingerprints.items()
+                if tool in context.tool_schema_fingerprints
+            )
+            if (
+                compatibility.value == "incompatible"
+                or not applicability.result.value == "satisfied"
+                or not schema_ok
+            ):
+                count += 1
+    return count
 
 
 def _relevant_ids(container: Container, workspace_id: str, task: BenchmarkTask) -> set[str]:
@@ -263,6 +339,10 @@ def _summarize(per_task: list[dict[str, Any]]) -> dict[str, Any]:
             "mrr": mean([row["mrr"] for row in rows]),
             "ndcg_at_3": mean([row["ndcg_at_3"] for row in rows]),
             "harmful_transfer_rate": mean([1.0 if row["harmful_transfer"] else 0.0 for row in rows]),
+            "incompatible_selection_rate": mean(
+                [1.0 if row["incompatible_selected"] else 0.0 for row in rows]
+            ),
+            "total_incompatible_selected": sum(row["incompatible_selected"] for row in rows),
         }
     return summary
 
@@ -292,21 +372,31 @@ def _render_markdown(payload: dict[str, Any]) -> str:
         "",
         "## Summary",
         "",
-        "| baseline | success | 95% CI | recall@3 | MRR | nDCG@3 | tool calls | harmful transfer |",
-        "|---|---|---|---|---|---|---|---|",
+        "| baseline | success | 95% CI | recall@3 | MRR | nDCG@3 | tool calls | harmful transfer | incompatible selection |",
+        "|---|---|---|---|---|---|---|---|---|",
     ]
     for baseline, stats in payload["summary"].items():
         lines.append(
             f"| {baseline} | {stats['task_success_rate']:.3f} | "
             f"[{stats['task_success_ci95'][0]:.3f}, {stats['task_success_ci95'][1]:.3f}] | "
             f"{stats['recall_at_3']:.3f} | {stats['mrr']:.3f} | {stats['ndcg_at_3']:.3f} | "
-            f"{stats['mean_tool_calls']:.2f} | {stats['harmful_transfer_rate']:.3f} |"
+            f"{stats['mean_tool_calls']:.2f} | {stats['harmful_transfer_rate']:.3f} | "
+            f"{stats['incompatible_selection_rate']:.3f} |"
         )
+    lines.extend(
+        [
+            "",
+            "`incompatible selection` is an independent safety audit: selected memories are "
+            "re-evaluated after the fact against the task's schema and preconditions. It never "
+            "influences selection, so it cannot flatter any baseline.",
+        ]
+    )
     lines.extend(["", "## Per-task results", "", "| task | baseline | success | status | error |", "|---|---|---|---|---|"])
     for row in payload["per_task"]:
+        error = row["error"] or ""
         lines.append(
             f"| {row['task_id']} | {row['baseline']} | {row['task_success']} | "
-            f"{row['retrieval_status']} | {row['error'][:60]} |"
+            f"{row['retrieval_status']} | {error[:60]} |"
         )
     lines.extend(
         [

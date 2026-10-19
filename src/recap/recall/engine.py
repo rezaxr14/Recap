@@ -74,6 +74,10 @@ class RecallEngine:
         context = redact_context(request.context)
         warnings: list[str] = []
         degraded = False
+        # Pure retrieval modes are explicit ablations: they rank by relevance only
+        # and deliberately skip applicability, compatibility, and utility policy.
+        # This is what makes them fair baselines for the outcome-aware mode.
+        strict_policy = request.mode is RetrievalMode.OUTCOME_AWARE
 
         # 1-2. Query construction
         t0 = time.perf_counter()
@@ -160,7 +164,8 @@ class RecallEngine:
                 settings=self.settings.recall,
                 mode=request.mode,
                 allow_unvalidated=request.allow_unvalidated,
-                compatibility=compatibility,
+                compatibility=compatibility if strict_policy else None,
+                apply_compatibility_filters=strict_policy,
             )
             applicability = evaluate_applicability(memory, context)
             relevance = _normalize_fused(fused_scores.get(doc_id, 0.0))
@@ -179,24 +184,31 @@ class RecallEngine:
                 reliability=self.settings.reliability,
             )
             reasons = list(eligibility.reasons)
-            if request.require_compatible_environment and compatibility in {
-                CompatibilityStatus.INCOMPATIBLE,
-                CompatibilityStatus.SUSPECT,
-            }:
-                if "suspect_compatibility" not in reasons:
-                    reasons.append(f"compatibility_{compatibility}")
-            if not is_operationally_applicable(applicability):
-                reasons.append(f"preconditions_{applicability.result}")
+            if strict_policy:
+                if request.require_compatible_environment and compatibility in {
+                    CompatibilityStatus.INCOMPATIBLE,
+                    CompatibilityStatus.SUSPECT,
+                }:
+                    if "suspect_compatibility" not in reasons:
+                        reasons.append(f"compatibility_{compatibility}")
+                if not is_operationally_applicable(applicability):
+                    reasons.append(f"preconditions_{applicability.result}")
 
-            selected, select_reason = should_select(
-                features,
-                applicability=applicability.result,
-                compatibility=compatibility,
-                settings=self.settings.recall,
-            )
-            if not eligibility.eligible:
-                selected = False
-                select_reason = eligibility.reasons[0]
+            if strict_policy:
+                selected, select_reason = should_select(
+                    features,
+                    applicability=applicability.result,
+                    compatibility=compatibility,
+                    settings=self.settings.recall,
+                )
+                if not eligibility.eligible:
+                    selected = False
+                    select_reason = eligibility.reasons[0]
+            else:
+                # Retrieval-only baseline: rank by fused relevance, no policy.
+                selected = eligibility.eligible
+                select_reason = "selected" if selected else eligibility.reasons[0]
+                features.total = relevance
             evaluations.append(
                 CandidateEvaluation(
                     memory_id=memory.id,

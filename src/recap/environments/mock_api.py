@@ -157,9 +157,15 @@ class PaginatedApiEnvironment:
     ) -> dict[str, Any]:
         if tenant != self.tenant:
             raise MockApiError("NotFoundError", "TENANT_NOT_FOUND", f"tenant {tenant!r} not found", 404)
-        size = min(limit or self.page_size, 10)
-        token = cursor if self.version == "1" else page_token
-        parameter_name = "cursor" if self.version == "1" else "page_token"
+        # The declared schema sets additionalProperties=false, so reject the
+        # parameter name that belongs to the other API version.
+        if self.version == "1" and page_token is not None:
+            raise MockApiError(
+                "ValidationError",
+                "UNKNOWN_PARAMETER",
+                "unknown parameter 'page_token'; this API version requires 'cursor'",
+                422,
+            )
         if self.version == "2" and cursor is not None:
             raise MockApiError(
                 "ValidationError",
@@ -167,6 +173,9 @@ class PaginatedApiEnvironment:
                 "unknown parameter 'cursor'; this API version requires 'page_token'",
                 422,
             )
+        size = min(limit or self.page_size, 10)
+        token = cursor if self.version == "1" else page_token
+        parameter_name = "cursor" if self.version == "1" else "page_token"
         offset = 0
         if token is not None:
             if token in self._expired_cursors:

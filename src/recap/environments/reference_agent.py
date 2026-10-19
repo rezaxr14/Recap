@@ -32,6 +32,10 @@ class AgentRunResult:
     retries: int = 0
     final_error: str = ""
     used_memory_id: str | None = None
+    model_turns: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    duration_ms: int = 0
 
 
 class ReferenceAgent:

@@ -26,12 +26,14 @@ db_app = typer.Typer(help="Database operations")
 search_app = typer.Typer(help="Elasticsearch operations")
 memory_app = typer.Typer(help="Memory inspection")
 repair_app = typer.Typer(help="Repair compilation and validation")
+agent_app = typer.Typer(help="Tool-using agent runs")
 demo_app = typer.Typer(help="Deterministic local demo")
 eval_app = typer.Typer(help="Evaluation harness")
 app.add_typer(db_app, name="db")
 app.add_typer(search_app, name="search")
 app.add_typer(memory_app, name="memory")
 app.add_typer(repair_app, name="repair")
+app.add_typer(agent_app, name="agent")
 app.add_typer(demo_app, name="demo")
 app.add_typer(eval_app, name="eval")
 
@@ -405,6 +407,91 @@ def repair_promote(candidate_id: str) -> None:
             console.print_json(memory.model_dump_json())
     except Exception as exc:
         _fail(exc)
+
+
+# -------------------------------------------------------------------- agent
+@agent_app.command("run")
+def agent_run(
+    environment_version: Annotated[str, typer.Option("--environment-version")] = "1",
+    workspace: Annotated[str, typer.Option("--workspace")] = "demo-workspace",
+    max_tool_calls: Annotated[int, typer.Option("--max-tool-calls", min=1, max=32)] = 6,
+    memory_id: Annotated[
+        str | None, typer.Option("--memory-id", help="Inject one memory as advisory data")
+    ] = None,
+    expire_first_cursor: Annotated[
+        bool,
+        typer.Option(
+            "--expire-first-cursor",
+            help="Make the first v1 cursor invalid to exercise failure recording",
+        ),
+    ] = False,
+    task_id: Annotated[str | None, typer.Option("--task-id")] = None,
+) -> None:
+    """Run the configured LLM agent against the mock API and record the run.
+
+    The model chooses tool calls. RECAP validates and executes only the declared
+    local tool. This command requires a configured ``llm`` role; it never falls
+    back to the deterministic agent or a fake model.
+    """
+    from recap.environments.llm_agent import MemoryAdvisory
+    from recap.environments.mock_api import PaginatedApiEnvironment
+    from recap.environments.run_recording import record_llm_run
+    from recap.errors import ConfigurationError, NotFoundError, ValidationError
+
+    try:
+        container = _container()
+        if container.llm is None:
+            raise ConfigurationError(
+                "the agent llm role is not configured; set LLM_PROVIDER and LLM_BASE_URL "
+                "and LLM_MODEL (run `recap providers` to inspect roles)"
+            )
+        if environment_version not in {"1", "2"}:
+            raise ValidationError("--environment-version must be 1 or 2")
+        if expire_first_cursor and environment_version != "1":
+            raise ValidationError("--expire-first-cursor only applies to --environment-version 1")
+        environment = PaginatedApiEnvironment(version=environment_version)
+        if expire_first_cursor:
+            environment.expire_cursor("cur_1_0001")
+        advisory = None
+        if memory_id is not None:
+            with container.services() as services:
+                memory = services.memories.get_memory(memory_id, workspace)
+                if memory is None:
+                    raise NotFoundError(f"memory {memory_id} not found in workspace {workspace}")
+                advisory = MemoryAdvisory.from_memory(memory)
+        run_id, result = record_llm_run(
+            container,
+            environment,
+            provider=container.llm,
+            workspace_id=workspace,
+            task_id=task_id,
+            memory=advisory,
+            max_tool_calls=max_tool_calls,
+        )
+    except Exception as exc:
+        _fail(exc)
+        return
+    console.print_json(
+        json.dumps(
+            {
+                "run_id": run_id,
+                "success": result.success,
+                "agent": "llm-tool-agent-v1",
+                "model": container.llm.model,
+                "environment_version": environment_version,
+                "tool_calls": result.tool_calls,
+                "retries": result.retries,
+                "model_turns": result.model_turns,
+                "input_tokens": result.input_tokens,
+                "output_tokens": result.output_tokens,
+                "duration_ms": result.duration_ms,
+                "used_memory_id": result.used_memory_id,
+                "final_error": result.final_error,
+            },
+            indent=2,
+            default=str,
+        )
+    )
 
 
 # -------------------------------------------------------------------- demo

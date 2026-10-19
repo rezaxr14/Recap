@@ -175,6 +175,14 @@ and local. No network, no credentials, no irreversible operations.
 parameter names. It does not inspect the environment version, so success genuinely depends
 on receiving a correct memory rather than on privileged knowledge.
 
+`environments/llm_agent.py` is the configured-model tool loop. It sends the environment's
+declared tool schema to the `llm` role, validates every requested tool name and argument,
+executes only `list_records`, and derives success from the records actually returned. Memory
+is injected as bounded advisory JSON with an explicit untrusted-data preamble; the model
+cannot execute code or widen the tool surface. `run_recording.py` persists both agent kinds
+with identical event semantics and records the model provider, model name, prompt version,
+token usage, and tool/retry counts.
+
 ### 2.8 Evaluation
 
 `evals/` contains the task suite, metrics, and the benchmark runner. Baselines share the
@@ -278,8 +286,9 @@ ones:
 - no always-on scheduler: the outbox worker (`recap search drain`) is pull-based and
   revalidation jobs are processed on demand
 - no run-level memory snapshot pinning
-- the agent loop is still the deterministic reference agent; the configured `llm` role is
-  wired into the provider layer but does not yet drive tool selection
+- the deterministic reference agent still drives the reproducible demo and benchmark; the
+  configured `llm` role now drives a separate tool-using agent (`recap agent run`), but the
+  benchmark has not been run with it
 - live-provider acceptance requires an operator-configured endpoint and is not exercised by CI
 - benchmark reports currently use deterministic/hashing components, not real-model numbers
 - no authentication layer; `workspace_id` is a data boundary, not an identity

@@ -23,6 +23,8 @@ from recap.config import EmbeddingSettings, LlmSettings, load_settings
 from recap.container import Container
 from recap.domain.enums import RetrievalMode
 from recap.domain.retrieval import RetrievalRequest
+from recap.environments.mock_api import PaginatedApiEnvironment
+from recap.environments.run_recording import record_llm_run
 from recap.infrastructure.embeddings import build_embedding_provider
 from recap.providers.factory import build_chat_provider
 
@@ -95,6 +97,38 @@ def test_real_embedding_matches_configured_dimension() -> None:
     vector = provider.embed_query("recap live embedding probe")  # type: ignore[attr-defined]
     assert len(vector) == settings.dimension
     assert any(component != 0.0 for component in vector)
+
+
+def test_real_llm_drives_tool_calls_through_the_mock_api(live_settings) -> None:  # type: ignore[no-untyped-def]
+    llm_settings, _ = _chat_provider()
+    _ = llm_settings
+    container = Container.build(live_settings)
+    workspace_id = f"live-agent-{uuid.uuid4().hex[:10]}"
+    try:
+        container.migrate()
+        assert container.llm is not None
+        environment = PaginatedApiEnvironment(version="2")
+        run_id, result = record_llm_run(
+            container,
+            environment,
+            provider=container.llm,
+            workspace_id=workspace_id,
+            task_id="live-agent-pagination",
+            max_tool_calls=6,
+        )
+        assert result.model_turns >= 1
+        assert result.tool_calls >= 1, (
+            "the configured model returned no tool calls; this run does not exercise "
+            "the tool-using path"
+        )
+        with container.services() as services:
+            run = services.runs.get_run(run_id)
+            assert run is not None
+            assert run.model_provider == llm_settings.provider
+            assert run.tool_calls_count == result.tool_calls
+            assert run.input_tokens == result.input_tokens
+    finally:
+        container.es_client.close()
 
 
 def test_real_embeddings_index_and_retrieve_from_elasticsearch(live_settings) -> None:  # type: ignore[no-untyped-def]

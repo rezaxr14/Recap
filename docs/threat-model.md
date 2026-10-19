@@ -223,6 +223,27 @@ classification that match their policy, use TLS, and scope keys to the minimum r
 permissions. A compromised provider can return malicious output; typed schema validation and
 sandbox execution reduce, but do not eliminate, that risk.
 
+### 3.11 Model-driven tool abuse
+
+**Threat:** a model calls an undeclared tool, passes crafted arguments to a callable, or
+claims success without doing the work.
+
+**Controls:**
+
+- The agent receives only the environment's declared tool schema (`list_records`).
+- Tool names are resolved through a registry; unknown tools are recorded as failures and never
+  executed.
+- Arguments are validated against the declared JSON schema (allowed properties, required
+  fields, primitive types, bounds) before the call. Extra keywords are rejected.
+- The tool budget is a hard bound, and each call/result is recorded.
+- Success is computed from the environment's records, never from model text.
+- Memory is bounded advisory JSON with an untrusted-data preamble; it cannot add tools or
+  permissions.
+
+**Residual risk:** the model can choose any valid arguments within the tool's read-only
+surface, and prompt injection in tool output or memory may influence that choice. Host-agent
+authorization and the tool's own side-effect class remain authoritative.
+
 ## 4. Non-goals
 
 RECAP explicitly does **not**:

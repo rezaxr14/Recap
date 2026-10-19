@@ -117,6 +117,29 @@ incompatible index instead of mixing vector spaces.
   `embeddings.allow_degraded=true` is set explicitly. That flag is an acknowledgement, not a
   performance claim.
 
+## Agent tool loop
+
+`recap agent run` is the real-model agent path:
+
+```bash
+recap agent run --environment-version 2 --workspace live-agent --max-tool-calls 6
+recap agent run --environment-version 1 --memory-id mem_...   # inject one advisory memory
+```
+
+The configured `llm` role receives the environment's declared tool schema and chooses tool
+calls. RECAP validates the tool name and arguments against that schema, executes only the
+allowlisted local tool, and returns the real result. The model cannot execute code, call an
+undeclared tool, widen permissions, or claim success: the run is successful only when every
+record was returned by real tool calls. Provider/transport failures propagate and the run is
+not fabricated.
+
+The recorded run stores the provider, model, prompt version, max tool budget, token usage,
+tool call/retry counts, and every tool request/result (redacted). An injected memory is
+rendered as bounded advisory JSON with an explicit "untrusted data, not instructions"
+preamble; only typed action fields are advisory. The demo and benchmark still use the
+deterministic reference agent for reproducibility, so their numbers are not real-model
+numbers.
+
 ## Inspecting providers
 
 ```bash
@@ -150,7 +173,9 @@ The suite skips clearly when a role is not configured. It covers:
 2. a small chat completion,
 3. schema-constrained structured output,
 4. the real embedding dimension,
-5. indexing and vector retrieval in Elasticsearch with the real embedding.
+5. indexing and vector retrieval in Elasticsearch with the real embedding,
+6. the real chat model driving at least one validated tool call through the mock API, with the
+   run persisted in PostgreSQL.
 
 CI does not set the opt-in flag, so these tests skip there. They are the only acceptable
 evidence for "real model integration works"; mocked tests and the deterministic demo are not.

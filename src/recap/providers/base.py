@@ -81,6 +81,7 @@ class ChatResult:
     tool_calls: list[ToolCall] = field(default_factory=list)
     usage: Usage = field(default_factory=Usage)
     latency_ms: float = 0.0
+    finish_reason: str = ""
 
 
 class ChatProvider(Protocol):

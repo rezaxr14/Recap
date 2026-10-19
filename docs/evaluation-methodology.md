@@ -11,7 +11,9 @@ machinery behaves as designed, using:
 - a small, hand-built task suite
 
 It is **not** a measurement of LLM agent performance. The reports embed that statement, and
-this document exists so the claim cannot drift.
+the recorded `agent`/`provider` fields identify the deterministic components. A configured-LLM
+tool-using agent exists (`recap agent run`) and is validated separately, but it is not part of
+these benchmark numbers, so the claim cannot drift.
 
 What it *can* show, and does show:
 

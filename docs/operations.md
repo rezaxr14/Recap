@@ -195,6 +195,18 @@ recap doctor --live
 never scans the network. See [`providers.md`](providers.md) for role configuration, the
 no-download policy, and the live test gate.
 
+### Run the configured LLM agent
+
+```bash
+recap agent run --environment-version 2 --workspace demo-workspace
+recap agent run --environment-version 1 --memory-id mem_...
+```
+
+This requires a configured `llm` role and fails closed otherwise. The model chooses tool
+calls; RECAP validates and executes only the declared tool and computes success from the
+records actually returned. Provider failures are not converted into fake answers. Every run
+is persisted with its model metadata, token usage, and tool trace.
+
 ### Demo
 
 ```bash

@@ -395,6 +395,7 @@ class OpenAICompatibleChatProvider:
             tool_calls=tool_calls,
             usage=usage,
             latency_ms=(time.perf_counter() - started) * 1000.0,
+            finish_reason=str(finish_reason),
         )
 
     def generate_structured(

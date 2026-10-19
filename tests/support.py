@@ -7,6 +7,8 @@ the same code path as the CLI and API.
 
 from __future__ import annotations
 
+import json
+from collections.abc import Callable, Sequence
 from typing import Any
 
 from recap.container import Container
@@ -17,6 +19,13 @@ from recap.domain.strategies import RepairStrategy, StrategyAction
 from recap.environments.mock_api import PaginatedApiEnvironment
 from recap.environments.run_recording import record_reference_run
 from recap.infrastructure.db.repositories import ensure_workspace
+from recap.providers.base import (
+    ChatMessage,
+    ChatResult,
+    ProviderCapabilities,
+    ToolCall,
+    Usage,
+)
 
 
 def make_memory(
@@ -140,3 +149,83 @@ def context_for(
         error_message="cursor 'start' is invalid or expired",
         state={"tool_schema_fingerprints": fingerprint.tool_schema_hashes},
     )
+
+
+class ScriptedChatProvider:
+    """Test-only chat provider. Never used as real-model evidence."""
+
+    provider_type = "scripted"
+    model = "scripted-agent-v1"
+    capabilities = ProviderCapabilities(
+        provider_type=provider_type,
+        model=model,
+        chat=True,
+        tool_calling=True,
+    )
+
+    def __init__(self, script: Callable[[list[ChatMessage]], ChatResult]) -> None:
+        self.script = script
+        self.requests: list[list[ChatMessage]] = []
+        self.tools_seen: list[list[dict[str, Any]] | None] = []
+
+    def chat(
+        self,
+        messages: Sequence[ChatMessage],
+        *,
+        tools: list[dict[str, Any]] | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+    ) -> ChatResult:
+        snapshot = list(messages)
+        self.requests.append(snapshot)
+        self.tools_seen.append(list(tools) if tools is not None else None)
+        return self.script(snapshot)
+
+    def list_models(self) -> list[str]:
+        return [self.model]
+
+    def health(self) -> dict[str, Any]:
+        return {"status": "ok", "model_available": True}
+
+    def generate_structured(self, **kwargs: Any) -> dict[str, Any]:
+        raise NotImplementedError("ScriptedChatProvider does not generate structured output")
+
+
+SCRIPTED_USAGE = Usage(prompt_tokens=10, completion_tokens=5)
+
+
+def pagination_script(
+    *, version: str = "2", usage: Usage = SCRIPTED_USAGE
+) -> Callable[[list[ChatMessage]], ChatResult]:
+    """A deterministic stand-in for a competent tool-calling model."""
+
+    pagination_key = "page_token" if version == "2" else "cursor"
+
+    def script(messages: list[ChatMessage]) -> ChatResult:
+        last_tool = next(
+            (message for message in reversed(messages) if message.role == "tool"), None
+        )
+        turn = sum(1 for message in messages if message.role == "tool") + 1
+        if last_tool is None:
+            arguments: dict[str, Any] = {"tenant": "acme", pagination_key: "start"}
+        else:
+            payload = json.loads(last_tool.content or "{}")
+            if not payload.get("ok"):
+                arguments = {"tenant": "acme"}
+            elif payload.get("has_more"):
+                arguments = {"tenant": "acme", pagination_key: payload.get(pagination_key)}
+            else:
+                return ChatResult(content="all records collected", usage=usage)
+        return ChatResult(
+            content="",
+            tool_calls=[
+                ToolCall(
+                    id=f"call-{turn}",
+                    name="list_records",
+                    arguments=arguments,
+                )
+            ],
+            usage=usage,
+        )
+
+    return script

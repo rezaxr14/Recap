@@ -38,15 +38,18 @@ Elasticsearch 8.19.3 node. There are no stub endpoints in the implemented paths.
 | Explicit memory versions + supersession | Working | `tests/unit/test_memory_versions.py`, `tests/e2e/test_lifecycle.py` |
 | API-first chat/embedding providers (OpenAI-compatible) | Implemented; live endpoint not configured in CI | `tests/unit/test_providers.py`, opt-in `tests/integration/test_live_providers.py` |
 | LLM repair-candidate generation with typed validation | Working when `REPAIR_GENERATOR=llm` | `tests/unit/test_llm_generator.py` |
+| Real LLM tool-using agent (`recap agent run`) | Implemented; live endpoint not configured in CI | `tests/unit/test_llm_agent.py`, `tests/integration/test_llm_agent_recording.py` |
 | End-to-end demo (10 steps) | Working | `recap demo run` |
 
 Honest limitations are listed in [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md). The
 most important ones: the default embedding provider is a deterministic **hashing lexical
-embedder**, not a neural model, and the agent loop is still a deterministic reference agent.
-The real-model provider layer is implemented and unit-tested against the exact wire format,
-but no real endpoint is configured in CI, so live-provider tests skip there. Benchmark
-numbers measure pipeline behaviour and safety properties, not LLM capability. Reports and
-`recap providers` say which mode produced a result.
+embedder**, not a neural model, and the demo/benchmark still use the deterministic reference
+agent for reproducibility. A configured-LLM tool-using agent exists (`recap agent run`) and
+is validated with a scripted provider plus the real PostgreSQL recorder; it has not been run
+against a real model endpoint here. The real-model provider layer is unit-tested against the
+exact wire format, but no real endpoint is configured in CI, so live-provider tests skip
+there. Benchmark numbers measure pipeline behaviour and safety properties, not LLM capability.
+Reports and `recap providers` say which mode produced a result.
 
 ---
 
@@ -103,7 +106,15 @@ export LLM_MODEL=gpt-4.1-mini
 
 recap providers          # offline capability report, no secrets
 recap doctor --live      # probes configured endpoints, one small chat + embedding
+recap agent run --environment-version 2 --workspace live-agent
 ```
+
+`recap agent run` drives the configured chat model through a bounded tool-calling loop
+against the mock API. The model selects `list_records` arguments; RECAP validates the tool
+name and arguments, executes only that local tool, and computes success from the records
+actually collected. It refuses to run when no `llm` role is configured and never falls back
+to the deterministic agent. The recorded run includes provider, model, prompt version, token
+usage, and every tool call/failure.
 
 `hashing`/`fake` embeddings remain available for offline development and unit tests, but they
 are reported as non-semantic. Production rejects them unless `EMBEDDING_ALLOW_DEGRADED=true`
@@ -165,6 +176,7 @@ recap db migrate | init
 recap search init | health | reconcile | drain | outbox
 recap memory search | show | compatibility
 recap repair compile | validate | promote
+recap agent run --environment-version 1
 recap demo seed | run
 recap eval run
 ```
@@ -263,7 +275,7 @@ src/recap/
   memory_shift/      compatibility, degradation, revalidation
   providers/         ChatProvider/EmbeddingProvider ports + OpenAI-compatible adapters
   infrastructure/    SQLAlchemy, Elasticsearch, embeddings
-  environments/      deterministic mock API + reference agent
+  environments/      mock API, deterministic reference agent, configured-LLM agent
   evals/             datasets, metrics, benchmark runner
   api/               FastAPI routes
   demo.py            the 10-step end-to-end flow

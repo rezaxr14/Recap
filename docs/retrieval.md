@@ -89,6 +89,27 @@ This is intentionally a lexical reranker rather than a cross-encoder: it is dete
 dependency-free, and makes the mode genuinely distinct from fusion. A cross-encoder can
 implement the same `Reranker` protocol later.
 
+### 2.5 Chunk-granule retrieval
+
+The card index stores one document per memory. The chunk index (`recap-chunks-v1`) stores
+deterministic chunks derived from the same memories and their evidence runs (see
+`docs/adr/0005-event-aware-chunking.md`). Chunk modes run the same BM25/vector branches over
+chunk documents, fuse at chunk level with application RRF, then group by `memory_id:version`:
+
+- the memory's group score is the **best supporting chunk** RRF score;
+- every supporting chunk id, branch rank, and event id is preserved on the candidate;
+- the grouped memory is then fed into the **unchanged** applicability/compatibility/utility
+  policy.
+
+Chunk modes: `bm25_chunk`, `vector_chunk`, `hybrid_rrf_chunk`, and `outcome_aware_chunk`.
+The card modes (`bm25`, `vector`, `hybrid_rrf`, `outcome_aware`) remain, so the report can
+compare granule choice on identical tasks. Chunk similarity never overrides safety: only
+`outcome_aware_chunk` applies the policy, and the decision records
+`retrieval_granule=chunk` plus `supporting_chunk_ids`/`supporting_event_ids`.
+
+There is no silent fallback: if the chunk index is empty or unavailable, chunk retrieval
+reports a degraded/empty result rather than returning card hits under a chunk label.
+
 ## 3. Hard filters
 
 Only two constraints are pushed into Elasticsearch:
@@ -217,16 +238,16 @@ self-reported "it worked" from laundering a bad memory into a good one.
 This is the part most easy to get wrong, so it is explicit in code:
 
 ```python
-strict_policy = request.mode is RetrievalMode.OUTCOME_AWARE
+strict_policy = request.mode in {RetrievalMode.OUTCOME_AWARE, RetrievalMode.OUTCOME_AWARE_CHUNK}
 ```
 
-- `bm25`, `vector`, `hybrid_rrf` rank by relevance and **skip** applicability,
-  compatibility, and utility policy. They are pure retrieval baselines.
-- `outcome_aware` applies the full policy.
+- `bm25`, `vector`, `hybrid_rrf` (and their `_chunk` variants) rank by relevance and **skip**
+  applicability, compatibility, and utility policy. They are pure retrieval baselines.
+- `outcome_aware` and `outcome_aware_chunk` apply the full policy.
 
 That is a deliberate ablation: it measures exactly what the policy adds. If the retrieval
 baselines also applied the policy, the comparison would be policy-vs-policy and would say
-nothing about selection.
+nothing about selection. The `_chunk` vs card comparison isolates granule choice.
 
 The safety metric is computed independently, after the fact, from the recorded selection and
 the task's true schema. It never influences selection. In the dev split:
@@ -244,7 +265,9 @@ The retrieval baselines "succeed" on the dev split because the v2 task's memory 
 be rankable, but they select an incompatible memory to get there — the reference agent
 recovers via the wrong path. `outcome_aware` succeeds without ever selecting an incompatible
 memory. That contrast is the result the project is built to demonstrate, and it is computed
-from recorded outcomes, not asserted.
+from recorded outcomes, not asserted. The chunk-granule baselines are reported alongside the
+card baselines in every benchmark JSON/Markdown report; numbers are read back from the
+persisted run and decision records.
 
 ## 9. Decision record
 

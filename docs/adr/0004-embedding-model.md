@@ -66,10 +66,13 @@ vectors (`normalize: true` by default for OpenAI-compatible APIs, which return u
 vectors) but does not silently normalize provider output. Any response dimension mismatch is
 a hard error, as today.
 
-### 5. Postgres embedding cache
+### 5. Postgres embedding cache (planned, not yet implemented)
 
-Add an `embedding_cache` table keyed by `(text_hash, embedding_fingerprint)`, storing the
-JSON vector, dimension, provider, and creation time. The cache is an optimization only:
+The `embedding_cache` table is **not implemented yet**; this section records the intended
+design so the decision is not lost. Until it lands, every rebuild re-embeds its chunks, and no
+cache-hit/miss metric is reported (it is not faked). The plan is an `embedding_cache` table
+keyed by `(text_hash, embedding_fingerprint)`, storing the JSON vector, dimension, provider,
+and creation time. The cache is an optimization only:
 
 - lookups are scoped to the exact fingerprint;
 - a cache hit with the wrong dimension is a hard error;
@@ -99,7 +102,8 @@ usage; if it does not, it records `null`, not an invented count.
 
 - The vector branch can be evaluated with a real model while CI remains offline and cheap.
 - Prefix and fingerprint handling prevents the most common "mixed vector spaces" failure.
-- The cache makes ablation reruns practical and reports their cost honestly.
+- Once implemented, the cache will make ablation reruns practical and report their cost
+  honestly; the ADR records the design up front.
 
 ### Negative
 

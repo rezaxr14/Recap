@@ -67,9 +67,13 @@ budget.
 | `vector` | dense-vector retrieval, **no policy** |
 | `hybrid_rrf` | fused lexical + vector, **no policy** |
 | `outcome_aware` | RECAP's full selection policy |
+| `bm25_chunk` / `vector_chunk` / `hybrid_rrf_chunk` | the same three retrieval baselines run over **chunk** documents (best-chunk RRF per memory), still **no policy** |
+| `outcome_aware_chunk` | chunk retrieval fed into RECAP's full selection policy |
 
-The three retrieval baselines deliberately skip applicability, compatibility, and utility
-policy. That is the ablation: it isolates what the policy adds. See
+The three card retrieval baselines deliberately skip applicability, compatibility, and utility
+policy. That is the ablation: it isolates what the policy adds. The `_chunk` baselines repeat
+the comparison at chunk granularity on identical tasks, so the report separates "does the
+policy help?" from "does chunking help?". See
 [`retrieval.md` §8](retrieval.md#8-ablation-design-why-the-baselines-are-fair).
 
 ## 4. Metrics

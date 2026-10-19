@@ -25,7 +25,7 @@ Elasticsearch 8.19.3 node. There are no stub endpoints in the implemented paths.
 | Subsystem | Status | Evidence |
 |---|---|---|
 | Run recording with idempotent events + redaction | Working | `tests/unit/test_run_recorder.py`, `tests/integration/test_security.py` |
-| PostgreSQL source of truth (14 tables, Alembic) | Working | `migrations/versions/`, `tests/integration/test_postgres.py` |
+| PostgreSQL source of truth (Postgres 17, Alembic) | Working | `migrations/versions/`, `tests/integration/test_postgres.py` |
 | Elasticsearch BM25 + dense vector + hybrid RRF | Working | `tests/integration/test_elasticsearch.py` |
 | Deterministic lexical reranker (`hybrid_rerank`) | Working | `tests/unit/test_reranker.py`, integration |
 | Outcome-aware selection with rejection reasons | Working | `tests/unit/test_recall_policy.py` |
@@ -33,10 +33,13 @@ Elasticsearch 8.19.3 node. There are no stub endpoints in the implemented paths.
 | Static + executing mock-sandbox validators | Working | `tests/unit/test_repair_compiler.py` |
 | Promotion gate (no bypass path) | Working | `tests/unit/test_repair_compiler.py`, `tests/integration/test_api.py` |
 | MemoryShift drift detection + revalidation queue | Working | `tests/integration/test_postgres.py`, demo step 8 |
-| Benchmark with 6 baselines + safety audit | Working | `recap eval run`, `benchmark/reports/` |
+| Benchmark with card + chunk ablations and safety audit | Working | `recap eval run`, `benchmark/reports/` |
 | Transactional outbox + retry worker | Working | `tests/unit/test_outbox_worker.py`, `recap search drain` |
 | Explicit memory versions + supersession | Working | `tests/unit/test_memory_versions.py`, `tests/e2e/test_lifecycle.py` |
 | Run-level memory snapshot pinning | Working | `tests/integration/test_memory_snapshots.py` |
+| Deterministic event-aware chunker (no downloads, fail-closed redaction) | Working | `tests/unit/test_chunking.py` |
+| Chunk persistence, indexing, lifecycle, `reconcile --chunks` | Working | `tests/integration/test_chunks.py`, `migrations/versions/0004_memory_chunks.py` |
+| Chunk-level retrieval (`*_chunk` modes) with supporting evidence | Working | `tests/integration/test_chunks.py`, `recap eval run` |
 | API-first chat/embedding providers (OpenAI-compatible) | Implemented; live endpoint not configured in CI | `tests/unit/test_providers.py`, opt-in `tests/integration/test_live_providers.py` |
 | LLM repair-candidate generation with typed validation | Working when `REPAIR_GENERATOR=llm` | `tests/unit/test_llm_generator.py` |
 | Real LLM tool-using agent (`recap agent run`) | Implemented; live endpoint not configured in CI | `tests/unit/test_llm_agent.py`, `tests/integration/test_llm_agent_recording.py` |
@@ -44,13 +47,16 @@ Elasticsearch 8.19.3 node. There are no stub endpoints in the implemented paths.
 
 Honest limitations are listed in [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md). The
 most important ones: the default embedding provider is a deterministic **hashing lexical
-embedder**, not a neural model, and the demo/benchmark still use the deterministic reference
-agent for reproducibility. A configured-LLM tool-using agent exists (`recap agent run`) and
-is validated with a scripted provider plus the real PostgreSQL recorder; it has not been run
-against a real model endpoint here. The real-model provider layer is unit-tested against the
-exact wire format, but no real endpoint is configured in CI, so live-provider tests skip
-there. Benchmark numbers measure pipeline behaviour and safety properties, not LLM capability.
-Reports and `recap providers` say which mode produced a result.
+embedder**, not a neural model; the demo/benchmark still use the deterministic reference
+agent for reproducibility; the Postgres **embedding cache is designed but not implemented**
+(ADR 0004 section 5), so no cache metric is reported; and the chunk token counter is a
+download-free approximation, not a model tokenizer. A configured-LLM tool-using agent exists
+(`recap agent run`) and is validated with a scripted provider plus the real PostgreSQL
+recorder; it has not been run against a real model endpoint here. The real-model provider
+layer is unit-tested against the exact wire format, but no real endpoint is configured in CI,
+so live-provider tests skip there. Benchmark numbers measure pipeline behaviour and safety
+properties, not LLM capability. Reports and `recap providers` say which mode produced a
+result.
 
 ---
 
@@ -174,8 +180,9 @@ recap doctor [--live]
 recap serve
 
 recap db migrate | init
-recap search init | health | reconcile | drain | outbox
+recap search init | health | reconcile [--chunks] | drain | outbox
 recap memory search | show | compatibility
+recap chunk build | show | count
 recap repair compile | validate | promote
 recap agent run --environment-version 1
 recap demo seed | run
@@ -189,7 +196,9 @@ Every command performs real work. Nothing prints success for an operation that d
 ## Architecture in one paragraph
 
 PostgreSQL is the source of truth. Elasticsearch is a rebuildable index behind
-`recap-memories-read` / `recap-memories-write` aliases with a versioned index name. Model
+`recap-memories-read` / `recap-memories-write` aliases with a versioned index name; a second
+chunk index (`recap-chunks-*`) stores deterministic chunks derived from the same memories and
+their evidence runs, so retrieval can be ablated at card or chunk granularity. Model
 access is isolated behind `ChatProvider`/`EmbeddingProvider` ports with independent agent,
 repair, and embedding roles; the remote adapters speak the OpenAI-compatible API and never
 download weights. A run is recorded as an ordered event stream; a failure window is extracted

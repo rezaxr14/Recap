@@ -318,6 +318,36 @@ quarantined or retired after the snapshot is still rejected by live eligibility 
 created before this feature (or with an explicitly empty snapshot) are handled according to
 the stored value; new runs always get one.
 
+### 2.15 `memory_chunks`
+
+Deterministic, redaction-safe chunks derived from a memory and its evidence runs (ADR 0005).
+Postgres is authoritative; the Elasticsearch chunk documents are rebuildable with
+`recap search reconcile --chunks`.
+
+| Column | Type | Notes |
+|---|---|---|
+| `chunk_id` | varchar(64) PK | `sha256(...)[:32]`, includes `run_id` |
+| `workspace_id` | varchar(64) | tenant boundary |
+| `memory_id` / `memory_version` | varchar(64) / int | parent memory version |
+| `run_id` | varchar(64) null | backing evidence run (null for card) |
+| `chunk_type` | varchar(32) | `memory_card`, `failure_window`, `action_observation`, `validation_evidence`, `naive_fixed` (baseline only) |
+| `seq_start` / `seq_end` | int | event sequence span |
+| `event_ids` | json | source event ids for traceability |
+| `text` / `text_hash` | text / varchar(80) | redacted embedded text and its hash |
+| `token_estimate` | int | `approx_regex` estimate |
+| `truncated` | bool | an oversized unit lost content (marker in text) |
+| `chunker_version` / `redaction_rule_version` | varchar(32) | reproducibility |
+| `failure_code`, `tool_names`, `tool_versions`, `task_families` | json/keyword | filters copied from the parent |
+| `environment_id` / `environment_fingerprint` | varchar | provenance |
+| `exact_ids` | json | volatile values normalized out of the text |
+| `active_for_retrieval` | bool | follows the parent memory's lifecycle |
+| `index_status` / `indexed_at` | varchar(32) / timestamptz | outbox/index bookkeeping |
+| `created_at` | timestamptz | |
+
+Indexes: `(memory_id, memory_version)`, `run_id`, `chunk_type`, `workspace_id`. Chunks are
+rebuilt for a memory version when its content, evidence, or the chunker version changes;
+chunks no longer produced are deleted (`delete_stale`).
+
 ## 3. Memory content schema
 
 `MemoryContent` (stored in `memories.content_json`) is the contract between the compiler and
@@ -361,6 +391,12 @@ Fields are a flattened projection of `MemoryContent` plus operational metadata (
 counters, fingerprint, content hash, index generation). The mapping is `dynamic: strict`, so
 an accidental new field fails loudly instead of silently creating a mapping.
 
+The chunk index (`recap-chunks-v1`, aliases `recap-chunks-read`/`recap-chunks-write`) stores one
+document per chunk, id `= chunk_id`, with `chunk_text`, the same provenance fields, a
+`content_embedding` dense vector, `embedding_fingerprint`, and `active_for_retrieval`. Card and
+chunk indices are separate so chunk-granule retrieval can be ablated against card retrieval on
+the same tasks.
+
 ## 5. Invariants and where they are enforced
 
 | Invariant | Enforced by |
@@ -382,6 +418,8 @@ an accidental new field fails loudly instead of silently creating a mapping.
   `index_outbox.dedupe_key` and adds the partial unique index.
 - `0003_memory_snapshots` — adds `memory_snapshots` and `memory_snapshot_entries` (defensive:
   a fresh database may already have them from the baseline `create_all`).
+- `0004_memory_chunks` — adds `memory_chunks` (same defensive pattern). Note: the chunking
+  brief suggested numbering this `0003`, but `0003` was already taken by snapshots.
 
 Migrations are applied with `recap db migrate` (Alembic). `recap db init` is a development
 shortcut that calls `Base.metadata.create_all`; it is not a substitute for migrations in a

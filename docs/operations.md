@@ -32,8 +32,8 @@ python scripts/run_smoke_test.py
 ```
 
 `recap db migrate` applies Alembic migrations. `recap search init` is idempotent: it creates
-`recap-memories-v1` if missing and points `recap-memories-read` / `recap-memories-write` at
-it.
+`recap-memories-v1` (and `recap-chunks-v1`), then points `recap-memories-read` /
+`recap-memories-write` and `recap-chunks-read` / `recap-chunks-write` at them.
 
 ## 3. Health
 
@@ -57,7 +57,8 @@ recap doctor [--live]
 recap search health
 ```
 
-`recap search health` reports `index_exists`, `read_alias_exists`, `document_count`.
+`recap search health` reports `index_exists`, `read_alias_exists`, `document_count` for both the
+memory and chunk indices.
 `recap providers` is offline and prints every role, model, and capability without secrets.
 `recap doctor` probes only configured endpoints; `--live` adds one small chat call and one
 real embedding call. It exits non-zero when a configured dependency fails.
@@ -121,12 +122,29 @@ Error codes map to HTTP statuses: `validation_error` 422, `not_found` 404, `conf
 ### Reindex everything from Postgres
 
 ```bash
-recap search reconcile
+recap search reconcile            # memories only
+recap search reconcile --chunks   # memories and their chunks
 ```
 
 Reindexes active memories in the default workspace, prints
-`indexed=<n> failed=<n> pending_outbox=<n>`. This is the recovery path when the index is
-lost, corrupt, or was built with a different embedding model.
+`indexed=<n> failed=<n> chunks=<n> pending_outbox=<n>`. This is the recovery path when the
+index is lost, corrupt, or was built with a different embedding model.
+
+### Build or rebuild chunks
+
+```bash
+recap chunk build --workspace demo-workspace         # all active memories
+recap chunk build --memory-id mem_... --workspace demo-workspace
+recap chunk show mem_... --version 1
+recap chunk count
+```
+
+Chunks live in Postgres (`memory_chunks`) as the source of truth and are indexed into
+`recap-chunks-v1` through the same outbox. Rebuilding is idempotent: unchanged chunks keep
+their id, and chunks no longer produced by the current chunker version are deleted. A memory
+transition flips `active_for_retrieval` on its chunk documents; if the chunk index is
+unreachable the memory index still succeeds (chunks are rebuildable), and
+`recap search reconcile --chunks` is the recovery path.
 
 ### Drain the index outbox
 
@@ -261,7 +279,7 @@ recap db migrate
 ```
 
 Alembic is configured from `alembic.ini` + `migrations/`; the CLI injects the configured
-URL. Current head: `0002_outbox_active_dedupe`.
+URL. Current head: `0004_memory_chunks`.
 
 ### Inspection
 
@@ -274,6 +292,9 @@ SELECT state, count(*) FROM revalidation_jobs GROUP BY state;
 
 -- pending index work
 SELECT state, count(*) FROM index_outbox GROUP BY state;
+
+-- chunk counts per type
+SELECT chunk_type, count(*) FROM memory_chunks GROUP BY chunk_type ORDER BY 2 DESC;
 
 -- recent degraded memories
 SELECT entity_id, action, reason, created_at
@@ -299,6 +320,8 @@ Never run this against anything you care about.
 ```bash
 curl -s localhost:9200/_cat/aliases/recap-memories-*
 curl -s localhost:9200/_cat/indices/recap-memories-*
+curl -s localhost:9200/_cat/aliases/recap-chunks-*
+curl -s localhost:9200/_cat/indices/recap-chunks-*
 ```
 
 Writes go through `recap-memories-write`; reads through `recap-memories-read`. The read alias

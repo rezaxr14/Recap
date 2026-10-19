@@ -40,9 +40,18 @@ embedding; exact values remain in keyword fields.
 Chunk ID:
 
 ```
-sha256(workspace_id | memory_id | memory_version | chunk_type |
-       seq_start | seq_end | chunker_version | text_hash)[:32]
+sha256(workspace_id | memory_id | memory_version | run_id |
+       chunk_type | seq_start | seq_end | chunker_version | text_hash)[:32]
 ```
+
+`run_id` is an explicit extension to the brief's formula. A memory has one card chunk plus
+event-derived chunks from each evidence run; without `run_id` in the hash, identical event text
+at the same sequence numbers in two different runs would collapse into a single chunk and lose
+traceability. The card chunk uses an empty `run_id`, so its ID is still a pure function of the
+memory card.
+
+Migration note: this work lands as `0004_memory_chunks`. The brief's suggested "migration 0003"
+is unavailable because `0003_memory_snapshots` already exists.
 
 ### 3. Atomic units and packing
 

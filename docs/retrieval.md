@@ -1,0 +1,237 @@
+# Retrieval
+
+## 1. The claim being tested
+
+Retrieval relevance answers "which memory looks like this failure?". It does not answer
+"which memory is safe and useful to apply *here*?". Those are different questions, and
+conflating them is how memory systems cause harm: a highly similar memory from a previous
+schema version is exactly the kind of candidate a pure vector search will confidently
+return.
+
+RECAP therefore separates:
+
+- **retrieval** — produce a ranked candidate set (BM25, vector, hybrid RRF)
+- **selection** — decide whether any candidate is operationally applicable
+
+and records both.
+
+## 2. Branches
+
+### 2.1 BM25 (lexical)
+
+`multi_match` over weighted text fields:
+
+| Field | Boost |
+|---|---|
+| `failure_signature` | 3.0 |
+| `failure_code` | 2.5 |
+| `title` | 2.0 |
+| `summary` | 1.5 |
+| `strategy_text` | 1.2 |
+| `preconditions_text` | 1.0 |
+| `postconditions_text` | 0.8 |
+| `limitations_text` | 0.5 |
+
+The failure signature is a normalized `ErrorType|CODE|tool` string, so exact-failure
+matching dominates when present.
+
+### 2.2 Dense vector
+
+`knn` over `content_embedding` (cosine, HNSW, 256 dimensions by default).
+
+**Important:** the default embedder is `HashingEmbeddingProvider` — a deterministic lexical
+hash projection, not a neural model. It exists so the vector branch is exercised without a
+model download or API key. It captures token overlap, not semantics. A real neural provider
+can be enabled with `pip install -e ".[sentence-transformers]"` and
+`RECAP_EMBEDDING_PROVIDER=sentence-transformers`.
+
+### 2.3 Hybrid fusion
+
+Default: application-side Reciprocal Rank Fusion.
+
+```
+score(d) = sum over branches b of 1 / (k + rank_b(d)),  k = 60
+```
+
+RRF is used rather than score normalization because BM25 scores and cosine similarities are
+not comparable and their distributions shift per query. Rank-based fusion needs no
+calibration.
+
+Native Elasticsearch RRF (`es_rrf`) is implemented in the DSL and selectable via
+`elasticsearch.hybrid_strategy`, but is not the default: the application-side path gives
+per-branch ranks and scores that are persisted in the decision record.
+
+## 3. Hard filters
+
+Only two constraints are pushed into Elasticsearch:
+
+- `workspace_id` (tenant boundary)
+- `status` in the operational set, plus `must_not` for known-incompatible documents
+
+Everything else is evaluated in the application **on purpose**:
+
+| Signal | Why application-side |
+|---|---|
+| task family | a mismatch should be retrieved and explained, not hidden |
+| tool names | same |
+| environment fingerprint | needs schema-hash comparison, not equality |
+| failure code | needs compatibility reasoning |
+| preconditions | requires runtime state |
+| reliability | requires posterior computation |
+
+If these were ES filters, the decision record would show an empty candidate set and no
+explanation. The safety audit would also lose the ability to observe that a baseline
+selected something incompatible.
+
+## 4. Applicability
+
+Preconditions are predicates evaluated against a bounded state snapshot built from the
+request context plus environment facts:
+
+```
+environment_id, environment_fingerprint, environment_version, environment_type,
+task_family, error_type, error_code, tool_names, tool_versions,
+tool_schema_fingerprints, <caller state>
+```
+
+Result is `satisfied`, `violated`, or `unknown`. **`unknown` is not satisfied.**
+`is_operationally_applicable` requires `satisfied`, which is what makes the system fail
+closed when the caller cannot supply enough state.
+
+The predicate language is intentionally tiny (`eq`, `neq`, `in`, `exists`, numeric
+comparisons). It cannot call functions, traverse attributes, or evaluate expressions.
+
+## 5. Compatibility
+
+Compatibility is resolved from two sources:
+
+1. stored `MemoryShift` compatibility for `(memory, environment fingerprint)`
+2. live comparison of the memory's origin fingerprint and declared tool schema hashes
+
+Resolution order (`combine_compatibility`):
+
+- stored `incompatible` -> `incompatible`
+- fingerprint differs but all declared tool schema hashes match -> `suspect`
+- fingerprint differs -> `suspect`
+- stored `suspect` -> `suspect`
+- fingerprint matches -> `compatible`
+- no fingerprint on the memory -> `unknown`
+
+`incompatible` is a hard rejection. `suspect` is a hard rejection by default
+(`allow_suspect_operational_memories=false`) and also carries a large negative utility
+weight.
+
+## 6. Utility policy (`utility-v1`)
+
+Features are logged per candidate; the score is a transparent weighted sum, normalized to
+`[0,1]`.
+
+| Feature | Weight |
+|---|---|
+| relevance (fused, normalized) | +0.24 |
+| exact failure-signature match | +0.18 |
+| error-code match | +0.10 |
+| tool match | +0.05 |
+| task-family match | +0.07 |
+| environment match | +0.06 |
+| precondition satisfaction ratio | +0.12 |
+| reliability posterior mean | +0.10 |
+| evidence strength (saturates at 5 verified outcomes) | +0.03 |
+| negative evidence (failure share) | -0.10 |
+| validation recency (90-day half-life) | +0.03 |
+| side-effect risk | -0.06 |
+| compatibility penalty | -0.25 |
+| staleness penalty | -0.05 |
+| uncertainty penalty | -0.06 |
+
+Selection rule:
+
+```
+if applicability != satisfied:        reject "preconditions_not_satisfied"
+if compatibility == incompatible:      reject "incompatible_environment"
+if total < no_safe_memory_threshold:   reject "below_utility_threshold"
+otherwise:                             select
+```
+
+Then a diversity cap (`max_per_strategy`, default 2) and `final_k` are applied. Candidates
+dropped by those caps are recorded as `duplicate_strategy` / `final_k_exceeded`, so a
+"missing" memory is never unexplained.
+
+Weights are starting defaults, tuned on the **dev** split only. The test split is never used
+for tuning. They are deliberately interpretable rather than learned: with six tasks, a
+learned ranker would be overfitting dressed up as science.
+
+## 7. Reliability
+
+Per-memory Beta-Binomial posterior:
+
+```
+alpha = prior_alpha + verified_successes
+beta  = prior_beta  + verified_failures
+mean  = alpha / (alpha + beta)
+sd    = sqrt(alpha*beta / ((alpha+beta)^2 * (alpha+beta+1)))
+```
+
+Only `verified_success` and `verified_failure` outcomes move the counters. `partial` and
+`unknown` are recorded but do not change reliability. This prevents an agent's
+self-reported "it worked" from laundering a bad memory into a good one.
+
+## 8. Ablation design (why the baselines are fair)
+
+This is the part most easy to get wrong, so it is explicit in code:
+
+```python
+strict_policy = request.mode is RetrievalMode.OUTCOME_AWARE
+```
+
+- `bm25`, `vector`, `hybrid_rrf` rank by relevance and **skip** applicability,
+  compatibility, and utility policy. They are pure retrieval baselines.
+- `outcome_aware` applies the full policy.
+
+That is a deliberate ablation: it measures exactly what the policy adds. If the retrieval
+baselines also applied the policy, the comparison would be policy-vs-policy and would say
+nothing about selection.
+
+The safety metric is computed independently, after the fact, from the recorded selection and
+the task's true schema. It never influences selection. In the dev split:
+
+| baseline | success | incompatible selection |
+|---|---|---|
+| no_memory | 0.000 | 0.000 |
+| retry_only | 0.000 | 0.000 |
+| bm25 | 1.000 | 1.000 |
+| vector | 1.000 | 1.000 |
+| hybrid_rrf | 1.000 | 1.000 |
+| outcome_aware | 1.000 | 0.000 |
+
+The retrieval baselines "succeed" on the dev split because the v2 task's memory happens to
+be rankable, but they select an incompatible memory to get there — the reference agent
+recovers via the wrong path. `outcome_aware` succeeds without ever selecting an incompatible
+memory. That contrast is the result the project is built to demonstrate, and it is computed
+from recorded outcomes, not asserted.
+
+## 9. Decision record
+
+Every retrieval persists:
+
+- query (redacted), mode, policy version, index generation, embedding model id
+- status and reason (`selected N` or `no_safe_memory: reason=count, ...`)
+- per candidate: branch ranks, branch scores, fused score/rank, hard-filter result,
+  applicability result and reason, compatibility status and reason, all utility features,
+  score components, final score, selected flag
+- rejected candidates with a primary reason and detail
+- stage latencies, degraded flag, warnings
+
+This is what makes "why did it return nothing?" a queryable question rather than a mystery.
+
+## 10. Failure and degradation
+
+| Failure | Behaviour |
+|---|---|
+| embedding provider raises | warn, degrade to BM25; vector-only mode returns `degraded` with no selection |
+| Elasticsearch unreachable | `SearchUnavailable` -> API 503, decision not fabricated |
+| no candidates match | `no_safe_memory` with `no candidates matched the query` |
+| all candidates filtered | `no_safe_memory` with the dominant rejection reasons |
+| memory in index but missing in DB | candidate recorded as `memory_not_found_in_source_of_truth`, not selected |
+
+There is no path where an unavailable dependency produces a confident answer.

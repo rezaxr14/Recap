@@ -1,0 +1,72 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: recap-postgres
+    environment:
+      POSTGRES_USER: recap
+      POSTGRES_PASSWORD: recap
+      POSTGRES_DB: recap
+    ports:
+      - "5433:5432"
+    volumes:
+      - recap_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U recap -d recap"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  elasticsearch:
+    image: elasticsearch:8.19.3
+    container_name: recap-elasticsearch
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - xpack.security.http.ssl.enabled=false
+      - ES_JAVA_OPTS=-Xms1g -Xmx1g
+      - bootstrap.memory_lock=true
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    ports:
+      - "9200:9200"
+    volumes:
+      - recap_esdata:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9200/_cluster/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: recap-api
+    profiles: ["full"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://recap:recap@postgres:5432/recap
+      ELASTICSEARCH_URL: http://elasticsearch:9200
+      RECAP_EMBEDDING_PROVIDER: hashing
+      RECAP_EMBEDDING_DIMENSION: "256"
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+    command: ["uvicorn", "recap.api.app:app", "--host", "0.0.0.0", "--port", "8000"]
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request;urllib.request.urlopen('http://localhost:8000/health/live')\""]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  recap_pgdata:
+  recap_esdata:

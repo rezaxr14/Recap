@@ -1,0 +1,68 @@
+app:
+  name: recap
+  environment: local
+  log_level: INFO
+  api_prefix: /api/v1
+
+storage:
+  postgres_url: postgresql+psycopg://recap:recap@localhost:5433/recap
+  max_event_payload_bytes: 65536
+
+elasticsearch:
+  url: http://localhost:9200
+  api_key: ""
+  index_prefix: recap
+  memories_read_alias: recap-memories-read
+  memories_write_alias: recap-memories-write
+  index_generation: 1
+  request_timeout_seconds: 5.0
+  vector_dimension: 256
+  hybrid_strategy: app_rrf
+  rrf_k: 60
+
+embeddings:
+  provider: hashing
+  model_id: recap-hashing-embedding-v1
+  dimension: 256
+  batch_size: 32
+
+recall:
+  default_mode: outcome_aware
+  lexical_candidate_k: 30
+  vector_candidate_k: 30
+  final_k: 5
+  max_candidates: 100
+  allow_unvalidated_operational_memories: false
+  allow_suspect_operational_memories: false
+  require_tool_match: false
+  no_safe_memory_threshold: 0.35
+  max_per_strategy: 2
+
+reliability:
+  beta_prior_alpha: 1.0
+  beta_prior_beta: 1.0
+  minimum_verified_outcomes_for_alert: 5
+  suspect_posterior_mean_threshold: 0.55
+  quarantine_posterior_mean_threshold: 0.35
+  consecutive_failures_for_suspect: 3
+
+repair_compiler:
+  enabled: true
+  max_failure_window_events: 20
+  max_candidate_generation_attempts: 2
+  require_validation_for_promotion: true
+  max_validation_trials: 10
+  max_strategy_actions: 8
+
+memory_shift:
+  enabled: true
+  schema_mismatch_status: incompatible
+  version_mismatch_status: suspect
+  revalidation_enabled: true
+
+evaluation:
+  default_split: dev
+  frozen_memory_default: true
+  store_per_task_results: true
+  bootstrap_samples: 2000
+  random_seed: 7

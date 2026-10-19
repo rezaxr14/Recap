@@ -20,10 +20,15 @@ from pathlib import Path
 from typing import Any
 
 from recap.container import Container
-from recap.domain.enums import MemoryStatus, RetrievalMode
+from recap.domain.enums import EventType, MemoryStatus, RetrievalMode, RunStatus
 from recap.domain.retrieval import RetrievalContext, RetrievalRequest
 from recap.environments.mock_api import PaginatedApiEnvironment
 from recap.environments.reference_agent import ReferenceAgent
+from recap.environments.run_recording import (
+    AgentRunMetadata,
+    complete_recorded_run,
+    start_recorded_run,
+)
 from recap.evals.datasets import BenchmarkTask, default_tasks, split_hash
 from recap.evals.metrics import (
     bootstrap_ci,
@@ -67,6 +72,7 @@ def run_benchmark(
             per_task.append(_run_task(container, workspace_id, task, baseline=baseline, mode=mode))
 
     summary = _summarize(per_task)
+    by_family = _summarize_by_family(per_task)
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
@@ -81,11 +87,15 @@ def run_benchmark(
         "baselines": [name for name, _ in BASELINES],
         "per_task": per_task,
         "summary": summary,
+        "by_task_family": by_family,
         "protocol": {
             "memory_setting": "frozen_memory",
+            "memory_snapshot": "one per run, created before retrieval",
+            "retrieval_scope": "run",
             "agent": "deterministic-reference-agent-v1",
             "provider": "deterministic",
             "environment": "mock-api",
+            "metrics_source": "persisted_run_records",
             "note": ("Deterministic mock pipeline test. Not evidence of real LLM performance."),
         },
     }
@@ -161,6 +171,32 @@ def _run_task(
     fingerprint = environment.fingerprint()
     agent = ReferenceAgent()
 
+    metadata = AgentRunMetadata(
+        agent_id="benchmark-reference-agent",
+        model_provider="deterministic",
+        model_name="reference-agent-v1",
+        task_family=task.task_family,
+        success_criteria="all records collected",
+        failure_type="benchmark_task_failed",
+        config_snapshot={
+            "baseline": baseline,
+            "retrieval_mode": mode.value if mode is not None else None,
+            "split": task.split,
+            "dataset_hash": split_hash([task]),
+            "run_scoped_retrieval": True,
+        },
+    )
+    # Start the run before retrieval so its snapshot pins the candidate set for
+    # the whole task. All reported task metrics below are read back from this
+    # persisted run, not from an in-memory shortcut.
+    run = start_recorded_run(
+        container,
+        environment,
+        metadata=metadata,
+        workspace_id=workspace_id,
+        task_id=task.task_id,
+    )
+
     selected_ids: list[str] = []
     status = "not_retrieved"
     ranked_ids: list[str] = []
@@ -194,6 +230,7 @@ def _run_task(
                 ),
                 mode=mode,
                 final_k=3,
+                run_id=run.id,
             )
             decision = services.recall.retrieve(request)
             status = decision.status.value
@@ -226,28 +263,58 @@ def _run_task(
     else:
         result = agent.run(environment)
 
+    run_id = complete_recorded_run(
+        container,
+        run,
+        environment,
+        result,
+        metadata=metadata,
+        memory=memory,
+        memory_source="retrieval_selection",
+    )
     relevant = _relevant_ids(container, workspace_id, task)
     incompatible_selected = _count_incompatible_selected(
         container, workspace_id, selected_ids, task, error_code=error_code
     )
+    with container.services() as services:
+        recorded = services.recorder.get_run(run_id)
+        events = services.runs.list_events(run_id)
+    used_memory_id = next(
+        (
+            str(event.payload_redacted["memory_id"])
+            for event in events
+            if event.event_type is EventType.MEMORY_APPLIED
+            and event.payload_redacted.get("memory_id")
+        ),
+        None,
+    )
+    finished = next((event for event in events if event.event_type is EventType.RUN_FINISHED), None)
+    error = None
+    if finished is not None:
+        value = finished.payload_redacted.get("error")
+        error = str(value) if value else None
+    success = recorded.status == RunStatus.SUCCEEDED
     return {
         "task_id": task.task_id,
+        "task_family": task.task_family,
         "baseline": baseline,
         "split": task.split,
         "environment_version": task.environment_version,
+        "run_id": run_id,
+        "memory_snapshot_id": recorded.memory_snapshot_id,
         "retrieval_status": status,
         "selected_memory_ids": selected_ids,
         "relevant_memory_ids": sorted(relevant),
         "recall_at_3": recall_at_k(relevant, ranked_ids, 3),
         "mrr": reciprocal_rank(relevant, ranked_ids),
         "ndcg_at_3": ndcg_at_k(relevant, ranked_ids, 3),
-        "task_success": result.success,
-        "tool_calls": result.tool_calls,
-        "retries": result.retries,
-        "used_memory_id": result.used_memory_id,
-        "harmful_transfer": bool(result.used_memory_id and not result.success),
+        "task_success": success,
+        "tool_calls": recorded.tool_calls_count,
+        "retries": recorded.retry_count,
+        "used_memory_id": used_memory_id,
+        "harmful_transfer": bool(used_memory_id and not success),
         "incompatible_selected": incompatible_selected,
-        "error": None if result.success else result.final_error,
+        "error": error,
     }
 
 
@@ -326,30 +393,39 @@ def _relevant_ids(container: Container, workspace_id: str, task: BenchmarkTask) 
 
 
 def _summarize(per_task: list[dict[str, Any]]) -> dict[str, Any]:
-    summary: dict[str, Any] = {}
     baselines = sorted({row["baseline"] for row in per_task})
-    for baseline in baselines:
-        rows = [row for row in per_task if row["baseline"] == baseline]
-        successes = [1.0 if row["task_success"] else 0.0 for row in rows]
-        lower, upper = bootstrap_ci(successes)
-        summary[baseline] = {
-            "tasks": len(rows),
-            "task_success_rate": mean(successes),
-            "task_success_ci95": [lower, upper],
-            "mean_tool_calls": mean([row["tool_calls"] for row in rows]),
-            "mean_retries": mean([row["retries"] for row in rows]),
-            "recall_at_3": mean([row["recall_at_3"] for row in rows]),
-            "mrr": mean([row["mrr"] for row in rows]),
-            "ndcg_at_3": mean([row["ndcg_at_3"] for row in rows]),
-            "harmful_transfer_rate": mean(
-                [1.0 if row["harmful_transfer"] else 0.0 for row in rows]
-            ),
-            "incompatible_selection_rate": mean(
-                [1.0 if row["incompatible_selected"] else 0.0 for row in rows]
-            ),
-            "total_incompatible_selected": sum(row["incompatible_selected"] for row in rows),
-        }
-    return summary
+    return {
+        baseline: _summarize_rows([row for row in per_task if row["baseline"] == baseline])
+        for baseline in baselines
+    }
+
+
+def _summarize_by_family(per_task: list[dict[str, Any]]) -> dict[str, Any]:
+    families = sorted({row["task_family"] for row in per_task})
+    return {
+        family: _summarize([row for row in per_task if row["task_family"] == family])
+        for family in families
+    }
+
+
+def _summarize_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    successes = [1.0 if row["task_success"] else 0.0 for row in rows]
+    lower, upper = bootstrap_ci(successes)
+    return {
+        "tasks": len(rows),
+        "task_success_rate": mean(successes),
+        "task_success_ci95": [lower, upper],
+        "mean_tool_calls": mean([row["tool_calls"] for row in rows]),
+        "mean_retries": mean([row["retries"] for row in rows]),
+        "recall_at_3": mean([row["recall_at_3"] for row in rows]),
+        "mrr": mean([row["mrr"] for row in rows]),
+        "ndcg_at_3": mean([row["ndcg_at_3"] for row in rows]),
+        "harmful_transfer_rate": mean([1.0 if row["harmful_transfer"] else 0.0 for row in rows]),
+        "incompatible_selection_rate": mean(
+            [1.0 if row["incompatible_selected"] else 0.0 for row in rows]
+        ),
+        "total_incompatible_selected": sum(row["incompatible_selected"] for row in rows),
+    }
 
 
 def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
@@ -396,20 +472,39 @@ def _render_markdown(payload: dict[str, Any]) -> str:
             "influences selection, so it cannot flatter any baseline.",
         ]
     )
+    by_family = payload.get("by_task_family") or {}
+    if by_family:
+        lines.extend(
+            [
+                "",
+                "## Per-family metrics",
+                "",
+                "| family | baseline | success | recall@3 | MRR | harmful transfer | incompatible selection |",
+                "|---|---|---|---|---|---|---|",
+            ]
+        )
+        for family, baselines in by_family.items():
+            for baseline, stats in baselines.items():
+                lines.append(
+                    f"| {family} | {baseline} | {stats['task_success_rate']:.3f} | "
+                    f"{stats['recall_at_3']:.3f} | {stats['mrr']:.3f} | "
+                    f"{stats['harmful_transfer_rate']:.3f} | "
+                    f"{stats['incompatible_selection_rate']:.3f} |"
+                )
     lines.extend(
         [
             "",
             "## Per-task results",
             "",
-            "| task | baseline | success | status | error |",
-            "|---|---|---|---|---|",
+            "| task | baseline | run | success | status | error |",
+            "|---|---|---|---|---|---|",
         ]
     )
     for row in payload["per_task"]:
         error = row["error"] or ""
         lines.append(
-            f"| {row['task_id']} | {row['baseline']} | {row['task_success']} | "
-            f"{row['retrieval_status']} | {error[:60]} |"
+            f"| {row['task_id']} | {row['baseline']} | `{row['run_id']}` | "
+            f"{row['task_success']} | {row['retrieval_status']} | {error[:60]} |"
         )
     lines.extend(
         [

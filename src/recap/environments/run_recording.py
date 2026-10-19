@@ -7,14 +7,20 @@ Two agents share this recorder so their event shape is identical:
 * ``record_llm_run``: the configured real chat model driving the same mock API
   through tool calls.
 
+The benchmark uses ``start_recorded_run`` before retrieval and
+``complete_recorded_run`` after the agent finishes. That ordering means the
+task's retrieval is pinned to the run's memory snapshot, and the metrics are
+read back from the persisted run rather than from an in-memory shortcut.
+
 The recorded run never derives success from the model's self-report. It comes
 from the agent's environment postcondition.
 """
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import Any
 
@@ -25,6 +31,12 @@ from recap.domain.runs import AgentRun, RunEventCreate
 from recap.environments.llm_agent import PROMPT_VERSION, LlmAgent, MemoryAdvisory
 from recap.environments.mock_api import PaginatedApiEnvironment
 from recap.environments.reference_agent import AgentRunResult, ReferenceAgent
+from recap.errors import (
+    NotFoundError,
+    ProviderAuthenticationError,
+    ProviderResponseError,
+    ProviderUnavailable,
+)
 from recap.providers.base import ChatProvider
 
 
@@ -41,77 +53,16 @@ class AgentRunMetadata:
     config_snapshot: dict[str, Any] = field(default_factory=dict)
 
 
-def record_reference_run(
+def start_recorded_run(
     container: Container,
     environment: PaginatedApiEnvironment,
-    *,
-    workspace_id: str = "demo-workspace",
-    task_id: str | None = None,
-) -> tuple[str, AgentRunResult]:
-    agent_result = ReferenceAgent().run(environment)
-    metadata = AgentRunMetadata(
-        agent_id="reference-agent",
-        model_provider="deterministic",
-        model_name="reference-agent-v1",
-        failure_type="invalid_pagination_cursor",
-    )
-    return record_agent_run(
-        container,
-        environment,
-        agent_result,
-        metadata=metadata,
-        workspace_id=workspace_id,
-        task_id=task_id,
-    )
-
-
-def record_llm_run(
-    container: Container,
-    environment: PaginatedApiEnvironment,
-    *,
-    provider: ChatProvider,
-    workspace_id: str = "demo-workspace",
-    task_id: str | None = None,
-    memory: MemoryAdvisory | None = None,
-    max_tool_calls: int = 6,
-) -> tuple[str, AgentRunResult]:
-    """Run the configured chat model and persist its real tool-use trace."""
-
-    agent = LlmAgent(provider)
-    agent_result = agent.run(environment, memory=memory, max_tool_calls=max_tool_calls)
-    metadata = AgentRunMetadata(
-        agent_id="llm-tool-agent-v1",
-        model_provider=str(getattr(provider, "provider_type", "unknown")),
-        model_name=str(getattr(provider, "model", "") or "unknown"),
-        config_snapshot={
-            "prompt_version": PROMPT_VERSION,
-            "max_tool_calls": max_tool_calls,
-            "temperature": 0.0,
-            "tools": ["list_records"],
-            "memory_id": memory.memory_id if memory is not None else None,
-        },
-    )
-    return record_agent_run(
-        container,
-        environment,
-        agent_result,
-        metadata=metadata,
-        workspace_id=workspace_id,
-        task_id=task_id,
-        memory=memory,
-    )
-
-
-def record_agent_run(
-    container: Container,
-    environment: PaginatedApiEnvironment,
-    agent_result: AgentRunResult,
     *,
     metadata: AgentRunMetadata,
     workspace_id: str = "demo-workspace",
     task_id: str | None = None,
-    memory: MemoryAdvisory | None = None,
-) -> tuple[str, AgentRunResult]:
+) -> AgentRun:
+    """Create the run and its frozen memory snapshot before the agent starts."""
+
     fingerprint = environment.fingerprint()
     with container.services() as services:
         from recap.infrastructure.db.repositories import ensure_workspace
@@ -134,13 +85,48 @@ def record_agent_run(
             config_snapshot=dict(metadata.config_snapshot),
         )
         run = services.recorder.start_run(run)
+        services.recorder.append_event(
+            run,
+            RunEventCreate(
+                sequence_number=1,
+                event_type=EventType.RUN_STARTED,
+                payload={
+                    "task": "collect all records",
+                    "environment_version": environment.version,
+                    "agent_id": metadata.agent_id,
+                    "memory_snapshot_id": run.memory_snapshot_id,
+                },
+            ),
+        )
+        return run
+
+
+def complete_recorded_run(
+    container: Container,
+    run: AgentRun,
+    environment: PaginatedApiEnvironment,
+    agent_result: AgentRunResult,
+    *,
+    metadata: AgentRunMetadata,
+    memory: Any | None = None,
+    memory_source: str = "advisory",
+) -> str:
+    """Append the observable trace, enforce the postcondition, and finish the run."""
+
+    with container.services() as services:
+        current = services.recorder.get_run(run.id)
+        if current is None:
+            raise NotFoundError(f"run {run.id} not found")
         sequence = 0
+        existing = services.runs.list_events(run.id)
+        if existing:
+            sequence = existing[-1].sequence_number
 
         def append(event_type: EventType, payload: dict[str, Any], tool: str | None = None) -> None:
             nonlocal sequence
             sequence += 1
             services.recorder.append_event(
-                run,
+                current,
                 RunEventCreate(
                     sequence_number=sequence,
                     event_type=event_type,
@@ -151,14 +137,6 @@ def record_agent_run(
             )
 
         append(
-            EventType.RUN_STARTED,
-            {
-                "task": "collect all records",
-                "environment_version": environment.version,
-                "agent_id": metadata.agent_id,
-            },
-        )
-        append(
             EventType.TASK_OBSERVATION,
             {
                 "observation": f"tenant={environment.tenant} total={len(environment.records)}",
@@ -167,16 +145,17 @@ def record_agent_run(
                 "output_tokens": agent_result.output_tokens,
             },
         )
-        if memory is not None:
-            append(
-                EventType.MEMORY_SELECTED,
-                {
-                    "memory_id": memory.memory_id,
-                    "memory_version": memory.memory_version,
-                    "title": memory.title,
-                    "advisory": True,
-                },
-            )
+        memory_id = _memory_id(memory)
+        if memory_id is not None:
+            memory_payload: dict[str, Any] = {
+                "memory_id": memory_id,
+                "memory_version": getattr(memory, "memory_version", None),
+                "title": getattr(memory, "title", ""),
+                "source": memory_source,
+            }
+            if memory_source == "llm_advisory":
+                memory_payload["advisory"] = True
+            append(EventType.MEMORY_SELECTED, memory_payload)
         for step in agent_result.steps:
             append(EventType.TOOL_CALL_REQUESTED, {"arguments": step.request}, tool=step.action)
             if step.ok:
@@ -187,19 +166,34 @@ def record_agent_run(
                     {"request": step.request, **(step.error or {})},
                     tool=step.action,
                 )
+        if agent_result.used_memory_id is not None:
+            append(
+                EventType.MEMORY_APPLIED,
+                {
+                    "memory_id": agent_result.used_memory_id,
+                    "attribution": "environment_recovery",
+                    "success": agent_result.success,
+                },
+            )
         append(
             EventType.POSTCONDITION_CHECKED,
-            {"passed": agent_result.success, "detail": agent_result.final_error},
+            {
+                "passed": agent_result.success,
+                "detail": None if agent_result.success else agent_result.final_error,
+            },
         )
         append(
             EventType.RUN_FINISHED,
-            {"success": agent_result.success, "error": agent_result.final_error},
+            {
+                "success": agent_result.success,
+                "error": None if agent_result.success else agent_result.final_error,
+            },
         )
         failure_type = None
         if not agent_result.success:
             failure_type = metadata.failure_type or _infer_failure_type(agent_result)
         services.recorder.finish_run(
-            run,
+            current,
             status=RunStatus.SUCCEEDED if agent_result.success else RunStatus.FAILED,
             failure_type=failure_type,
             tool_calls_count=agent_result.tool_calls,
@@ -208,7 +202,125 @@ def record_agent_run(
             output_tokens=agent_result.output_tokens,
             duration_ms=agent_result.duration_ms,
         )
-        return run.id, agent_result
+        return current.id
+
+
+def record_reference_run(
+    container: Container,
+    environment: PaginatedApiEnvironment,
+    *,
+    workspace_id: str = "demo-workspace",
+    task_id: str | None = None,
+) -> tuple[str, AgentRunResult]:
+    metadata = AgentRunMetadata(
+        agent_id="reference-agent",
+        model_provider="deterministic",
+        model_name="reference-agent-v1",
+        failure_type="invalid_pagination_cursor",
+    )
+    run = start_recorded_run(
+        container, environment, metadata=metadata, workspace_id=workspace_id, task_id=task_id
+    )
+    agent_result = ReferenceAgent().run(environment)
+    run_id = complete_recorded_run(container, run, environment, agent_result, metadata=metadata)
+    return run_id, agent_result
+
+
+def record_llm_run(
+    container: Container,
+    environment: PaginatedApiEnvironment,
+    *,
+    provider: ChatProvider,
+    workspace_id: str = "demo-workspace",
+    task_id: str | None = None,
+    memory: MemoryAdvisory | None = None,
+    max_tool_calls: int = 6,
+) -> tuple[str, AgentRunResult]:
+    """Run the configured chat model and persist its real tool-use trace."""
+
+    metadata = AgentRunMetadata(
+        agent_id="llm-tool-agent-v1",
+        model_provider=str(getattr(provider, "provider_type", "unknown")),
+        model_name=str(getattr(provider, "model", "") or "unknown"),
+        config_snapshot={
+            "prompt_version": PROMPT_VERSION,
+            "max_tool_calls": max_tool_calls,
+            "temperature": 0.0,
+            "tools": ["list_records"],
+            "memory_id": memory.memory_id if memory is not None else None,
+        },
+    )
+    run = start_recorded_run(
+        container, environment, metadata=metadata, workspace_id=workspace_id, task_id=task_id
+    )
+    try:
+        agent_result = LlmAgent(provider).run(
+            environment, memory=memory, max_tool_calls=max_tool_calls
+        )
+    except (
+        ProviderUnavailable,
+        ProviderAuthenticationError,
+        ProviderResponseError,
+    ) as exc:
+        # Persist the terminal state, then surface the provider failure to the
+        # caller. Never turn an outage into a fake answer or a success.
+        failed = AgentRunResult(success=False, final_error=f"provider error: {exc.message}")
+        with contextlib.suppress(Exception):
+            complete_recorded_run(
+                container,
+                run,
+                environment,
+                failed,
+                metadata=replace(metadata, failure_type="provider_error"),
+                memory=memory,
+                memory_source="llm_advisory",
+            )
+        raise
+    run_id = complete_recorded_run(
+        container,
+        run,
+        environment,
+        agent_result,
+        metadata=metadata,
+        memory=memory,
+        memory_source="llm_advisory",
+    )
+    return run_id, agent_result
+
+
+def record_agent_run(
+    container: Container,
+    environment: PaginatedApiEnvironment,
+    agent_result: AgentRunResult,
+    *,
+    metadata: AgentRunMetadata,
+    workspace_id: str = "demo-workspace",
+    task_id: str | None = None,
+    memory: Any | None = None,
+    memory_source: str = "advisory",
+) -> tuple[str, AgentRunResult]:
+    run = start_recorded_run(
+        container, environment, metadata=metadata, workspace_id=workspace_id, task_id=task_id
+    )
+    run_id = complete_recorded_run(
+        container,
+        run,
+        environment,
+        agent_result,
+        metadata=metadata,
+        memory=memory,
+        memory_source=memory_source,
+    )
+    return run_id, agent_result
+
+
+def _memory_id(memory: Any | None) -> str | None:
+    if memory is None:
+        return None
+    value = getattr(memory, "memory_id", None)
+    if value is None:
+        value = getattr(memory, "id", None)
+    return str(value) if value is not None else None
 
 
 def _infer_failure_type(result: AgentRunResult) -> str:

@@ -65,6 +65,9 @@ def live_settings(request: pytest.FixtureRequest) -> Settings:
     settings.elasticsearch.index_generation = 1
     settings.elasticsearch.memories_read_alias = "recap-test-memories-read"
     settings.elasticsearch.memories_write_alias = "recap-test-memories-write"
+    settings.elasticsearch.chunks_read_alias = "recap-test-chunks-read"
+    settings.elasticsearch.chunks_write_alias = "recap-test-chunks-write"
+    settings.elasticsearch.chunks_index_generation = 1
     return settings
 
 
@@ -80,5 +83,6 @@ def container(live_settings: Settings) -> Iterator[Container]:  # noqa: F821
     built = Container.build(live_settings)
     built.migrate()
     built.init_search()
+    built.init_search_chunks()
     yield built
     built.es_client.close()

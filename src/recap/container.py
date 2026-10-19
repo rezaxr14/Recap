@@ -14,7 +14,9 @@ from types import TracebackType
 from elasticsearch import Elasticsearch
 from sqlalchemy.orm import Session
 
+from recap.chunking.service import ChunkIndexSynchronizer, ChunkService
 from recap.config import Settings, get_settings
+from recap.domain.enums import MemoryStatus
 from recap.domain.memories import ExperienceMemory
 from recap.errors import (
     EmbeddingUnavailable,
@@ -29,6 +31,7 @@ from recap.infrastructure.db.repositories import (
     SqlCompatibilityRepository,
     SqlDecisionRepository,
     SqlEnvironmentRepository,
+    SqlMemoryChunkRepository,
     SqlMemoryRepository,
     SqlMemorySnapshotRepository,
     SqlOutboxRepository,
@@ -38,12 +41,14 @@ from recap.infrastructure.db.repositories import (
     SqlRunRepository,
 )
 from recap.infrastructure.db.session import Database, build_engine
+from recap.infrastructure.elasticsearch.chunk_repository import ElasticsearchChunkRepository
 from recap.infrastructure.elasticsearch.client import build_client, check_cluster
 from recap.infrastructure.elasticsearch.index_manager import IndexManager
 from recap.infrastructure.elasticsearch.search_repository import (
     ElasticsearchMemoryRepository,
 )
 from recap.infrastructure.embeddings import build_embedding_provider
+from recap.logging import get_logger
 from recap.memory_shift.service import MemoryShiftService
 from recap.providers.base import ChatMessage, ChatProvider
 from recap.providers.factory import build_chat_provider, provider_report
@@ -56,6 +61,8 @@ from recap.repair_compiler.compiler import RepairCompiler
 from recap.repair_compiler.promotion import PromotionService
 from recap.repair_compiler.validation import ValidatorRegistry, build_default_registry
 
+logger = get_logger(__name__)
+
 
 @dataclass
 class Container:
@@ -66,6 +73,7 @@ class Container:
     index_manager: IndexManager
     search_repository: ElasticsearchMemoryRepository
     validators: ValidatorRegistry
+    chunk_search_repository: ElasticsearchChunkRepository | None = None
     llm: ChatProvider | None = None
     repair_llm: ChatProvider | None = None
 
@@ -86,6 +94,12 @@ class Container:
             settings.elasticsearch,
             allow_suspect=settings.recall.allow_suspect_operational_memories,
         )
+        chunk_search_repository = ElasticsearchChunkRepository(
+            client,
+            settings.elasticsearch,
+            embedding_fingerprint=getattr(embeddings, "embedding_fingerprint", ""),
+            embedding_model_id=getattr(embeddings, "model_id", settings.embeddings.model_id),
+        )
         return cls(
             settings=settings,
             database=database,
@@ -93,6 +107,7 @@ class Container:
             embeddings=embeddings,
             index_manager=index_manager,
             search_repository=search_repository,
+            chunk_search_repository=chunk_search_repository,
             validators=build_default_registry(),
             llm=llm,
             repair_llm=repair_llm,
@@ -120,6 +135,9 @@ class Container:
                 },
             )
         return self.index_manager.initialize()
+
+    def init_search_chunks(self) -> dict[str, object]:
+        return self.index_manager.initialize_chunks()
 
     def provider_status(self) -> dict[str, object]:
         return provider_report(
@@ -241,6 +259,7 @@ class Services:
         self.environments = SqlEnvironmentRepository(session)
         self.outbox = SqlOutboxRepository(session)
         self.snapshots = SqlMemorySnapshotRepository(session)
+        self.chunk_store = SqlMemoryChunkRepository(session)
         self.snapshot_service = MemorySnapshotService(
             memory_repository=self.memories,
             snapshot_repository=self.snapshots,
@@ -259,6 +278,23 @@ class Services:
             self.memories,
             self.outbox,
             self.settings,
+            chunk_store=self.chunk_store,
+            chunk_search=container.chunk_search_repository,
+        )
+        self.chunk_sync = ChunkIndexSynchronizer(
+            container.chunk_search_repository,
+            container.embeddings,
+            self.chunk_store,
+            self.outbox,
+            self.settings,
+        )
+        self.chunk_service = ChunkService(
+            settings=self.settings,
+            memory_repository=self.memories,
+            run_repository=self.runs,
+            repair_repository=self.repairs,
+            chunk_repository=self.chunk_store,
+            chunk_index_sync=self.chunk_sync,
         )
         self.recall = RecallEngine(
             settings=self.settings,
@@ -270,6 +306,7 @@ class Services:
             reranker=build_reranker(self.settings.recall.reranker),
             run_repository=self.runs,
             snapshot_repository=self.snapshots,
+            chunk_search_repository=container.chunk_search_repository,
         )
         self.memory_shift = MemoryShiftService(
             settings=self.settings,
@@ -340,12 +377,17 @@ class IndexSynchronizer:
         memory_repository: SqlMemoryRepository,
         outbox: SqlOutboxRepository,
         settings: Settings,
+        *,
+        chunk_store: SqlMemoryChunkRepository | None = None,
+        chunk_search: ElasticsearchChunkRepository | None = None,
     ) -> None:
         self.search = search_repository
         self.embeddings = embeddings
         self.memories = memory_repository
         self.outbox = outbox
         self.settings = settings
+        self.chunk_store = chunk_store
+        self.chunk_search = chunk_search
         self.last_error = ""
 
     def __call__(self, memory: ExperienceMemory) -> bool:
@@ -376,12 +418,34 @@ class IndexSynchronizer:
                 memory.id, self.settings.elasticsearch.index_generation, success=True
             )
             self.outbox.mark_done_by_key(dedupe)
+            self._sync_chunk_lifecycle(memory)
             self.last_error = ""
             return True
         except SearchUnavailable as exc:
             self.last_error = exc.message
             self.memories.mark_indexed(memory.id, 0, success=False)
             return False
+
+    def _sync_chunk_lifecycle(self, memory: ExperienceMemory) -> None:
+        """Chunk lifecycle follows the memory, but never blocks memory indexing.
+
+        Chunk documents are rebuildable, so a chunk-index outage is a retryable
+        outbox problem, not a memory-index failure.
+        """
+
+        if self.chunk_store is None:
+            return
+        active = memory.status is MemoryStatus.ACTIVE
+        self.chunk_store.set_active_for_memory(memory.id, memory.memory_version, active=active)
+        if self.chunk_search is None:
+            return
+        try:
+            self.chunk_search.set_active_for_memory(memory.id, memory.memory_version, active=active)
+        except SearchUnavailable:
+            logger.warning(
+                "chunk lifecycle update deferred",
+                extra={"event": "chunk_lifecycle_deferred", "memory_id": memory.id},
+            )
 
 
 def _probe_message() -> ChatMessage:

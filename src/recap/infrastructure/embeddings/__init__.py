@@ -19,7 +19,9 @@ from recap.config import EmbeddingSettings
 from recap.errors import ConfigurationError, EmbeddingUnavailable
 from recap.infrastructure.embeddings.fake import FakeEmbeddingProvider
 from recap.infrastructure.embeddings.hashing import HashingEmbeddingProvider
+from recap.infrastructure.embeddings.prefix import PrefixedEmbeddingProvider
 from recap.providers.base import ProviderCapabilities
+from recap.providers.fingerprint import embedding_fingerprint
 from recap.providers.openai_compatible import OpenAICompatibleEmbeddingProvider
 
 
@@ -102,11 +104,28 @@ def build_embedding_provider(
     transport: httpx.BaseTransport | None = None,
 ) -> Any:
     if settings.provider == "hashing":
-        return HashingEmbeddingProvider(dimension=settings.dimension)
-    if settings.provider == "fake":
-        return FakeEmbeddingProvider(dimension=settings.dimension)
-    if settings.provider == "openai_compatible":
-        return OpenAICompatibleEmbeddingProvider(settings, transport=transport)
-    if settings.provider == "sentence-transformers":
-        return SentenceTransformerEmbeddingProvider(settings.model_path, settings.dimension)
-    raise ConfigurationError(f"unknown embedding provider: {settings.provider}")
+        provider: Any = HashingEmbeddingProvider(dimension=settings.dimension)
+    elif settings.provider == "fake":
+        provider = FakeEmbeddingProvider(dimension=settings.dimension)
+    elif settings.provider == "openai_compatible":
+        provider = OpenAICompatibleEmbeddingProvider(settings, transport=transport)
+    elif settings.provider == "sentence-transformers":
+        provider = SentenceTransformerEmbeddingProvider(settings.model_path, settings.dimension)
+    else:
+        raise ConfigurationError(f"unknown embedding provider: {settings.provider}")
+    if settings.document_prefix or settings.query_prefix:
+        provider = PrefixedEmbeddingProvider(
+            provider,
+            document_prefix=settings.document_prefix,
+            query_prefix=settings.query_prefix,
+        )
+    provider.embedding_fingerprint = embedding_fingerprint(
+        provider=settings.provider,
+        model_id=getattr(provider, "model_id", settings.model_id),
+        model_version=getattr(provider, "model_version", settings.model_version),
+        dimension=settings.dimension,
+        normalize=settings.normalize,
+        document_prefix=settings.document_prefix,
+        query_prefix=settings.query_prefix,
+    )
+    return provider

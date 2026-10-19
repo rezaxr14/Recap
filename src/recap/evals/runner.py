@@ -48,6 +48,12 @@ BASELINES: list[tuple[str, RetrievalMode | None]] = [
     ("vector", RetrievalMode.VECTOR),
     ("hybrid_rrf", RetrievalMode.HYBRID_RRF),
     ("outcome_aware", RetrievalMode.OUTCOME_AWARE),
+    # Chunk-granule ablations on the same tasks. A chunk mode is only meaningful
+    # because the chunker and chunk index are real; it is labeled in the report.
+    ("bm25_chunk", RetrievalMode.BM25_CHUNK),
+    ("vector_chunk", RetrievalMode.VECTOR_CHUNK),
+    ("hybrid_rrf_chunk", RetrievalMode.HYBRID_RRF_CHUNK),
+    ("outcome_aware_chunk", RetrievalMode.OUTCOME_AWARE_CHUNK),
 ]
 
 
@@ -60,6 +66,7 @@ def run_benchmark(
 ) -> dict[str, Any]:
     container.migrate()
     container.init_search()
+    container.init_search_chunks()
     tasks = [task for task in default_tasks() if task.split == split]
     if not tasks:
         raise ValueError(f"no tasks for split {split}")
@@ -130,11 +137,9 @@ def _seed_memories(container: Container, workspace_id: str, tasks: list[Benchmar
     seeded_versions = {
         memory.environment_id.rsplit("-v", 1)[-1] for memory in existing if memory.environment_id
     }
-    versions = [version for version in versions if version not in seeded_versions]
-    if not versions:
-        return
+    versions_to_seed = [version for version in versions if version not in seeded_versions]
 
-    for version in versions:
+    for version in versions_to_seed:
         environment = PaginatedApiEnvironment(version=version)
         fingerprint = environment.fingerprint()
         from recap.environments.run_recording import record_reference_run
@@ -157,6 +162,21 @@ def _seed_memories(container: Container, workspace_id: str, tasks: list[Benchmar
             refreshed = services.repairs.get(candidate_id)
             assert refreshed is not None
             services.promotion.promote(refreshed)
+
+    # Chunks are derived state: rebuild them for every active memory so an
+    # already-seeded benchmark workspace is brought up to date idempotently.
+    with container.services() as services:
+        memories = services.memories.list_memories(
+            workspace_id, status=MemoryStatus.ACTIVE, limit=100
+        )
+        for memory in memories:
+            if memory.environment_id.rsplit("-v", 1)[-1] not in versions:
+                continue
+            chunk_report = services.chunk_service.rebuild(memory)
+            if not chunk_report.indexed:
+                logger.warning(
+                    "benchmark chunk build failed for %s: %s", memory.id, chunk_report.error
+                )
 
 
 def _run_task(

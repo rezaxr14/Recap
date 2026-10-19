@@ -146,6 +146,47 @@ class MemorySnapshotEntryRow(Base):
     snapshot: Mapped[MemorySnapshotRow] = relationship(back_populates="entries")
 
 
+class MemoryChunkRow(Base):
+    """Deterministic chunk derived from a memory and its backing events.
+
+    Postgres is the source of truth. The chunk index is rebuildable with
+    ``recap search reconcile --chunks``.
+    """
+
+    __tablename__ = "memory_chunks"
+    __table_args__ = (
+        Index("ix_memory_chunks_memory", "memory_id", "memory_version"),
+        Index("ix_memory_chunks_run", "run_id"),
+    )
+
+    chunk_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    memory_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    memory_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    run_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    chunk_type: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    seq_start: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    seq_end: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    event_ids: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    text_hash: Mapped[str] = mapped_column(String(80), nullable=False)
+    token_estimate: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    truncated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    chunker_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    redaction_rule_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    failure_code: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    tool_names: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    tool_versions: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    environment_id: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    environment_fingerprint: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    task_families: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    exact_ids: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    active_for_retrieval: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    index_status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
+    indexed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class MemoryRow(Base):
     __tablename__ = "memories"
     __table_args__ = (

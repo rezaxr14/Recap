@@ -112,6 +112,9 @@ class CandidateEvaluation(BaseModel):
     score_components: list[ScoreComponent] = Field(default_factory=list)
     final_score: float = 0.0
     selected: bool = False
+    supporting_chunk_ids: list[str] = Field(default_factory=list)
+    supporting_event_ids: list[str] = Field(default_factory=list)
+    retrieval_granule: str = "memory_card"
 
 
 class SelectedMemory(BaseModel):
@@ -130,6 +133,9 @@ class SelectedMemory(BaseModel):
     features: UtilityFeatures
     compatibility_status: CompatibilityStatus
     content_hash: str
+    supporting_chunk_ids: list[str] = Field(default_factory=list)
+    supporting_event_ids: list[str] = Field(default_factory=list)
+    retrieval_granule: str = "memory_card"
 
 
 class RejectedCandidate(BaseModel):
@@ -153,6 +159,8 @@ class RetrievalDecision(BaseModel):
     policy_version: str = "policy-v1"
     index_generation: int = 0
     embedding_model_id: str = ""
+    embedding_fingerprint: str = ""
+    retrieval_granule: str = "memory_card"
     candidates: list[CandidateEvaluation] = Field(default_factory=list)
     selected_memories: list[SelectedMemory] = Field(default_factory=list)
     rejected_candidates: list[RejectedCandidate] = Field(default_factory=list)

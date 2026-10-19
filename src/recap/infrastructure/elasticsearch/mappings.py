@@ -88,3 +88,62 @@ def memory_index_body(*, dimension: int, number_of_shards: int = 1) -> dict[str,
             "properties": properties,
         },
     }
+
+
+# ------------------------------------------------------------------- chunks
+CHUNK_PROPERTIES: dict[str, Any] = {
+    "chunk_id": {"type": "keyword"},
+    "memory_id": {"type": "keyword"},
+    "memory_version": {"type": "integer"},
+    "workspace_id": {"type": "keyword"},
+    "run_id": {"type": "keyword"},
+    "chunk_type": {"type": "keyword"},
+    "chunk_text": {"type": "text", "analyzer": "standard"},
+    "seq_start": {"type": "integer"},
+    "seq_end": {"type": "integer"},
+    "token_estimate": {"type": "integer"},
+    "event_ids": {"type": "keyword"},
+    "failure_code": {"type": "keyword"},
+    "tool_names": {"type": "keyword"},
+    "tool_versions": {"type": "keyword"},
+    "environment_id": {"type": "keyword"},
+    "environment_fingerprint": {"type": "keyword"},
+    "task_families": {"type": "keyword"},
+    "chunker_version": {"type": "keyword"},
+    "embedding_model_id": {"type": "keyword"},
+    "embedding_fingerprint": {"type": "keyword"},
+    "redaction_rule_version": {"type": "keyword"},
+    "exact_ids": {"type": "keyword"},
+    "truncated": {"type": "boolean"},
+    "active_for_retrieval": {"type": "boolean"},
+    "created_at": {"type": "date"},
+}
+
+CHUNK_LEXICAL_FIELDS: dict[str, float] = {
+    "chunk_text": 2.0,
+    "failure_code": 2.5,
+    "tool_names": 1.5,
+    "task_families": 1.0,
+}
+
+
+def chunk_index_body(*, dimension: int, number_of_shards: int = 1) -> dict[str, Any]:
+    properties = dict(CHUNK_PROPERTIES)
+    properties["content_embedding"] = {
+        "type": "dense_vector",
+        "dims": dimension,
+        "index": True,
+        "similarity": "cosine",
+        "index_options": {"type": "hnsw", "m": 16, "ef_construction": 100},
+    }
+    return {
+        "settings": {
+            "number_of_shards": number_of_shards,
+            "number_of_replicas": 0,
+            "refresh_interval": "1s",
+        },
+        "mappings": {
+            "dynamic": "strict",
+            "properties": properties,
+        },
+    }

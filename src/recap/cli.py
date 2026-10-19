@@ -27,6 +27,7 @@ search_app = typer.Typer(help="Elasticsearch operations")
 memory_app = typer.Typer(help="Memory inspection")
 repair_app = typer.Typer(help="Repair compilation and validation")
 agent_app = typer.Typer(help="Tool-using agent runs")
+chunk_app = typer.Typer(help="Deterministic chunk materialization")
 demo_app = typer.Typer(help="Deterministic local demo")
 eval_app = typer.Typer(help="Evaluation harness")
 app.add_typer(db_app, name="db")
@@ -34,6 +35,7 @@ app.add_typer(search_app, name="search")
 app.add_typer(memory_app, name="memory")
 app.add_typer(repair_app, name="repair")
 app.add_typer(agent_app, name="agent")
+app.add_typer(chunk_app, name="chunk")
 app.add_typer(demo_app, name="demo")
 app.add_typer(eval_app, name="eval")
 
@@ -176,10 +178,11 @@ def db_init(config: str | None = None) -> None:
 # ------------------------------------------------------------------ search
 @search_app.command("init")
 def search_init(config: str | None = None) -> None:
-    """Create the versioned index and aliases idempotently."""
+    """Create the versioned memory and chunk indices plus aliases idempotently."""
     try:
         container = _container(config)
         result = container.init_search()
+        result["chunks"] = container.init_search_chunks()
     except Exception as exc:
         _fail(exc)
         return
@@ -188,10 +191,13 @@ def search_init(config: str | None = None) -> None:
 
 @search_app.command("health")
 def search_health(config: str | None = None) -> None:
-    """Show index/alias health and document count."""
+    """Show index/alias health and document count for memories and chunks."""
     try:
         container = _container(config)
-        result = container.index_manager.health()
+        result = {
+            "memories": container.index_manager.health(),
+            "chunks": container.index_manager.chunks_health(),
+        }
     except Exception as exc:
         _fail(exc)
         return
@@ -199,26 +205,36 @@ def search_health(config: str | None = None) -> None:
 
 
 @search_app.command("reconcile")
-def search_reconcile(config: str | None = None) -> None:
-    """Reindex all active memories from the database into Elasticsearch."""
+def search_reconcile(
+    config: str | None = None,
+    chunks: Annotated[
+        bool, typer.Option("--chunks", help="Also rebuild chunk documents from Postgres")
+    ] = False,
+) -> None:
+    """Reindex all active memories (and optionally their chunks) from the database."""
     try:
         container = _container(config)
+        indexed = 0
+        failed = 0
+        chunk_count = 0
         with container.services() as services:
             memories = services.memories.list_memories(
                 workspace_id=_default_workspace(), status=MemoryStatus.ACTIVE, limit=10_000
             )
-            indexed = 0
-            failed = 0
             for memory in memories:
                 if services.index_sync(memory):
                     indexed += 1
                 else:
                     failed += 1
+                if chunks:
+                    report = services.chunk_service.rebuild(memory)
+                    chunk_count += report.count
     except Exception as exc:
         _fail(exc)
         return
     console.print(
-        f"indexed={indexed} failed={failed} pending_outbox={services.outbox.pending_count()}"
+        f"indexed={indexed} failed={failed} chunks={chunk_count} "
+        f"pending_outbox={services.outbox.pending_count()}"
     )
 
 
@@ -250,6 +266,104 @@ def search_outbox(config: str | None = None) -> None:
         _fail(exc)
         return
     console.print_json(json.dumps({"states": counts, "due_pending": due}, indent=2))
+
+
+# ------------------------------------------------------------------- chunk
+@chunk_app.command("build")
+def chunk_build(
+    workspace: Annotated[str, typer.Option("--workspace", "-w")] = "demo-workspace",
+    memory_id: Annotated[
+        str, typer.Option("--memory-id", help="Build chunks for a single memory only")
+    ] = "",
+    status: Annotated[
+        str, typer.Option("--status", help="Status filter for bulk build")
+    ] = "active",
+    limit: Annotated[int, typer.Option("--limit", min=1)] = 1000,
+    config: str | None = None,
+) -> None:
+    """Build deterministic chunks from Postgres and index them."""
+    try:
+        container = _container(config)
+        with container.services() as services:
+            if memory_id:
+                memory = services.memories.get_memory(memory_id, workspace_id=workspace)
+                if memory is None:
+                    console.print(f"[red]memory not found[/red]: {memory_id}")
+                    raise typer.Exit(code=1)
+                memories = [memory]
+            else:
+                memories = services.memories.list_memories(
+                    workspace_id=workspace, status=MemoryStatus(status), limit=limit
+                )
+            total_chunks = 0
+            failed = 0
+            warnings = 0
+            for memory in memories:
+                report = services.chunk_service.rebuild(memory)
+                total_chunks += report.count
+                warnings += len(report.warnings)
+                if not report.indexed:
+                    failed += 1
+    except Exception as exc:
+        _fail(exc)
+        return
+    console.print_json(
+        json.dumps(
+            {
+                "memories": len(memories),
+                "chunks": total_chunks,
+                "index_failures": failed,
+                "warnings": warnings,
+                "pending_outbox": services.outbox.pending_count(),
+            },
+            indent=2,
+        )
+    )
+
+
+@chunk_app.command("show")
+def chunk_show(
+    memory_id: Annotated[str, typer.Argument(help="Memory id")],
+    version: Annotated[int, typer.Option("--version", min=1)] = 1,
+    config: str | None = None,
+) -> None:
+    """List stored chunks for a memory version."""
+    try:
+        container = _container(config)
+        with container.services() as services:
+            chunks = services.chunk_store.list_for_memory(memory_id, version)
+    except Exception as exc:
+        _fail(exc)
+        return
+    table = Table(title=f"Chunks for {memory_id}:v{version}")
+    for column in ("type", "seq", "tokens", "events", "chunk_id"):
+        table.add_column(column)
+    for chunk in chunks:
+        table.add_row(
+            str(chunk.chunk_type),
+            f"{chunk.seq_start}-{chunk.seq_end}",
+            str(chunk.token_estimate),
+            str(len(chunk.event_ids)),
+            chunk.chunk_id,
+        )
+    console.print(table)
+    console.print(f"chunks={len(chunks)}")
+
+
+@chunk_app.command("count")
+def chunk_count(config: str | None = None) -> None:
+    """Show the number of chunk documents in the chunk index."""
+    try:
+        container = _container(config)
+        repository = container.chunk_search_repository
+        if repository is None:
+            console.print("[red]chunk index is not configured[/red]")
+            raise typer.Exit(code=1)
+        count = repository.count()
+    except Exception as exc:
+        _fail(exc)
+        return
+    console.print(f"chunk_documents={count}")
 
 
 # ------------------------------------------------------------------ memory

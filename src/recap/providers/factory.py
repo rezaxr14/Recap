@@ -58,6 +58,9 @@ def embedding_role_report(settings: Any, provider: EmbeddingProvider | None) -> 
         "dimension": settings.dimension,
         "api_key_configured": bool(getattr(settings, "api_key", "")),
         "degraded": bool(provider is not None and not provider.capabilities.semantic_embeddings),
+        "embedding_fingerprint": getattr(provider, "embedding_fingerprint", ""),
+        "document_prefix": getattr(settings, "document_prefix", ""),
+        "query_prefix": getattr(settings, "query_prefix", ""),
     }
     if provider is not None:
         entry["capabilities"] = provider.capabilities.to_dict()

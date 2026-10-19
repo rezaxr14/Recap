@@ -9,11 +9,13 @@ from __future__ import annotations
 from datetime import timedelta
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from recap.domain.chunks import MemoryChunk
 from recap.domain.enums import (
+    ChunkType,
     CompatibilityStatus,
     CreatedFrom,
     EventType,
@@ -38,6 +40,7 @@ from recap.errors import ConflictError, NotFoundError
 from recap.infrastructure.db.models import (
     AuditEventRow,
     CompatibilityRow,
+    MemoryChunkRow,
     MemoryRow,
     MemorySnapshotEntryRow,
     MemorySnapshotRow,
@@ -154,6 +157,64 @@ def _snapshot_to_domain(row: MemorySnapshotRow) -> MemorySnapshot:
         ),
         reason=row.reason,
         metadata=row.metadata_json or {},
+    )
+
+
+def _chunk_to_domain(row: MemoryChunkRow) -> MemoryChunk:
+    return MemoryChunk(
+        chunk_id=row.chunk_id,
+        workspace_id=row.workspace_id,
+        memory_id=row.memory_id,
+        memory_version=row.memory_version,
+        run_id=row.run_id,
+        chunk_type=ChunkType(row.chunk_type),
+        seq_start=row.seq_start,
+        seq_end=row.seq_end,
+        event_ids=row.event_ids or [],
+        text=row.text,
+        text_hash=row.text_hash,
+        token_estimate=row.token_estimate,
+        truncated=row.truncated,
+        chunker_version=row.chunker_version,
+        redaction_rule_version=row.redaction_rule_version,
+        failure_code=row.failure_code,
+        tool_names=row.tool_names or [],
+        tool_versions=row.tool_versions or [],
+        environment_id=row.environment_id,
+        environment_fingerprint=row.environment_fingerprint,
+        task_families=row.task_families or [],
+        exact_ids=row.exact_ids or [],
+        created_at=row.created_at,
+    )
+
+
+def _chunk_to_row(chunk: MemoryChunk, *, active_for_retrieval: bool) -> MemoryChunkRow:
+    return MemoryChunkRow(
+        chunk_id=chunk.chunk_id,
+        workspace_id=chunk.workspace_id,
+        memory_id=chunk.memory_id,
+        memory_version=chunk.memory_version,
+        run_id=chunk.run_id,
+        chunk_type=str(chunk.chunk_type),
+        seq_start=chunk.seq_start,
+        seq_end=chunk.seq_end,
+        event_ids=list(chunk.event_ids),
+        text=chunk.text,
+        text_hash=chunk.text_hash,
+        token_estimate=chunk.token_estimate,
+        truncated=chunk.truncated,
+        chunker_version=chunk.chunker_version,
+        redaction_rule_version=chunk.redaction_rule_version,
+        failure_code=chunk.failure_code,
+        tool_names=list(chunk.tool_names),
+        tool_versions=list(chunk.tool_versions),
+        environment_id=chunk.environment_id,
+        environment_fingerprint=chunk.environment_fingerprint,
+        task_families=list(chunk.task_families),
+        exact_ids=list(chunk.exact_ids),
+        active_for_retrieval=active_for_retrieval,
+        index_status="pending",
+        created_at=chunk.created_at,
     )
 
 
@@ -523,6 +584,119 @@ class SqlMemorySnapshotRepository:
         return _snapshot_to_domain(row)
 
 
+# --------------------------------------------------------------- chunk store
+class SqlMemoryChunkRepository:
+    """Chunk persistence. Postgres is authoritative; the index is rebuildable."""
+
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    def upsert_many(
+        self, chunks: list[MemoryChunk], *, active_for_retrieval: bool
+    ) -> list[MemoryChunk]:
+        stored: list[MemoryChunk] = []
+        for chunk in chunks:
+            existing = self.session.get(MemoryChunkRow, chunk.chunk_id)
+            if existing is None:
+                self.session.add(_chunk_to_row(chunk, active_for_retrieval=active_for_retrieval))
+            else:
+                existing.active_for_retrieval = active_for_retrieval
+                existing.text = chunk.text
+                existing.text_hash = chunk.text_hash
+                existing.token_estimate = chunk.token_estimate
+                existing.truncated = chunk.truncated
+                existing.exact_ids = list(chunk.exact_ids)
+                existing.index_status = "pending"
+            stored.append(chunk)
+        self.session.flush()
+        return stored
+
+    def get(self, chunk_id: str) -> MemoryChunk | None:
+        row = self.session.get(MemoryChunkRow, chunk_id)
+        return _chunk_to_domain(row) if row is not None else None
+
+    def list_for_memory(self, memory_id: str, memory_version: int) -> list[MemoryChunk]:
+        rows = self.session.scalars(
+            select(MemoryChunkRow)
+            .where(
+                MemoryChunkRow.memory_id == memory_id,
+                MemoryChunkRow.memory_version == memory_version,
+            )
+            .order_by(MemoryChunkRow.chunk_type, MemoryChunkRow.seq_start)
+        ).all()
+        return [_chunk_to_domain(row) for row in rows]
+
+    def list_for_run(self, run_id: str) -> list[MemoryChunk]:
+        rows = self.session.scalars(
+            select(MemoryChunkRow)
+            .where(MemoryChunkRow.run_id == run_id)
+            .order_by(MemoryChunkRow.memory_id, MemoryChunkRow.seq_start)
+        ).all()
+        return [_chunk_to_domain(row) for row in rows]
+
+    def list_for_workspace(self, workspace_id: str, limit: int = 10_000) -> list[MemoryChunk]:
+        rows = self.session.scalars(
+            select(MemoryChunkRow)
+            .where(MemoryChunkRow.workspace_id == workspace_id)
+            .order_by(MemoryChunkRow.memory_id, MemoryChunkRow.memory_version)
+            .limit(limit)
+        ).all()
+        return [_chunk_to_domain(row) for row in rows]
+
+    def delete_stale(self, memory_id: str, memory_version: int, keep_chunk_ids: set[str]) -> int:
+        rows = self.session.scalars(
+            select(MemoryChunkRow).where(
+                MemoryChunkRow.memory_id == memory_id,
+                MemoryChunkRow.memory_version == memory_version,
+            )
+        ).all()
+        removed = 0
+        for row in rows:
+            if row.chunk_id not in keep_chunk_ids:
+                self.session.delete(row)
+                removed += 1
+        self.session.flush()
+        return removed
+
+    def set_active_for_memory(self, memory_id: str, memory_version: int, *, active: bool) -> int:
+        result = self.session.execute(
+            update(MemoryChunkRow)
+            .where(
+                MemoryChunkRow.memory_id == memory_id,
+                MemoryChunkRow.memory_version == memory_version,
+            )
+            .values(active_for_retrieval=active, index_status="pending")
+        )
+        self.session.flush()
+        return int(result.rowcount or 0)
+
+    def mark_indexed(self, chunk_ids: list[str], *, success: bool) -> None:
+        if not chunk_ids:
+            return
+        self.session.execute(
+            update(MemoryChunkRow)
+            .where(MemoryChunkRow.chunk_id.in_(chunk_ids))
+            .values(
+                index_status="indexed" if success else "failed",
+                indexed_at=utc_now() if success else None,
+            )
+        )
+        self.session.flush()
+
+    def count_for_memory(self, memory_id: str, memory_version: int) -> int:
+        return int(
+            self.session.scalar(
+                select(func.count())
+                .select_from(MemoryChunkRow)
+                .where(
+                    MemoryChunkRow.memory_id == memory_id,
+                    MemoryChunkRow.memory_version == memory_version,
+                )
+            )
+            or 0
+        )
+
+
 # ------------------------------------------------------------- outcome store
 class SqlOutcomeRepository:
     def __init__(self, session: Session) -> None:
@@ -763,6 +937,10 @@ class SqlRepairRepository:
         ).all()
         return [ValidationResult.model_validate(row.result_json) for row in rows]
 
+    def get_validation(self, validation_id: str) -> ValidationResult | None:
+        row = self.session.get(ValidationRow, validation_id)
+        return ValidationResult.model_validate(row.result_json) if row is not None else None
+
 
 # ------------------------------------------------- compatibility/revalidation
 class SqlCompatibilityRepository:
@@ -970,7 +1148,13 @@ class SqlOutboxRepository:
         self.session = session
 
     def enqueue(
-        self, *, workspace_id: str, entity_id: str, operation: str, dedupe_key: str
+        self,
+        *,
+        workspace_id: str,
+        entity_id: str,
+        operation: str,
+        dedupe_key: str,
+        entity_type: str = "memory",
     ) -> None:
         existing = self.session.scalar(
             select(OutboxRow).where(
@@ -985,7 +1169,7 @@ class SqlOutboxRepository:
             OutboxRow(
                 id=new_id("obx"),
                 workspace_id=workspace_id,
-                entity_type="memory",
+                entity_type=entity_type,
                 entity_id=entity_id,
                 operation=operation,
                 dedupe_key=dedupe_key,
@@ -999,6 +1183,16 @@ class SqlOutboxRepository:
             )
         )
         self.session.flush()
+
+    def mark_failed_by_key(self, dedupe_key: str, error: str) -> None:
+        row = self.session.scalar(
+            select(OutboxRow).where(
+                OutboxRow.dedupe_key == dedupe_key,
+                OutboxRow.state.in_(["pending", "processing"]),
+            )
+        )
+        if row is not None:
+            self.mark_failed(row, error)
 
     def claim_due(self, limit: int = 20) -> list[OutboxRow]:
         now = utc_now()

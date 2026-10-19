@@ -47,6 +47,22 @@ from recap.recall.utility_policy import (
 
 logger = get_logger(__name__)
 
+_CHUNK_MODES = {
+    RetrievalMode.BM25_CHUNK,
+    RetrievalMode.VECTOR_CHUNK,
+    RetrievalMode.HYBRID_RRF_CHUNK,
+    RetrievalMode.OUTCOME_AWARE_CHUNK,
+}
+_VECTOR_MODES = {
+    RetrievalMode.VECTOR,
+    RetrievalMode.HYBRID_RRF,
+    RetrievalMode.HYBRID_RERANK,
+    RetrievalMode.OUTCOME_AWARE,
+    RetrievalMode.VECTOR_CHUNK,
+    RetrievalMode.HYBRID_RRF_CHUNK,
+    RetrievalMode.OUTCOME_AWARE_CHUNK,
+}
+
 
 class RecallEngine:
     def __init__(
@@ -61,9 +77,11 @@ class RecallEngine:
         reranker: Any | None = None,
         run_repository: Any | None = None,
         snapshot_repository: Any | None = None,
+        chunk_search_repository: Any | None = None,
     ) -> None:
         self.settings = settings
         self.search = search_repository
+        self.chunks = chunk_search_repository
         self.memories = memory_repository
         self.compatibility = compatibility_repository
         self.decisions = decision_repository
@@ -86,7 +104,11 @@ class RecallEngine:
         # Pure retrieval modes are explicit ablations: they rank by relevance only
         # and deliberately skip applicability, compatibility, and utility policy.
         # This is what makes them fair baselines for the outcome-aware mode.
-        strict_policy = request.mode is RetrievalMode.OUTCOME_AWARE
+        strict_policy = request.mode in {
+            RetrievalMode.OUTCOME_AWARE,
+            RetrievalMode.OUTCOME_AWARE_CHUNK,
+        }
+        chunk_mode = request.mode in _CHUNK_MODES
 
         # 1-2. Query construction
         t0 = time.perf_counter()
@@ -96,28 +118,36 @@ class RecallEngine:
         # 3. Retrieval branches
         t0 = time.perf_counter()
         embedding = None
-        if request.mode in {
-            RetrievalMode.VECTOR,
-            RetrievalMode.HYBRID_RRF,
-            RetrievalMode.HYBRID_RERANK,
-            RetrievalMode.OUTCOME_AWARE,
-        }:
+        if request.mode in _VECTOR_MODES:
             try:
                 embedding = self.embeddings.embed_query(query_text)
             except Exception as exc:  # provider boundary
                 logger.warning("embedding failed: %s", exc, extra={"event": "embedding_failed"})
                 warnings.append("embedding provider unavailable; retrieval degraded to BM25")
                 degraded = True
-                if request.mode is RetrievalMode.VECTOR:
+                if request.mode in {RetrievalMode.VECTOR, RetrievalMode.VECTOR_CHUNK}:
                     decision = self._degraded_decision(request, query_text, warnings, snapshot_id)
                     self._persist(decision, persist)
                     return decision
-        branch_payload = self.search.search(
-            context=context,
-            mode=str(request.mode),
-            candidate_k=request.candidate_k,
-            embedding=embedding,
-        )
+        if chunk_mode:
+            if self.chunks is None:
+                raise SearchUnavailable(
+                    "chunk retrieval requires the chunk search repository",
+                    details={"mode": str(request.mode)},
+                )
+            branch_payload = self.chunks.search(
+                context=context,
+                mode=str(request.mode),
+                candidate_k=request.candidate_k,
+                embedding=embedding,
+            )
+        else:
+            branch_payload = self.search.search(
+                context=context,
+                mode=str(request.mode),
+                candidate_k=request.candidate_k,
+                embedding=embedding,
+            )
         degraded = degraded or branch_payload.get("degraded", False)
         warnings.extend(branch_payload.get("warnings", []))
         branches: dict[str, dict[str, Any]] = branch_payload["branches"]
@@ -141,6 +171,56 @@ class RecallEngine:
                 for index, doc_id in enumerate(fused_order, start=1)
             }
         stage_latency["fuse"] = _ms(t0)
+
+        # 4b. Chunk grouping: fuse at chunk level, then group into memories.
+        # The group score is the best supporting chunk; no chunk score can add
+        # beyond what the policy already evaluates.
+        supporting: dict[str, dict[str, list[str]]] = {}
+        if chunk_mode:
+            chunk_hits: dict[str, dict[str, Any]] = branch_payload["hits"]
+            grouped: dict[str, dict[str, Any]] = {}
+            for chunk_id in fused_order:
+                source = chunk_hits.get(chunk_id, {})
+                memory_id = str(source.get("memory_id") or "")
+                if not memory_id:
+                    continue
+                version = int(source.get("memory_version") or 1)
+                doc_id = f"{memory_id}:v{version}"
+                bucket = grouped.setdefault(
+                    doc_id,
+                    {
+                        "score": fused_scores.get(chunk_id, 0.0),
+                        "ranks": {},
+                        "chunks": [],
+                        "events": [],
+                    },
+                )
+                bucket["score"] = max(bucket["score"], fused_scores.get(chunk_id, 0.0))
+                for branch, rank in branch_ranks.get(chunk_id, {}).items():
+                    current = bucket["ranks"].get(branch)
+                    bucket["ranks"][branch] = rank if current is None else min(current, rank)
+                if chunk_id not in bucket["chunks"]:
+                    bucket["chunks"].append(chunk_id)
+                for event_id in source.get("event_ids") or []:
+                    if event_id not in bucket["events"]:
+                        bucket["events"].append(event_id)
+            ordered = sorted(
+                grouped.items(),
+                key=lambda item: (
+                    -item[1]["score"],
+                    min(item[1]["ranks"].values()) if item[1]["ranks"] else 10**9,
+                ),
+            )
+            fused_order = [doc_id for doc_id, _ in ordered]
+            fused_scores = {doc_id: bucket["score"] for doc_id, bucket in ordered}
+            branch_ranks = {doc_id: bucket["ranks"] for doc_id, bucket in ordered}
+            supporting = {
+                doc_id: {
+                    "chunk_ids": bucket["chunks"][:20],
+                    "event_ids": bucket["events"][:50],
+                }
+                for doc_id, bucket in ordered
+            }
 
         # 5b. Optional reranking (HYBRID_RERANK only). Reranking changes order,
         # never safety: eligibility/applicability/compatibility run afterwards.
@@ -321,6 +401,9 @@ class RecallEngine:
                     score_components=build_score_components(features),
                     final_score=features.total,
                     selected=selected and select_reason == "selected",
+                    supporting_chunk_ids=supporting.get(doc_id, {}).get("chunk_ids", []),
+                    supporting_event_ids=supporting.get(doc_id, {}).get("event_ids", []),
+                    retrieval_granule="chunk" if chunk_mode else "memory_card",
                 )
             )
         stage_latency["evaluate"] = _ms(t0)
@@ -388,6 +471,8 @@ class RecallEngine:
             policy_version=POLICY_VERSION,
             index_generation=self.settings.elasticsearch.index_generation,
             embedding_model_id=self.embeddings.model_id,
+            embedding_fingerprint=getattr(self.embeddings, "embedding_fingerprint", ""),
+            retrieval_granule="chunk" if chunk_mode else "memory_card",
             candidates=evaluations,
             selected_memories=selected_memories,
             rejected_candidates=rejected,
@@ -407,6 +492,10 @@ class RecallEngine:
                 "reranker": getattr(self.reranker, "name", "none"),
                 "memory_snapshot_id": snapshot_id,
                 "memory_snapshot_entries": snapshot.entry_count if snapshot else None,
+                "retrieval_granule": "chunk" if chunk_mode else "memory_card",
+                "chunker_version": self.settings.chunking.version,
+                "chunk_index_generation": self.settings.elasticsearch.chunks_index_generation,
+                "embedding_fingerprint": getattr(self.embeddings, "embedding_fingerprint", ""),
             },
         )
         self._persist(decision, persist)
@@ -485,6 +574,9 @@ def _to_selected(memory: ExperienceMemory, candidate: CandidateEvaluation) -> Se
         features=candidate.features,
         compatibility_status=candidate.compatibility_status,
         content_hash=memory.content_hash,
+        supporting_chunk_ids=candidate.supporting_chunk_ids,
+        supporting_event_ids=candidate.supporting_event_ids,
+        retrieval_granule=candidate.retrieval_granule,
     )
 
 

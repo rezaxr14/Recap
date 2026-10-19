@@ -1,5 +1,7 @@
 # RECAP
 
+[![CI](https://github.com/rezaxr14/Recap/actions/workflows/ci.yml/badge.svg)](https://github.com/rezaxr14/Recap/actions/workflows/ci.yml)
+
 **R**etrieval-**E**nhanced **C**orrection and **A**daptive **P**ersistence for tool-using agents.
 
 RECAP is a memory and recovery engine for agents that call tools. It records what an agent

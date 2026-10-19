@@ -108,6 +108,44 @@ class RunEventRow(Base):
     run: Mapped[RunRow] = relationship(back_populates="events")
 
 
+class MemorySnapshotRow(Base):
+    """Frozen set of memory versions available to one run.
+
+    The snapshot is created when a run starts and is monotonic: retrieval may
+    only see entries in this set. Live lifecycle checks can still remove a
+    memory (fail closed), but newly promoted memories never appear mid-run.
+    """
+
+    __tablename__ = "memory_snapshots"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    reason: Mapped[str] = mapped_column(String(64), nullable=False, default="run_start")
+    index_generation: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    embedding_model_id: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    entry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    entries: Mapped[list[MemorySnapshotEntryRow]] = relationship(
+        back_populates="snapshot", cascade="all, delete-orphan", lazy="selectin"
+    )
+
+
+class MemorySnapshotEntryRow(Base):
+    __tablename__ = "memory_snapshot_entries"
+
+    snapshot_id: Mapped[str] = mapped_column(
+        ForeignKey("memory_snapshots.id", ondelete="CASCADE"), primary_key=True
+    )
+    memory_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    memory_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(80), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+
+    snapshot: Mapped[MemorySnapshotRow] = relationship(back_populates="entries")
+
+
 class MemoryRow(Base):
     __tablename__ = "memories"
     __table_args__ = (

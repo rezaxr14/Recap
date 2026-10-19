@@ -42,16 +42,30 @@ class RunRecorder:
     """
 
     def __init__(
-        self, repository: Any, *, max_payload_bytes: int = DEFAULT_MAX_EVENT_PAYLOAD_BYTES
+        self,
+        repository: Any,
+        *,
+        max_payload_bytes: int = DEFAULT_MAX_EVENT_PAYLOAD_BYTES,
+        snapshot_service: Any | None = None,
     ) -> None:
         if max_payload_bytes < 1:
             raise ValueError("max_payload_bytes must be >= 1")
         self.repository = repository
         self.max_payload_bytes = max_payload_bytes
+        self.snapshot_service = snapshot_service
 
     def start_run(self, run: AgentRun) -> AgentRun:
         if not run.workspace_id:
             raise ValidationError("workspace_id is required")
+        if self.snapshot_service is not None:
+            if run.memory_snapshot_id is None:
+                snapshot = self.snapshot_service.create(run.workspace_id, reason="run_start")
+                run = run.model_copy(update={"memory_snapshot_id": snapshot.id})
+            elif self.snapshot_service.get(run.memory_snapshot_id, run.workspace_id) is None:
+                raise ValidationError(
+                    f"memory snapshot {run.memory_snapshot_id!r} not found in "
+                    f"workspace {run.workspace_id!r}"
+                )
         return cast(AgentRun, self.repository.create_run(run))
 
     def append_event(self, run: AgentRun, event: RunEventCreate) -> RunEvent:

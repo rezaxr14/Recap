@@ -285,7 +285,8 @@ ones:
 
 - no always-on scheduler: the outbox worker (`recap search drain`) is pull-based and
   revalidation jobs are processed on demand
-- no run-level memory snapshot pinning
+- run-level snapshots are enforced only when retrieval carries a `run_id`; the benchmark
+  currently relies on a read-only workspace rather than creating a run per task
 - the deterministic reference agent still drives the reproducible demo and benchmark; the
   configured `llm` role now drives a separate tool-using agent (`recap agent run`), but the
   benchmark has not been run with it

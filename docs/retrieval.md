@@ -111,6 +111,14 @@ If these were ES filters, the decision record would show an empty candidate set 
 explanation. The safety audit would also lose the ability to observe that a baseline
 selected something incompatible.
 
+When a request carries `run_id`, the engine also resolves the run's `memory_snapshot_id` and
+drops candidates that are not in that frozen set (`not_in_memory_snapshot`), pin a different
+version (`snapshot_version_mismatch`), or have drifted from the recorded content hash
+(`snapshot_content_mismatch`). This is an app-side filter so the decision record still shows
+the candidate and the reason. Snapshots are monotonic for normal lifecycle changes: newly
+promoted memories cannot enter, while a memory quarantined/retired after the snapshot is still
+rejected by live eligibility. An unknown run or a missing referenced snapshot fails closed.
+
 ## 4. Applicability
 
 Preconditions are predicates evaluated against a bounded state snapshot built from the

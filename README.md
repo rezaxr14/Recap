@@ -25,7 +25,7 @@ Elasticsearch 8.19.3 node. There are no stub endpoints in the implemented paths.
 | Subsystem | Status | Evidence |
 |---|---|---|
 | Run recording with idempotent events + redaction | Working | `tests/unit/test_run_recorder.py`, `tests/integration/test_security.py` |
-| PostgreSQL source of truth (12 tables, Alembic) | Working | `migrations/versions/`, `tests/integration/test_postgres.py` |
+| PostgreSQL source of truth (14 tables, Alembic) | Working | `migrations/versions/`, `tests/integration/test_postgres.py` |
 | Elasticsearch BM25 + dense vector + hybrid RRF | Working | `tests/integration/test_elasticsearch.py` |
 | Deterministic lexical reranker (`hybrid_rerank`) | Working | `tests/unit/test_reranker.py`, integration |
 | Outcome-aware selection with rejection reasons | Working | `tests/unit/test_recall_policy.py` |
@@ -36,6 +36,7 @@ Elasticsearch 8.19.3 node. There are no stub endpoints in the implemented paths.
 | Benchmark with 6 baselines + safety audit | Working | `recap eval run`, `benchmark/reports/` |
 | Transactional outbox + retry worker | Working | `tests/unit/test_outbox_worker.py`, `recap search drain` |
 | Explicit memory versions + supersession | Working | `tests/unit/test_memory_versions.py`, `tests/e2e/test_lifecycle.py` |
+| Run-level memory snapshot pinning | Working | `tests/integration/test_memory_snapshots.py` |
 | API-first chat/embedding providers (OpenAI-compatible) | Implemented; live endpoint not configured in CI | `tests/unit/test_providers.py`, opt-in `tests/integration/test_live_providers.py` |
 | LLM repair-candidate generation with typed validation | Working when `REPAIR_GENERATOR=llm` | `tests/unit/test_llm_generator.py` |
 | Real LLM tool-using agent (`recap agent run`) | Implemented; live endpoint not configured in CI | `tests/unit/test_llm_agent.py`, `tests/integration/test_llm_agent_recording.py` |

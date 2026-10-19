@@ -104,6 +104,13 @@ GET  /api/v1/diagnostics
 {"code": "validation_error", "message": "...", "details": {...}}
 ```
 
+Creating a run (`POST /api/v1/runs`) also creates a memory snapshot in the same transaction.
+Pass that run's `run_id` on retrieval to pin the candidate set: memories promoted after the
+run started are excluded (`not_in_memory_snapshot`), and a changed version or content hash is
+rejected. Live status checks still apply, so a memory quarantined after the snapshot is never
+resurrected by it. A `run_id` that does not exist, or a referenced snapshot that is missing,
+returns an error rather than silently falling back to unpinned retrieval.
+
 Error codes map to HTTP statuses: `validation_error` 422, `not_found` 404, `conflict` 409,
 `invalid_transition` 409, `promotion_rejected` 422, `safety_violation` 403,
 `search_unavailable` 503, `embedding_unavailable` 503, `provider_unavailable` 503,

@@ -133,7 +133,7 @@ def record_agent_run(
             success_criteria=metadata.success_criteria,
             config_snapshot=dict(metadata.config_snapshot),
         )
-        services.recorder.start_run(run)
+        run = services.recorder.start_run(run)
         sequence = 0
 
         def append(event_type: EventType, payload: dict[str, Any], tool: str | None = None) -> None:

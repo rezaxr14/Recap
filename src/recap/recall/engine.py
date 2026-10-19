@@ -25,7 +25,8 @@ from recap.domain.retrieval import (
     RetrievalRequest,
     SelectedMemory,
 )
-from recap.errors import SearchUnavailable
+from recap.domain.snapshots import MemorySnapshot
+from recap.errors import NotFoundError, SearchUnavailable, ValidationError
 from recap.infrastructure.elasticsearch.search_repository import (
     ElasticsearchMemoryRepository,
 )
@@ -58,6 +59,8 @@ class RecallEngine:
         decision_repository: Any,
         embedding_provider: Any,
         reranker: Any | None = None,
+        run_repository: Any | None = None,
+        snapshot_repository: Any | None = None,
     ) -> None:
         self.settings = settings
         self.search = search_repository
@@ -66,6 +69,8 @@ class RecallEngine:
         self.decisions = decision_repository
         self.embeddings = embedding_provider
         self.reranker = reranker
+        self.runs = run_repository
+        self.snapshots = snapshot_repository
 
     def retrieve(self, request: RetrievalRequest, *, persist: bool = True) -> RetrievalDecision:
         started = time.perf_counter()
@@ -73,6 +78,11 @@ class RecallEngine:
         context = redact_context(request.context)
         warnings: list[str] = []
         degraded = False
+        # Run-level pinning: when retrieval is attached to a run, the run's
+        # snapshot bounds the candidate set. This happens before any branch so a
+        # memory promoted mid-run cannot enter the candidate pool.
+        snapshot, snapshot_id = self._resolve_snapshot(request, context, warnings)
+        snapshot_entries = snapshot.entry_map() if snapshot is not None else None
         # Pure retrieval modes are explicit ablations: they rank by relevance only
         # and deliberately skip applicability, compatibility, and utility policy.
         # This is what makes them fair baselines for the outcome-aware mode.
@@ -99,7 +109,7 @@ class RecallEngine:
                 warnings.append("embedding provider unavailable; retrieval degraded to BM25")
                 degraded = True
                 if request.mode is RetrievalMode.VECTOR:
-                    decision = self._degraded_decision(request, query_text, warnings)
+                    decision = self._degraded_decision(request, query_text, warnings, snapshot_id)
                     self._persist(decision, persist)
                     return decision
         branch_payload = self.search.search(
@@ -169,17 +179,59 @@ class RecallEngine:
         evaluations: list[CandidateEvaluation] = []
         for rank, doc_id in enumerate(fused_order, start=1):
             memory_id, _, version_text = doc_id.partition(":v")
+            version = int(version_text or 1)
+            entry = snapshot_entries.get(memory_id) if snapshot_entries is not None else None
+            if snapshot_entries is not None:
+                if entry is None:
+                    evaluations.append(
+                        CandidateEvaluation(
+                            memory_id=memory_id,
+                            memory_version=version,
+                            title="",
+                            status="unavailable",
+                            fused_rank=rank,
+                            hard_filter_passed=False,
+                            rejection_reasons=["not_in_memory_snapshot"],
+                        )
+                    )
+                    continue
+                if entry.memory_version != version:
+                    evaluations.append(
+                        CandidateEvaluation(
+                            memory_id=memory_id,
+                            memory_version=version,
+                            title="",
+                            status="unavailable",
+                            fused_rank=rank,
+                            hard_filter_passed=False,
+                            rejection_reasons=["snapshot_version_mismatch"],
+                        )
+                    )
+                    continue
             memory = self.memories.get_memory(memory_id, context.workspace_id)
             if memory is None:
                 evaluations.append(
                     CandidateEvaluation(
                         memory_id=memory_id,
-                        memory_version=int(version_text or 1),
+                        memory_version=version,
                         title="",
                         status="missing",
                         fused_rank=rank,
                         hard_filter_passed=False,
                         rejection_reasons=["memory_not_found_in_source_of_truth"],
+                    )
+                )
+                continue
+            if entry is not None and entry.content_hash != memory.content_hash:
+                evaluations.append(
+                    CandidateEvaluation(
+                        memory_id=memory_id,
+                        memory_version=version,
+                        title=memory.content.title,
+                        status=str(memory.status),
+                        fused_rank=rank,
+                        hard_filter_passed=False,
+                        rejection_reasons=["snapshot_content_mismatch"],
                     )
                 )
                 continue
@@ -327,6 +379,7 @@ class RecallEngine:
         decision = RetrievalDecision(
             request_id=request.request_id,
             run_id=request.run_id,
+            memory_snapshot_id=snapshot_id,
             workspace_id=context.workspace_id,
             query=query_text,
             mode=request.mode,
@@ -352,17 +405,24 @@ class RecallEngine:
                 "no_safe_memory_threshold": self.settings.recall.no_safe_memory_threshold,
                 "rerank_applied": rerank_applied,
                 "reranker": getattr(self.reranker, "name", "none"),
+                "memory_snapshot_id": snapshot_id,
+                "memory_snapshot_entries": snapshot.entry_count if snapshot else None,
             },
         )
         self._persist(decision, persist)
         return decision
 
     def _degraded_decision(
-        self, request: RetrievalRequest, query_text: str, warnings: list[str]
+        self,
+        request: RetrievalRequest,
+        query_text: str,
+        warnings: list[str],
+        snapshot_id: str | None = None,
     ) -> RetrievalDecision:
         decision = RetrievalDecision(
             request_id=request.request_id,
             run_id=request.run_id,
+            memory_snapshot_id=snapshot_id,
             workspace_id=request.context.workspace_id,
             query=query_text,
             mode=request.mode,
@@ -376,6 +436,31 @@ class RecallEngine:
     def _persist(self, decision: RetrievalDecision, persist: bool) -> None:
         if persist:
             self.decisions.save(decision)
+
+    def _resolve_snapshot(
+        self,
+        request: RetrievalRequest,
+        context: Any,
+        warnings: list[str],
+    ) -> tuple[MemorySnapshot | None, str | None]:
+        if request.run_id is None:
+            return None, None
+        if self.runs is None or self.snapshots is None:
+            raise ValidationError("run-scoped retrieval requires run and snapshot repositories")
+        run = self.runs.get_run(request.run_id)
+        if run is None:
+            raise NotFoundError(f"run {request.run_id} not found")
+        if run.workspace_id != context.workspace_id:
+            raise ValidationError(f"run {request.run_id} belongs to a different workspace")
+        if run.memory_snapshot_id is None:
+            warnings.append("run has no memory snapshot; retrieval is not pinned to a frozen set")
+            return None, None
+        snapshot = self.snapshots.get(run.memory_snapshot_id, context.workspace_id)
+        if snapshot is None:
+            raise NotFoundError(
+                f"memory snapshot {run.memory_snapshot_id} for run {run.id} not found"
+            )
+        return snapshot, snapshot.id
 
     def search_only(self, request: RetrievalRequest) -> RetrievalDecision:
         """Return ranked candidates without applying operational selection policy."""

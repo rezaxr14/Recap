@@ -55,7 +55,7 @@ was validated against, and a later run reports a different one.
 | `tool_calls_count`, `retry_count`, `input_tokens`, `output_tokens` | int | budget accounting |
 | `estimated_cost` | float | |
 | `duration_ms` | int null | |
-| `memory_snapshot_id` | varchar null | reserved for run-level snapshot pinning (not yet enforced) |
+| `memory_snapshot_id` | varchar null | FK-like reference to the frozen memory set created at run start |
 | `config_snapshot` | json | model/tool/policy configuration |
 | `started_at`, `finished_at`, `created_at`, `updated_at` | timestamptz | |
 
@@ -282,6 +282,42 @@ path when indexing succeeds. If Elasticsearch is unavailable the row stays `pend
 `max_attempts` it becomes `dead`, which is an operator-visible terminal state rather than a
 silent drop.
 
+### 2.14 `memory_snapshots` and `memory_snapshot_entries`
+
+A run-level snapshot freezes which memory versions were available when the run started.
+
+`memory_snapshots`:
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | varchar(64) PK | `snap_...` |
+| `workspace_id` | varchar(64) | |
+| `reason` | varchar(64) | e.g. `run_start` |
+| `index_generation` | int | ES generation at snapshot time |
+| `embedding_model_id` | varchar(128) | embedding provenance |
+| `entry_count` | int | number of frozen memories |
+| `metadata_json` | json | creation metadata / bounds |
+| `created_at` | timestamptz | |
+
+`memory_snapshot_entries` (`PK (snapshot_id, memory_id)`, FK cascade delete):
+
+| Column | Type | Notes |
+|---|---|---|
+| `snapshot_id` | varchar(64) | |
+| `memory_id` | varchar(64) | |
+| `memory_version` | int | pinned version |
+| `content_hash` | varchar(80) | detects content drift |
+| `status` | varchar(32) | status at snapshot time (live status still applies for safety) |
+
+`RunRecorder.start_run` creates a snapshot automatically in the same transaction as the run.
+When a `RetrievalRequest` carries a `run_id`, `RecallEngine` resolves the run's snapshot and
+rejects candidates that are not members, have a different pinned version, or whose current
+content hash differs (`not_in_memory_snapshot`, `snapshot_version_mismatch`,
+`snapshot_content_mismatch`). The snapshot can only narrow the candidate set: a memory
+quarantined or retired after the snapshot is still rejected by live eligibility checks. Runs
+created before this feature (or with an explicitly empty snapshot) are handled according to
+the stored value; new runs always get one.
+
 ## 3. Memory content schema
 
 `MemoryContent` (stored in `memories.content_json`) is the contract between the compiler and
@@ -344,6 +380,8 @@ an accidental new field fails loudly instead of silently creating a mapping.
 - `0001_initial` — all tables above.
 - `0002_outbox_active_dedupe` — drops the global unique constraint on
   `index_outbox.dedupe_key` and adds the partial unique index.
+- `0003_memory_snapshots` — adds `memory_snapshots` and `memory_snapshot_entries` (defensive:
+  a fresh database may already have them from the baseline `create_all`).
 
 Migrations are applied with `recap db migrate` (Alembic). `recap db init` is a development
 shortcut that calls `Base.metadata.create_all`; it is not a substitute for migrations in a

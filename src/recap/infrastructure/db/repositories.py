@@ -33,11 +33,14 @@ from recap.domain.memories import ExperienceMemory, MemoryContent, OutcomeStats
 from recap.domain.repairs import RepairCandidate, ValidationResult
 from recap.domain.retrieval import RetrievalDecision
 from recap.domain.runs import AgentRun, RunEvent, new_id, utc_now
+from recap.domain.snapshots import MemorySnapshot, SnapshotEntry
 from recap.errors import ConflictError, NotFoundError
 from recap.infrastructure.db.models import (
     AuditEventRow,
     CompatibilityRow,
     MemoryRow,
+    MemorySnapshotEntryRow,
+    MemorySnapshotRow,
     OutboxRow,
     OutcomeRow,
     RepairCandidateRow,
@@ -130,6 +133,27 @@ def _memory_to_domain(row: MemoryRow) -> ExperienceMemory:
         updated_at=row.updated_at,
         activated_at=row.activated_at,
         last_validated_at=row.last_validated_at,
+    )
+
+
+def _snapshot_to_domain(row: MemorySnapshotRow) -> MemorySnapshot:
+    return MemorySnapshot(
+        id=row.id,
+        workspace_id=row.workspace_id,
+        created_at=row.created_at,
+        index_generation=row.index_generation,
+        embedding_model_id=row.embedding_model_id,
+        entries=tuple(
+            SnapshotEntry(
+                memory_id=entry.memory_id,
+                memory_version=entry.memory_version,
+                content_hash=entry.content_hash,
+                status=MemoryStatus(entry.status),
+            )
+            for entry in row.entries
+        ),
+        reason=row.reason,
+        metadata=row.metadata_json or {},
     )
 
 
@@ -339,6 +363,24 @@ class SqlMemoryRepository:
         ).all()
         return [_memory_to_domain(row) for row in rows]
 
+    def list_for_snapshot(
+        self, workspace_id: str, *, limit: int = 10_000
+    ) -> list[ExperienceMemory]:
+        """Every memory in one workspace, bounded, for a run snapshot.
+
+        Unlike ``list_memories`` this is not ordered by recency and deliberately
+        has no status filter: the snapshot freezes membership, while live
+        eligibility checks decide whether a frozen member may be used.
+        """
+
+        rows = self.session.scalars(
+            select(MemoryRow)
+            .where(MemoryRow.workspace_id == workspace_id)
+            .order_by(MemoryRow.id)
+            .limit(limit)
+        ).all()
+        return [_memory_to_domain(row) for row in rows]
+
     def find_supersession_target(
         self,
         workspace_id: str,
@@ -441,6 +483,44 @@ class SqlMemoryRepository:
         self.session.delete(row)
         self.session.flush()
         return True
+
+
+# ---------------------------------------------------------- memory snapshots
+class SqlMemorySnapshotRepository:
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    def create(self, snapshot: MemorySnapshot) -> MemorySnapshot:
+        row = MemorySnapshotRow(
+            id=snapshot.id,
+            workspace_id=snapshot.workspace_id,
+            reason=snapshot.reason,
+            index_generation=snapshot.index_generation,
+            embedding_model_id=snapshot.embedding_model_id,
+            entry_count=snapshot.entry_count,
+            metadata_json=dict(snapshot.metadata),
+            created_at=snapshot.created_at,
+            entries=[
+                MemorySnapshotEntryRow(
+                    memory_id=entry.memory_id,
+                    memory_version=entry.memory_version,
+                    content_hash=entry.content_hash,
+                    status=str(entry.status),
+                )
+                for entry in snapshot.entries
+            ],
+        )
+        self.session.add(row)
+        self.session.flush()
+        return _snapshot_to_domain(row)
+
+    def get(self, snapshot_id: str, workspace_id: str | None = None) -> MemorySnapshot | None:
+        row = self.session.get(MemorySnapshotRow, snapshot_id)
+        if row is None:
+            return None
+        if workspace_id is not None and row.workspace_id != workspace_id:
+            return None
+        return _snapshot_to_domain(row)
 
 
 # ------------------------------------------------------------- outcome store

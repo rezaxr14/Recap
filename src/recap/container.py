@@ -30,6 +30,7 @@ from recap.infrastructure.db.repositories import (
     SqlDecisionRepository,
     SqlEnvironmentRepository,
     SqlMemoryRepository,
+    SqlMemorySnapshotRepository,
     SqlOutboxRepository,
     SqlOutcomeRepository,
     SqlRepairRepository,
@@ -48,6 +49,7 @@ from recap.providers.base import ChatMessage, ChatProvider
 from recap.providers.factory import build_chat_provider, provider_report
 from recap.recall.engine import RecallEngine
 from recap.recall.reranker import build_reranker
+from recap.recall.snapshots import MemorySnapshotService
 from recap.recorder.recorder import RunRecorder
 from recap.repair_compiler.candidate_generation import LLMCandidateGenerator
 from recap.repair_compiler.compiler import RepairCompiler
@@ -238,8 +240,17 @@ class Services:
         self.revalidation = SqlRevalidationRepository(session)
         self.environments = SqlEnvironmentRepository(session)
         self.outbox = SqlOutboxRepository(session)
+        self.snapshots = SqlMemorySnapshotRepository(session)
+        self.snapshot_service = MemorySnapshotService(
+            memory_repository=self.memories,
+            snapshot_repository=self.snapshots,
+            settings=self.settings,
+            embedding_provider=container.embeddings,
+        )
         self.recorder = RunRecorder(
-            self.runs, max_payload_bytes=self.settings.storage.max_event_payload_bytes
+            self.runs,
+            max_payload_bytes=self.settings.storage.max_event_payload_bytes,
+            snapshot_service=self.snapshot_service,
         )
 
         self.index_sync = IndexSynchronizer(
@@ -257,6 +268,8 @@ class Services:
             decision_repository=self.decisions,
             embedding_provider=container.embeddings,
             reranker=build_reranker(self.settings.recall.reranker),
+            run_repository=self.runs,
+            snapshot_repository=self.snapshots,
         )
         self.memory_shift = MemoryShiftService(
             settings=self.settings,

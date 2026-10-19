@@ -143,6 +143,7 @@ class RetrievalDecision(BaseModel):
     id: str = Field(default_factory=lambda: new_id("dec"))
     request_id: str
     run_id: str | None = None
+    memory_snapshot_id: str | None = None
     workspace_id: str
     timestamp: datetime = Field(default_factory=utc_now)
     query: str

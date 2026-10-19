@@ -95,6 +95,21 @@ class RetrievalMode(StrEnum):
     HYBRID_RRF = "hybrid_rrf"
     HYBRID_RERANK = "hybrid_rerank"
     OUTCOME_AWARE = "outcome_aware"
+    # Chunk-level equivalents. Same eligibility constraints as their card
+    # counterparts; only the indexed granule changes.
+    BM25_CHUNK = "bm25_chunk"
+    VECTOR_CHUNK = "vector_chunk"
+    HYBRID_RRF_CHUNK = "hybrid_rrf_chunk"
+    OUTCOME_AWARE_CHUNK = "outcome_aware_chunk"
+
+
+class ChunkType(StrEnum):
+    MEMORY_CARD = "memory_card"
+    FAILURE_WINDOW = "failure_window"
+    ACTION_OBSERVATION = "action_observation"
+    VALIDATION_EVIDENCE = "validation_evidence"
+    # Evaluation baseline only: fixed windows that ignore event boundaries.
+    NAIVE_FIXED = "naive_fixed"
 
 
 class PredicateResult(StrEnum):

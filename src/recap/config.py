@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from recap.errors import ConfigurationError
 
@@ -37,7 +37,10 @@ class ElasticsearchSettings(BaseModel):
     index_prefix: str = "recap"
     memories_read_alias: str = "recap-memories-read"
     memories_write_alias: str = "recap-memories-write"
+    chunks_read_alias: str = "recap-chunks-read"
+    chunks_write_alias: str = "recap-chunks-write"
     index_generation: int = 1
+    chunks_index_generation: int = 1
     request_timeout_seconds: float = 5.0
     vector_dimension: int = 256
     hybrid_strategy: str = "app_rrf"
@@ -53,6 +56,10 @@ class ElasticsearchSettings(BaseModel):
     @property
     def write_index(self) -> str:
         return f"{self.index_prefix}-memories-v{self.index_generation}"
+
+    @property
+    def chunks_write_index(self) -> str:
+        return f"{self.index_prefix}-chunks-v{self.chunks_index_generation}"
 
 
 class EmbeddingSettings(BaseModel):
@@ -70,6 +77,9 @@ class EmbeddingSettings(BaseModel):
     retry_backoff_seconds: float = 0.5
     send_dimensions: bool = False
     model_path: str = ""
+    document_prefix: str = ""
+    query_prefix: str = ""
+    normalize: bool = True
     # A lexical hashing/fake embedder is allowed in local development and
     # tests. Production and any deployment that claims semantic RAG must set a
     # real provider, or explicitly acknowledge the degraded mode here.
@@ -140,6 +150,71 @@ class RecallSettings(BaseModel):
         return value
 
 
+CHUNK_TYPES = (
+    "memory_card",
+    "failure_window",
+    "action_observation",
+    "validation_evidence",
+)
+
+
+class ChunkingSettings(BaseModel):
+    """Deterministic, event-aware chunking. No tokenizer or model downloads."""
+
+    strategy: str = "event_aware"
+    version: str = "1"
+    target_tokens: int = 256
+    max_tokens: int = 512
+    overlap_units: int = 1
+    token_counter: str = "approx_regex"
+    token_multiplier: float = 1.3
+    max_chunks_per_memory: int = 32
+    failure_window_events: int = 12
+    include_types: list[str] = Field(default_factory=lambda: list(CHUNK_TYPES))
+
+    @field_validator("strategy")
+    @classmethod
+    def _known_strategy(cls, value: str) -> str:
+        if value not in {"event_aware", "card_only", "naive_fixed"}:
+            raise ValueError("strategy must be event_aware|card_only|naive_fixed")
+        return value
+
+    @field_validator("token_counter")
+    @classmethod
+    def _known_counter(cls, value: str) -> str:
+        if value != "approx_regex":
+            raise ValueError("token_counter must be approx_regex")
+        return value
+
+    @field_validator("include_types")
+    @classmethod
+    def _known_types(cls, value: list[str]) -> list[str]:
+        unknown = sorted(set(value) - set(CHUNK_TYPES))
+        if unknown:
+            raise ValueError(f"unknown chunk types: {unknown}")
+        if not value:
+            raise ValueError("include_types must not be empty")
+        return list(dict.fromkeys(value))
+
+    @model_validator(mode="after")
+    def _bounds(self) -> ChunkingSettings:
+        if self.target_tokens < 16:
+            raise ValueError("chunking.target_tokens must be >= 16")
+        if self.max_tokens < self.target_tokens:
+            raise ValueError("chunking.max_tokens must be >= target_tokens")
+        if self.max_tokens > 8192:
+            raise ValueError("chunking.max_tokens must be <= 8192")
+        if not 0 <= self.overlap_units <= 4:
+            raise ValueError("chunking.overlap_units must be within [0, 4]")
+        if self.max_chunks_per_memory < 1:
+            raise ValueError("chunking.max_chunks_per_memory must be >= 1")
+        if self.failure_window_events < 1:
+            raise ValueError("chunking.failure_window_events must be >= 1")
+        if not 1.0 <= self.token_multiplier <= 3.0:
+            raise ValueError("chunking.token_multiplier must be within [1.0, 3.0]")
+        return self
+
+
 class ReliabilitySettings(BaseModel):
     beta_prior_alpha: float = 1.0
     beta_prior_beta: float = 1.0
@@ -189,6 +264,7 @@ class Settings(BaseModel):
     llm: LlmSettings = Field(default_factory=LlmSettings)
     repair_llm: LlmSettings = Field(default_factory=LlmSettings)
     recall: RecallSettings = Field(default_factory=RecallSettings)
+    chunking: ChunkingSettings = Field(default_factory=ChunkingSettings)
     reliability: ReliabilitySettings = Field(default_factory=ReliabilitySettings)
     repair_compiler: RepairCompilerSettings = Field(default_factory=RepairCompilerSettings)
     memory_shift: MemoryShiftSettings = Field(default_factory=MemoryShiftSettings)
@@ -215,6 +291,8 @@ class Settings(BaseModel):
             )
         if not 0.0 <= self.recall.no_safe_memory_threshold <= 1.0:
             raise ConfigurationError("recall.no_safe_memory_threshold must be within [0, 1]")
+        if self.chunking.max_tokens > 8191:
+            raise ConfigurationError("chunking.max_tokens must be below the embedding input limit")
         self._validate_embedding_role()
         self._validate_llm_role("llm", self.llm)
         self._validate_llm_role("repair_llm", self.repair_llm)
@@ -305,6 +383,9 @@ def _apply_env_overrides(raw: dict[str, Any]) -> dict[str, Any]:
         ("EMBEDDING_MAX_RETRIES", "embeddings", "max_retries", "int"),
         ("EMBEDDING_SEND_DIMENSIONS", "embeddings", "send_dimensions", "bool"),
         ("EMBEDDING_MODEL_PATH", "embeddings", "model_path", "str"),
+        ("EMBEDDING_DOCUMENT_PREFIX", "embeddings", "document_prefix", "str"),
+        ("EMBEDDING_QUERY_PREFIX", "embeddings", "query_prefix", "str"),
+        ("EMBEDDING_NORMALIZE", "embeddings", "normalize", "bool"),
         ("EMBEDDING_ALLOW_DEGRADED", "embeddings", "allow_degraded", "bool"),
         ("RECAP_EMBEDDING_PROVIDER", "embeddings", "provider", "str"),
         ("RECAP_EMBEDDING_DIMENSION", "embeddings", "dimension", "int"),
@@ -338,6 +419,10 @@ def _apply_env_overrides(raw: dict[str, Any]) -> dict[str, Any]:
         ("RECAP_VECTOR_DIMENSION", "elasticsearch", "vector_dimension", "int"),
         ("ELASTICSEARCH_VECTOR_DIMENSION", "elasticsearch", "vector_dimension", "int"),
         ("RECAP_INDEX_GENERATION", "elasticsearch", "index_generation", "int"),
+        ("RECAP_CHUNKING_STRATEGY", "chunking", "strategy", "str"),
+        ("RECAP_CHUNKING_VERSION", "chunking", "version", "str"),
+        ("RECAP_CHUNKING_TARGET_TOKENS", "chunking", "target_tokens", "int"),
+        ("RECAP_CHUNKING_MAX_TOKENS", "chunking", "max_tokens", "int"),
     ]
     for env_name, section, key, kind in mapping:
         value = _read_env(env_name, kind)

@@ -14,7 +14,10 @@ elasticsearch:
   index_prefix: recap
   memories_read_alias: recap-memories-read
   memories_write_alias: recap-memories-write
+  chunks_read_alias: recap-chunks-read
+  chunks_write_alias: recap-chunks-write
   index_generation: 1
+  chunks_index_generation: 1
   request_timeout_seconds: 5.0
   vector_dimension: 256
   hybrid_strategy: app_rrf
@@ -45,6 +48,11 @@ embeddings:
   retry_backoff_seconds: 0.5
   send_dimensions: false
   model_path: ""
+  # Asymmetric task prefixes for models that require them (e.g. Nomic).
+  # BGE-M3 and text-embedding-3-small leave these empty.
+  document_prefix: ""
+  query_prefix: ""
+  normalize: true
   allow_degraded: false
 
 llm:
@@ -90,6 +98,20 @@ recall:
   no_safe_memory_threshold: 0.35
   max_per_strategy: 2
   reranker: lexical
+
+chunking:
+  # Deterministic event-aware chunks. No model or tokenizer download.
+  # naive_fixed exists only as an evaluation baseline and is never the default.
+  strategy: event_aware
+  version: "1"
+  target_tokens: 256
+  max_tokens: 512
+  overlap_units: 1
+  token_counter: approx_regex
+  token_multiplier: 1.3
+  max_chunks_per_memory: 32
+  failure_window_events: 12
+  include_types: [memory_card, failure_window, action_observation, validation_evidence]
 
 reliability:
   beta_prior_alpha: 1.0

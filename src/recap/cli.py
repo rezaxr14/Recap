@@ -19,6 +19,7 @@ from recap.container import Container
 from recap.domain.enums import MemoryStatus, RetrievalMode
 from recap.domain.retrieval import RetrievalContext, RetrievalRequest
 from recap.errors import RecapError
+from recap.infrastructure.outbox import OutboxWorker
 
 app = typer.Typer(help="RECAP memory and recovery engine", no_args_is_help=True)
 db_app = typer.Typer(help="Database operations")
@@ -151,6 +152,36 @@ def search_reconcile(config: str | None = None) -> None:
     console.print(
         f"indexed={indexed} failed={failed} pending_outbox={services.outbox.pending_count()}"
     )
+
+
+@search_app.command("drain")
+def search_drain(
+    config: str | None = None,
+    batch_size: Annotated[int, typer.Option("--batch-size", min=1)] = 20,
+    max_batches: Annotated[int, typer.Option("--max-batches", min=1)] = 100,
+) -> None:
+    """Drain due index-outbox rows into Elasticsearch (retry with backoff)."""
+    try:
+        container = _container(config)
+        counts = OutboxWorker(container, batch_size=batch_size, max_batches=max_batches).drain()
+    except Exception as exc:
+        _fail(exc)
+        return
+    console.print_json(json.dumps(counts, indent=2))
+
+
+@search_app.command("outbox")
+def search_outbox(config: str | None = None) -> None:
+    """Show index-outbox state counts."""
+    try:
+        container = _container(config)
+        with container.services() as services:
+            counts = services.outbox.counts_by_state()
+            due = services.outbox.pending_count()
+    except Exception as exc:
+        _fail(exc)
+        return
+    console.print_json(json.dumps({"states": counts, "due_pending": due}, indent=2))
 
 
 # ------------------------------------------------------------------ memory

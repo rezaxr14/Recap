@@ -258,16 +258,22 @@ contextual, not global.
 | `entity_type`, `entity_id` | | |
 | `operation` | varchar(16) | `index` / `delete` |
 | `dedupe_key` | varchar(200) | `index:<memory_id>:v<n>` |
-| `state` | varchar(16) | `pending`, `processing`, `completed`, `failed` |
-| `attempts`, `max_attempts` | int | |
-| `last_error` | text | |
-| `next_attempt_at` | timestamptz | |
+| `state` | varchar(16) | `pending`, `processing`, `done`, `dead` |
+| `attempts`, `max_attempts` | int | incremented when the worker claims a row |
+| `last_error` | text | last failure detail |
+| `next_attempt_at` | timestamptz | backoff scheduling |
 | `created_at`, `updated_at` | timestamptz | |
 
 Partial unique index `uq_outbox_dedupe_active` on `dedupe_key` **where**
 `state IN ('pending','processing')`. A completed row must not block a later reindex of the
 same memory version. This was a real bug found by an integration test (see
 `migrations/versions/0002_outbox_active_dedupe.py`).
+
+Rows are written in the same transaction as the memory change and completed on the request
+path when indexing succeeds. If Elasticsearch is unavailable the row stays `pending` and
+`OutboxWorker` (`recap search drain`) retries it with exponential backoff; after
+`max_attempts` it becomes `dead`, which is an operator-visible terminal state rather than a
+silent drop.
 
 ## 3. Memory content schema
 

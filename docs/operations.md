@@ -115,6 +115,27 @@ Reindexes active memories in the default workspace, prints
 `indexed=<n> failed=<n> pending_outbox=<n>`. This is the recovery path when the index is
 lost, corrupt, or was built with a different embedding model.
 
+### Drain the index outbox
+
+```bash
+recap search drain --batch-size 20 --max-batches 100
+recap search outbox
+```
+
+Indexing intent is written transactionally with the database change. If Elasticsearch was
+unavailable at write time, the row stays `pending` and is retried with exponential backoff.
+`search drain` is the consumer:
+
+- claims due rows (`FOR UPDATE SKIP LOCKED` on PostgreSQL, so multiple workers are safe)
+- indexes or deletes the document
+- marks the row `done` on success
+- otherwise reschedules it (`attempts` + backoff), and moves it to `dead` after
+  `max_attempts` (8)
+
+`recap search outbox` prints counts per state and the number of due pending rows. The worker
+is pull-based, not an always-on thread inside the API: run it from cron, a supervisor, or a
+scheduled job. `dead` rows are visible and must be investigated, not silently dropped.
+
 ### Rebuild the index from scratch
 
 ```bash
@@ -182,12 +203,12 @@ Reports in `benchmark/reports/`. Gitignored; regenerate rather than commit.
 | `/health/ready` degraded, ES unavailable | ES starting or down | wait for healthcheck; `curl localhost:9200/_cluster/health` |
 | `search_unavailable` on retrieval | ES unreachable | same; API returns 503 rather than empty results |
 | `search init` fails with mapping error | vector dimension changed | bump `index_generation`, re-init, reconcile |
-| Documents missing after a write | ES failure at index time | `recap search reconcile`; check `pending_outbox` |
+| Documents missing after a write | ES failure at index time | `recap search drain`; then `recap search reconcile` if needed |
 | Retrieval returns `no_safe_memory` | policy rejected everything | inspect `decision_json`; reasons are recorded |
 | Memory not selected after environment upgrade | `suspect`/`incompatible` compatibility | expected; compile a new validated memory |
 | Promotion rejected | failed check | response lists each check and result |
 | Duplicate event conflict | same sequence with different payload | client bug; inspect `details.sequence_number` |
-| Outbox rows stuck pending | no worker / ES down | reconcile manually; worker is not implemented |
+| Outbox rows stuck pending | ES down or worker not scheduled | `recap search drain`; inspect `last_error`; check cron |
 
 ## 7. Database operations
 
@@ -288,8 +309,8 @@ service containers, followed by the demo and benchmark.
 - Retrieval candidate cap is 100; per-branch candidate k is 30.
 - Retrieval latency is recorded per stage (`query_build`, `search`, `fuse`, `evaluate`,
   `total`) in every decision.
-- The outbox has `max_attempts` and `next_attempt_at` columns, but **no consumer** yet;
-  retry/backoff is not automated.
+- The outbox has a pull-based worker (`recap search drain`) with retry/backoff and a `dead`
+  state after `max_attempts`. It is not an always-on thread; schedule it externally.
 - No connection pooling tuning beyond SQLAlchemy defaults; no load testing has been done.
 
 ## 12. Upgrade procedure
@@ -307,7 +328,7 @@ guard against mixing incompatible vectors in one index.
 
 ## 13. Known operational gaps
 
-- no background worker for outbox or revalidation jobs
+- no background scheduler for revalidation jobs (the outbox worker is pull-based)
 - no authentication or rate limiting
 - no retention/deletion policy
 - no metrics endpoint (Prometheus/OpenTelemetry); structured logs and `/diagnostics` only

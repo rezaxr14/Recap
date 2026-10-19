@@ -70,8 +70,9 @@ alongside the old one and the read alias is cut over atomically.
 
 ### Neutral
 
-- The outbox schema supports retry/backoff, but no background consumer exists yet; recovery
-  is currently an operator action (`recap search reconcile`). This is tracked as a gap.
+- The outbox has a pull-based consumer (`recap search drain`) with retry/backoff, but it is
+  not an always-on thread; an external scheduler is expected. Indexing that succeeds on the
+  request path completes its row immediately, so the queue only holds unsatisfied intent.
 
 ## Alternatives considered
 

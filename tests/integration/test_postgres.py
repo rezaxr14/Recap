@@ -135,7 +135,7 @@ def test_memory_lifecycle_transitions_are_enforced(container, workspace_id: str)
             stored.transition(MemoryStatus.ACTIVE, "illegal resurrection")
 
 
-def test_outbox_entries_survive_index_failures(container, workspace_id: str) -> None:
+def test_outbox_entries_are_completed_only_after_indexing(container, workspace_id: str) -> None:
     from tests.support import make_memory
 
     memory = make_memory(
@@ -147,38 +147,47 @@ def test_outbox_entries_survive_index_failures(container, workspace_id: str) -> 
         failure_code="INVALID_CURSOR",
         environment_version="1",
     )
+    dedupe = f"index:{memory.id}:v{memory.memory_version}"
     with container.services() as services:
-        from sqlalchemy import func, select
+        from sqlalchemy import select
 
         from recap.infrastructure.db.models import OutboxRow
 
-        before = services.outbox.pending_count()
+        def rows_for_key() -> list[OutboxRow]:
+            return list(
+                services.session.scalars(
+                    select(OutboxRow).where(OutboxRow.dedupe_key == dedupe)
+                ).all()
+            )
+
+        # A successful synchronous index completes its intent row immediately.
+        rows = rows_for_key()
+        assert len(rows) == 1
+        assert rows[0].state == "done"
+        # It was never claimed by the worker; it completed on the request path.
+        assert rows[0].attempts == 0
+
+        # Re-indexing the same version leaves no active intent behind: each
+        # attempt records and then completes its own row.
         stored = services.memories.get_memory(memory.id, workspace_id)
         assert stored is not None
-        services.index_sync(stored)
-        # Indexing succeeded. The outbox row from the first index call is durable
-        # and pending until a worker acknowledges it, and the dedupe key prevents
-        # a duplicate row for the same memory version.
-        assert services.outbox.pending_count() == before
-        dedupe = f"index:{memory.id}:v{memory.memory_version}"
-        rows = services.session.scalars(
-            select(OutboxRow).where(OutboxRow.dedupe_key == dedupe)
-        ).all()
-        assert len(rows) == 1
-        assert rows[0].state == "pending"
-        services.outbox.mark_done(rows[0])
-        assert rows[0].state == "done"
-        # A worker that later reconciles the same memory can enqueue again.
+        assert services.index_sync(stored) is True
+        rows = rows_for_key()
+        assert rows
+        assert all(row.state == "done" for row in rows)
+        assert not [row for row in rows if row.state in {"pending", "processing"}]
+
+        # Completed history must not block a later reindex of the same version.
         services.outbox.enqueue(
             workspace_id=workspace_id,
             entity_id=memory.id,
             operation="index",
             dedupe_key=dedupe,
         )
-        total = services.session.scalar(
-            select(func.count()).select_from(OutboxRow).where(OutboxRow.dedupe_key == dedupe)
-        )
-        assert total == 2
+        rows = rows_for_key()
+        active = [row for row in rows if row.state in {"pending", "processing"}]
+        assert len(active) == 1
+        assert sum(1 for row in rows if row.state == "done") >= 2
 
 
 def test_cross_workspace_reads_are_isolated(container, workspace_id: str) -> None:

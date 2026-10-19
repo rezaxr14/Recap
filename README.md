@@ -34,6 +34,7 @@ Elasticsearch 8.19.3 node. There are no stub endpoints in the implemented paths.
 | Promotion gate (no bypass path) | Working | `tests/unit/test_repair_compiler.py`, `tests/integration/test_api.py` |
 | MemoryShift drift detection + revalidation queue | Working | `tests/integration/test_postgres.py`, demo step 8 |
 | Benchmark with 6 baselines + safety audit | Working | `recap eval run`, `benchmark/reports/` |
+| Transactional outbox + retry worker | Working | `tests/unit/test_outbox_worker.py`, `recap search drain` |
 | End-to-end demo (10 steps) | Working | `recap demo run` |
 
 Honest limitations are listed in [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md). The
@@ -128,7 +129,7 @@ recap health
 recap serve
 
 recap db migrate | init
-recap search init | health | reconcile
+recap search init | health | reconcile | drain | outbox
 recap memory search | show | compatibility
 recap repair compile | validate | promote
 recap demo seed | run

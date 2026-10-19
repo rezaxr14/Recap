@@ -208,6 +208,7 @@ class IndexSynchronizer:
         self.memories = memory_repository
         self.outbox = outbox
         self.settings = settings
+        self.last_error = ""
 
     def __call__(self, memory: ExperienceMemory) -> bool:
         from recap.domain.memories import build_embedding_text
@@ -226,7 +227,10 @@ class IndexSynchronizer:
             self.memories.mark_indexed(
                 memory.id, self.settings.elasticsearch.index_generation, success=True
             )
+            self.outbox.mark_done_by_key(dedupe)
+            self.last_error = ""
             return True
-        except SearchUnavailable:
+        except SearchUnavailable as exc:
+            self.last_error = exc.message
             self.memories.mark_indexed(memory.id, 0, success=False)
             return False

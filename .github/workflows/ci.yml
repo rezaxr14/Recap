@@ -140,6 +140,12 @@ jobs:
       - name: Run the deterministic demo end to end
         run: recap demo run
 
+      - name: Drain the index outbox
+        run: |
+          recap search outbox
+          recap search drain
+          recap search outbox
+
       - name: Run the benchmark
         run: recap eval run --split dev
 

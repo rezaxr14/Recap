@@ -893,6 +893,22 @@ class SqlOutboxRepository:
         row.updated_at = utc_now()
         self.session.flush()
 
+    def mark_done_by_key(self, dedupe_key: str) -> None:
+        """Complete an active row for a dedupe key, if one exists.
+
+        Used by the synchronous indexing path: the intent is recorded before the
+        write so a crash leaves a retryable row, and completed immediately when
+        the write succeeds so the queue does not accumulate satisfied intent.
+        """
+        row = self.session.scalar(
+            select(OutboxRow).where(
+                OutboxRow.dedupe_key == dedupe_key,
+                OutboxRow.state.in_(["pending", "processing"]),
+            )
+        )
+        if row is not None:
+            self.mark_done(row)
+
     def mark_failed(self, row: OutboxRow, error: str) -> None:
         row.last_error = error[:2000]
         row.updated_at = utc_now()
@@ -911,6 +927,12 @@ class SqlOutboxRepository:
             )
             or 0
         )
+
+    def counts_by_state(self) -> dict[str, int]:
+        rows = self.session.execute(
+            select(OutboxRow.state, func.count()).group_by(OutboxRow.state)
+        ).all()
+        return {str(state): int(count) for state, count in rows}
 
 
 def ensure_workspace(session: Session, workspace_id: str, name: str | None = None) -> None:

@@ -263,7 +263,7 @@ MemoryShiftService.on_incompatible_environment(memory, environment)
 See `IMPLEMENTATION_STATUS.md` for the authoritative list. The architecturally significant
 ones:
 
-- no background worker for outbox or revalidation (on-demand only)
+- no always-on scheduler: the outbox worker (`recap search drain`) is pull-based and
+  revalidation jobs are processed on demand
 - no run-level memory snapshot pinning
 - no authentication layer; `workspace_id` is a data boundary, not an identity
-- `hybrid_rerank` is declared but not implemented

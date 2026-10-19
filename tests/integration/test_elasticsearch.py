@@ -256,6 +256,54 @@ def test_reconcile_rebuilds_documents_from_postgres(container, workspace_id: str
     )
 
 
+def test_outbox_worker_indexes_a_pending_memory(container, workspace_id: str) -> None:
+    """The consumer side of the outbox applies intent written by the DB layer."""
+    from recap.infrastructure.outbox import OutboxWorker
+
+    memory = make_memory(
+        container,
+        workspace_id=workspace_id,
+        title="Outbox recovery",
+        summary="Restart pagination after an expired cursor.",
+        failure_signature="ValidationError|INVALID_CURSOR|list_records",
+        failure_code="INVALID_CURSOR",
+        environment_version="1",
+        index=False,
+    )
+    with container.services() as services:
+        services.outbox.enqueue(
+            workspace_id=workspace_id,
+            entity_id=memory.id,
+            operation="index",
+            dedupe_key=f"index:{memory.id}:v{memory.memory_version}",
+        )
+
+    counts = OutboxWorker(container).drain()
+
+    # The queue is global; other tests may leave retryable rows. Assert on this
+    # memory's outcome rather than on a global count.
+    assert counts["indexed"] >= 1
+    assert counts["failed"] == 0
+    assert container.es_client.exists(
+        index=container.index_manager.write_index, id=f"{memory.id}:v1"
+    )
+    with container.services() as services:
+        stored = services.memories.get_memory(memory.id, workspace_id)
+        assert stored is not None
+        assert stored.index_generation == container.settings.elasticsearch.index_generation
+        from sqlalchemy import select
+
+        from recap.infrastructure.db.models import OutboxRow
+
+        row = services.session.scalar(
+            select(OutboxRow).where(
+                OutboxRow.dedupe_key == f"index:{memory.id}:v{memory.memory_version}"
+            )
+        )
+        assert row is not None
+        assert row.state == "done"
+
+
 # ------------------------------------------------------------------ failure
 def test_es_outage_raises_search_unavailable(live_settings) -> None:  # type: ignore[no-untyped-def]
     settings = live_settings.model_copy(deep=True)

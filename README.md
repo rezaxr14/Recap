@@ -35,6 +35,7 @@ Elasticsearch 8.19.3 node. There are no stub endpoints in the implemented paths.
 | MemoryShift drift detection + revalidation queue | Working | `tests/integration/test_postgres.py`, demo step 8 |
 | Benchmark with 6 baselines + safety audit | Working | `recap eval run`, `benchmark/reports/` |
 | Transactional outbox + retry worker | Working | `tests/unit/test_outbox_worker.py`, `recap search drain` |
+| Explicit memory versions + supersession | Working | `tests/unit/test_memory_versions.py`, `tests/e2e/test_lifecycle.py` |
 | End-to-end demo (10 steps) | Working | `recap demo run` |
 
 Honest limitations are listed in [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md). The

@@ -106,9 +106,22 @@ class PromotionService:
                 details={"reason": decision.reason, "checks": decision.checks},
             )
         content = self._build_content(candidate)
+        # A new content hash for the same logical recovery (workspace, failure
+        # code, task family, tools) is a new version, not an unrelated memory.
+        # The superseded version is retired, never overwritten.
+        target = self.memories.find_supersession_target(
+            candidate.workspace_id,
+            task_families=content.task_families,
+            tool_names=content.tool_names,
+            failure_code=content.failure_code,
+            content_hash=content.compute_hash(),
+        )
         now = datetime.now(UTC)
         memory = ExperienceMemory(
             workspace_id=candidate.workspace_id,
+            family_id=(target.family_id or target.id) if target is not None else "",
+            memory_version=(target.memory_version + 1) if target is not None else 1,
+            supersedes_memory_id=target.id if target is not None else None,
             content=content,
             status=MemoryStatus.ACTIVE,
             status_reason="promoted from validated repair candidate",
@@ -136,6 +149,26 @@ class PromotionService:
         self.repairs.update(candidate)
         self.index_sync(created)
         from recap.domain.feedback import AuditEvent
+
+        if target is not None:
+            retired = target.transition(
+                MemoryStatus.RETIRED,
+                f"superseded by memory {created.id} v{created.memory_version}",
+            )
+            self.memories.update_status(retired)
+            self.index_sync(retired)
+            self.audit.append(
+                AuditEvent(
+                    workspace_id=candidate.workspace_id,
+                    entity_type="memory",
+                    entity_id=target.id,
+                    action="superseded",
+                    reason=f"replaced by {created.id} v{created.memory_version}",
+                    actor=reviewer,
+                    before={"status": str(target.status), "memory_version": target.memory_version},
+                    after={"status": str(retired.status), "superseded_by": created.id},
+                )
+            )
 
         self.audit.append(
             AuditEvent(

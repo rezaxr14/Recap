@@ -137,7 +137,7 @@ def _memory_to_row(memory: ExperienceMemory, *, index_status: str = "pending") -
     return MemoryRow(
         id=memory.id,
         workspace_id=memory.workspace_id,
-        family_id=memory.family_id,
+        family_id=memory.family_id or memory.id,
         memory_version=memory.memory_version,
         supersedes_memory_id=memory.supersedes_memory_id,
         schema_version=memory.schema_version,
@@ -338,6 +338,54 @@ class SqlMemoryRepository:
             .order_by(MemoryRow.memory_version)
         ).all()
         return [_memory_to_domain(row) for row in rows]
+
+    def find_supersession_target(
+        self,
+        workspace_id: str,
+        *,
+        task_families: list[str],
+        tool_names: list[str],
+        failure_code: str,
+        content_hash: str,
+    ) -> ExperienceMemory | None:
+        """Find the operational memory a new version would replace.
+
+        A logical memory is identified by workspace, failure code, and the
+        task-family/tool scope it applies to. Content is deliberately excluded:
+        a new content hash is what makes it a *new version* rather than a
+        duplicate (duplicates are rejected earlier by the content-hash gate).
+
+        The task-family and tool overlap is evaluated in Python because those
+        fields live inside the JSON content document; workspaces have a small
+        number of operational memories, and correctness matters more than
+        pushing an array-intersection into dialect-specific SQL.
+        """
+        rows = self.session.scalars(
+            select(MemoryRow)
+            .where(
+                MemoryRow.workspace_id == workspace_id,
+                MemoryRow.status.in_(["active", "suspect"]),
+                MemoryRow.content_hash != content_hash,
+            )
+            .order_by(MemoryRow.activated_at.desc().nullslast(), MemoryRow.created_at.desc())
+        ).all()
+        wanted_families = set(task_families)
+        wanted_tools = set(tool_names)
+        for row in rows:
+            candidate = _memory_to_domain(row)
+            content = candidate.content
+            if content.failure_code != failure_code:
+                continue
+            if (
+                wanted_families
+                and content.task_families
+                and not wanted_families & set(content.task_families)
+            ):
+                continue
+            if wanted_tools and content.tool_names and not wanted_tools & set(content.tool_names):
+                continue
+            return candidate
+        return None
 
     def update_status(
         self, memory: ExperienceMemory, *, index_status: str | None = None

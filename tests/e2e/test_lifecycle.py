@@ -218,6 +218,58 @@ def test_memory_is_not_visible_in_another_workspace(container, workspace_id: str
     assert decision.candidates == []
 
 
+def test_promotion_creates_a_new_version_and_retires_the_old(container, workspace_id: str) -> None:
+    """A new validated content version supersedes, never overwrites, the old one."""
+    from tests.support import make_memory
+
+    prior = make_memory(
+        container,
+        workspace_id=workspace_id,
+        title="Recover from INVALID_CURSOR",
+        summary="Restart pagination from the first page after the cursor expired.",
+        failure_signature="ValidationError|INVALID_CURSOR|list_records",
+        failure_code="INVALID_CURSOR",
+        environment_version="1",
+    )
+    assert prior.family_id == prior.id
+    _refresh(container)
+
+    candidate_id, replacement = seed_promoted_memory(
+        container, workspace_id=workspace_id, environment_version="1"
+    )
+    assert candidate_id
+    assert replacement.id != prior.id
+    assert replacement.family_id == prior.family_id
+    assert replacement.memory_version == 2
+    assert replacement.supersedes_memory_id == prior.id
+
+    with container.services() as services:
+        stored_prior = services.memories.get_memory(prior.id, workspace_id)
+        assert stored_prior is not None
+        assert stored_prior.status is MemoryStatus.RETIRED
+        assert stored_prior.status_reason.startswith("superseded by memory")
+
+        versions = services.memories.list_versions(prior.family_id, workspace_id)
+        assert [version.memory_version for version in versions] == [1, 2]
+        assert versions[1].id == replacement.id
+
+        audit = services.audit.list_for_entity(prior.id)
+        assert any(item.action == "superseded" for item in audit)
+
+    _refresh(container)
+    with container.services() as services:
+        decision = services.recall.retrieve(
+            RetrievalRequest(
+                context=context_for(workspace_id=workspace_id, environment_version="1"),
+                mode=RetrievalMode.OUTCOME_AWARE,
+                final_k=3,
+            )
+        )
+    selected_ids = [item.memory_id for item in decision.selected_memories]
+    assert selected_ids == [replacement.id]
+    assert prior.id not in selected_ids
+
+
 def test_degradation_marks_memory_suspect_after_failures(container, workspace_id: str) -> None:
     from tests.support import make_memory
 

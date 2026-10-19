@@ -111,6 +111,13 @@ Event types: `run_started`, `task_observation`, `tool_call_requested`, `tool_cal
 
 Constraint: `unique(workspace_id, content_hash)` prevents duplicate content in a workspace.
 
+Versioning: the first version of a logical recovery gets `family_id = memory_id`,
+`memory_version = 1`, and no `supersedes_memory_id`. When the promotion gate accepts a new
+content hash for the **same** workspace + failure code + overlapping task-family/tool scope,
+it creates the next version (`family_id` inherited, version incremented, `supersedes_memory_id`
+set) and retires the previous `active|suspect` version with a `superseded` audit event.
+Content is never overwritten; `list_versions(family_id)` returns the full ordered history.
+
 #### Memory lifecycle
 
 ```

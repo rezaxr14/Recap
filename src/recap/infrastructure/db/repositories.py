@@ -668,7 +668,9 @@ class SqlMemoryChunkRepository:
             .values(active_for_retrieval=active, index_status="pending")
         )
         self.session.flush()
-        return int(result.rowcount or 0)
+        # ``execute`` is typed as returning ``Result`` on newer SQLAlchemy
+        # releases; ``rowcount`` only exists on the cursor-backed result.
+        return int(getattr(result, "rowcount", 0) or 0)
 
     def mark_indexed(self, chunk_ids: list[str], *, success: bool) -> None:
         if not chunk_ids:

@@ -48,6 +48,7 @@ from recap.infrastructure.elasticsearch.search_repository import (
     ElasticsearchMemoryRepository,
 )
 from recap.infrastructure.embeddings import build_embedding_provider
+from recap.infrastructure.embeddings.cache import CachedEmbeddingProvider, SqlEmbeddingCache
 from recap.logging import get_logger
 from recap.memory_shift.service import MemoryShiftService
 from recap.providers.base import ChatMessage, ChatProvider
@@ -76,6 +77,7 @@ class Container:
     chunk_search_repository: ElasticsearchChunkRepository | None = None
     llm: ChatProvider | None = None
     repair_llm: ChatProvider | None = None
+    embedding_cache: SqlEmbeddingCache | None = None
 
     @classmethod
     def build(
@@ -85,10 +87,19 @@ class Container:
         engine = build_engine(settings.storage.postgres_url)
         database = Database(engine)
         client = es_client or build_client(settings.elasticsearch)
-        embeddings = build_embedding_provider(settings.embeddings)
+        base_embeddings = build_embedding_provider(settings.embeddings)
+        embedding_cache = SqlEmbeddingCache(database) if settings.embeddings.cache_enabled else None
+        embeddings: object = base_embeddings
+        if embedding_cache is not None:
+            embeddings = CachedEmbeddingProvider(base_embeddings, embedding_cache)
         llm = build_chat_provider("llm", settings.llm)
         repair_llm = build_chat_provider("repair_llm", settings.repair_llm)
-        index_manager = IndexManager(client, settings.elasticsearch)
+        index_manager = IndexManager(
+            client,
+            settings.elasticsearch,
+            embedding_fingerprint=getattr(embeddings, "embedding_fingerprint", ""),
+            chunker_version=settings.chunking.version,
+        )
         search_repository = ElasticsearchMemoryRepository(
             client,
             settings.elasticsearch,
@@ -111,6 +122,7 @@ class Container:
             validators=build_default_registry(),
             llm=llm,
             repair_llm=repair_llm,
+            embedding_cache=embedding_cache,
         )
 
     def migrate(self) -> None:
@@ -401,6 +413,7 @@ class IndexSynchronizer:
             operation="index",
             dedupe_key=dedupe,
         )
+        indexed = False
         try:
             embedding = self.embeddings.embed_documents([text])[0]  # type: ignore[attr-defined]
         except (
@@ -411,20 +424,24 @@ class IndexSynchronizer:
         ) as exc:
             self.last_error = exc.message
             self.memories.mark_indexed(memory.id, 0, success=False)
-            return False
-        try:
-            self.search.index_memory(memory, embedding)
-            self.memories.mark_indexed(
-                memory.id, self.settings.elasticsearch.index_generation, success=True
-            )
-            self.outbox.mark_done_by_key(dedupe)
-            self._sync_chunk_lifecycle(memory)
-            self.last_error = ""
-            return True
-        except SearchUnavailable as exc:
-            self.last_error = exc.message
-            self.memories.mark_indexed(memory.id, 0, success=False)
-            return False
+        else:
+            try:
+                self.search.index_memory(memory, embedding)
+                self.memories.mark_indexed(
+                    memory.id, self.settings.elasticsearch.index_generation, success=True
+                )
+                self.outbox.mark_done_by_key(dedupe)
+                self.last_error = ""
+                indexed = True
+            except SearchUnavailable as exc:
+                self.last_error = exc.message
+                self.memories.mark_indexed(memory.id, 0, success=False)
+        # Chunk lifecycle follows the memory status in Postgres regardless of
+        # whether the card index write succeeded. A card-index outage must not
+        # leave stale chunk documents active, and a chunk-index outage leaves a
+        # retryable outbox row rather than only a log line.
+        self._sync_chunk_lifecycle(memory)
+        return indexed
 
     def _sync_chunk_lifecycle(self, memory: ExperienceMemory) -> None:
         """Chunk lifecycle follows the memory, but never blocks memory indexing.
@@ -439,13 +456,27 @@ class IndexSynchronizer:
         self.chunk_store.set_active_for_memory(memory.id, memory.memory_version, active=active)
         if self.chunk_search is None:
             return
+        dedupe = f"chunk_lifecycle:{memory.id}:v{memory.memory_version}"
+        self.outbox.enqueue(
+            workspace_id=memory.workspace_id,
+            entity_id=memory.id,
+            operation="lifecycle",
+            dedupe_key=dedupe,
+            entity_type="chunk_lifecycle",
+        )
         try:
             self.chunk_search.set_active_for_memory(memory.id, memory.memory_version, active=active)
-        except SearchUnavailable:
+        except SearchUnavailable as exc:
             logger.warning(
-                "chunk lifecycle update deferred",
-                extra={"event": "chunk_lifecycle_deferred", "memory_id": memory.id},
+                "chunk lifecycle update deferred to the outbox",
+                extra={
+                    "event": "chunk_lifecycle_deferred",
+                    "memory_id": memory.id,
+                    "error": exc.message,
+                },
             )
+            return
+        self.outbox.mark_done_by_key(dedupe)
 
 
 def _probe_message() -> ChatMessage:

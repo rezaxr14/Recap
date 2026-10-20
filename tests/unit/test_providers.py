@@ -261,6 +261,31 @@ def test_embeddings_are_sorted_by_index() -> None:
     )
     vectors = provider.embed_documents(["a", "b"])
     assert vectors == [[1.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 2.0]]
+    usage = provider.embedding_usage()
+    assert usage["requests"] == 1
+    assert usage["prompt_tokens"] is None
+    assert usage["usage_complete"] is False
+
+
+def test_embedding_usage_is_reported_without_inventing_missing_counts() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "data": [{"index": 0, "embedding": [1.0, 0.0, 0.0, 0.0]}],
+                "usage": {"prompt_tokens": 7, "total_tokens": 7},
+            },
+        )
+
+    provider = OpenAICompatibleEmbeddingProvider(
+        _embedding_settings(), transport=httpx.MockTransport(handler)
+    )
+    provider.embed_documents(["a"])
+
+    usage = provider.embedding_usage()
+    assert usage["requests"] == 1
+    assert usage["prompt_tokens"] == 7
+    assert usage["usage_complete"] is True
 
 
 def test_duplicate_embedding_indices_are_rejected() -> None:
@@ -458,6 +483,7 @@ def test_environment_overrides_configure_roles_and_dimension(
     monkeypatch.setenv("EMBEDDING_BASE_URL", "http://localhost:1234/v1")
     monkeypatch.setenv("EMBEDDING_MODEL", "embed-model")
     monkeypatch.setenv("EMBEDDING_DIMENSIONS", "768")
+    monkeypatch.setenv("EMBEDDING_CACHE_ENABLED", "false")
     monkeypatch.setenv("LLM_PROVIDER", "openai_compatible")
     monkeypatch.setenv("LLM_BASE_URL", "http://localhost:1234/v1")
     monkeypatch.setenv("LLM_MODEL", "chat-model")
@@ -470,6 +496,7 @@ def test_environment_overrides_configure_roles_and_dimension(
 
     assert settings.embeddings.provider == "openai_compatible"
     assert settings.embeddings.dimension == 768
+    assert settings.embeddings.cache_enabled is False
     assert settings.elasticsearch.vector_dimension == 768
     assert settings.llm.model == "chat-model"
     assert settings.repair_llm.model == "repair-model"

@@ -1,4 +1,4 @@
-.PHONY: help install up down init lint format typecheck test test-integration test-all demo eval smoke
+.PHONY: help install up down init lint format typecheck test test-integration test-all demo eval repro smoke
 
 help:
 	@echo "install          install the package with dev extras"
@@ -13,6 +13,7 @@ help:
 	@echo "test-all         full suite with --run-integration"
 	@echo "demo             run the end-to-end demo"
 	@echo "eval             run the dev-split benchmark"
+	@echo "repro            run the dev benchmark twice and compare summaries"
 	@echo "smoke            run the operator smoke test"
 
 install:
@@ -53,6 +54,9 @@ demo:
 
 eval:
 	recap eval run --split dev
+
+repro:
+	python scripts/run_benchmark_repro.py
 
 smoke:
 	python scripts/run_smoke_test.py

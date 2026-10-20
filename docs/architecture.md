@@ -43,9 +43,10 @@ make those three real and testable.
                           |  runs, events, memories, ... |
                           +--------------+---------------+
                                          | transactional outbox
-                          +--------------v---------------+
+                          +------------------------------+
                           | Elasticsearch (rebuildable)  |
                           |  recap-memories-v1 + aliases |
+                          |  recap-chunks-v2 + aliases   |
                           +------------------------------+
 ```
 

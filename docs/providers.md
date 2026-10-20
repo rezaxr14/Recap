@@ -57,8 +57,9 @@ deployments and take precedence.
 | `EMBEDDING_MAX_RETRIES` | Retries for 429/5xx/transport errors |
 | `EMBEDDING_SEND_DIMENSIONS` | Send the optional `dimensions` request field |
 | `EMBEDDING_MODEL_PATH` | Existing local directory for `sentence-transformers` |
+| `EMBEDDING_CACHE_ENABLED` | Use the Postgres embedding cache (`true` by default) |
 | `EMBEDDING_ALLOW_DEGRADED` | Explicitly allow hashing/fake in production |
-| `RECAP_EMBEDDING_PROVIDER`, `RECAP_EMBEDDING_DIMENSION` | Aliases |
+| `RECAP_EMBEDDING_PROVIDER`, `RECAP_EMBEDDING_DIMENSION`, `RECAP_EMBEDDING_CACHE_ENABLED` | Aliases |
 
 ### Chat roles
 

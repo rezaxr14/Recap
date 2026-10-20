@@ -8,6 +8,7 @@ from recap.evals.metrics import (
     mean,
     ndcg_at_k,
     paired_difference_ci,
+    percentile,
     precision_at_k,
     recall_at_k,
     reciprocal_rank,
@@ -31,6 +32,14 @@ def test_mrr_uses_first_relevant_rank() -> None:
 def test_ndcg_is_one_for_ideal_ordering() -> None:
     assert ndcg_at_k({"a", "b"}, ["a", "b", "c"], 3) == pytest.approx(1.0)
     assert ndcg_at_k({"a"}, ["x", "y"], 2) == 0.0
+
+
+def test_percentile_interpolates_observed_latencies() -> None:
+    values = [10.0, 20.0, 30.0, 40.0]
+    assert percentile(values, 0) == 10.0
+    assert percentile(values, 50) == 25.0
+    assert percentile(values, 100) == 40.0
+    assert percentile([], 95) == 0.0
 
 
 def test_bootstrap_ci_bounds_mean() -> None:

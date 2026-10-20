@@ -19,6 +19,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from recap.config import ChunkingSettings
 from recap.container import Container
 from recap.domain.enums import EventType, MemoryStatus, RetrievalMode, RunStatus
 from recap.domain.retrieval import RetrievalContext, RetrievalRequest
@@ -34,6 +35,7 @@ from recap.evals.metrics import (
     bootstrap_ci,
     mean,
     ndcg_at_k,
+    percentile,
     recall_at_k,
     reciprocal_rank,
 )
@@ -41,19 +43,24 @@ from recap.logging import get_logger
 
 logger = get_logger(__name__)
 
-BASELINES: list[tuple[str, RetrievalMode | None]] = [
-    ("no_memory", None),
-    ("retry_only", None),
-    ("bm25", RetrievalMode.BM25),
-    ("vector", RetrievalMode.VECTOR),
-    ("hybrid_rrf", RetrievalMode.HYBRID_RRF),
-    ("outcome_aware", RetrievalMode.OUTCOME_AWARE),
-    # Chunk-granule ablations on the same tasks. A chunk mode is only meaningful
-    # because the chunker and chunk index are real; it is labeled in the report.
-    ("bm25_chunk", RetrievalMode.BM25_CHUNK),
-    ("vector_chunk", RetrievalMode.VECTOR_CHUNK),
-    ("hybrid_rrf_chunk", RetrievalMode.HYBRID_RRF_CHUNK),
-    ("outcome_aware_chunk", RetrievalMode.OUTCOME_AWARE_CHUNK),
+BASELINES: list[tuple[str, RetrievalMode | None, str]] = [
+    ("no_memory", None, ""),
+    ("retry_only", None, ""),
+    ("bm25", RetrievalMode.BM25, ""),
+    ("vector", RetrievalMode.VECTOR, ""),
+    ("hybrid_rrf", RetrievalMode.HYBRID_RRF, ""),
+    ("outcome_aware", RetrievalMode.OUTCOME_AWARE, ""),
+    # Chunk-granule ablations on the same tasks. Both chunk strategies are
+    # indexed side by side, so "naive vs event-aware" differs only in the
+    # chunker; the retriever and embedder are identical.
+    ("bm25_naive_chunk", RetrievalMode.BM25_CHUNK, "naive_fixed"),
+    ("vector_naive_chunk", RetrievalMode.VECTOR_CHUNK, "naive_fixed"),
+    ("hybrid_rrf_naive_chunk", RetrievalMode.HYBRID_RRF_CHUNK, "naive_fixed"),
+    ("outcome_aware_naive_chunk", RetrievalMode.OUTCOME_AWARE_CHUNK, "naive_fixed"),
+    ("bm25_chunk", RetrievalMode.BM25_CHUNK, "event_aware"),
+    ("vector_chunk", RetrievalMode.VECTOR_CHUNK, "event_aware"),
+    ("hybrid_rrf_chunk", RetrievalMode.HYBRID_RRF_CHUNK, "event_aware"),
+    ("outcome_aware_chunk", RetrievalMode.OUTCOME_AWARE_CHUNK, "event_aware"),
 ]
 
 
@@ -62,60 +69,97 @@ def run_benchmark(
     *,
     split: str = "dev",
     output_dir: Path | str = Path("benchmark/reports"),
-    workspace_id: str = "benchmark-workspace",
+    workspace_id: str | None = None,
+    cleanup: bool = True,
 ) -> dict[str, Any]:
     container.migrate()
     container.init_search()
     container.init_search_chunks()
+    # The dimension probe above is not part of benchmark cost. Reset after it
+    # so the report covers only seeding and retrieval in this run.
+    _reset_embedding_stats(container.embeddings)
     tasks = [task for task in default_tasks() if task.split == split]
     if not tasks:
         raise ValueError(f"no tasks for split {split}")
 
-    _seed_memories(container, workspace_id, tasks)
-
-    per_task: list[dict[str, Any]] = []
-    for baseline, mode in BASELINES:
-        for task in tasks:
-            per_task.append(_run_task(container, workspace_id, task, baseline=baseline, mode=mode))
-
-    summary = _summarize(per_task)
-    by_family = _summarize_by_family(per_task)
-    output = Path(output_dir)
-    output.mkdir(parents=True, exist_ok=True)
+    dataset_hash = split_hash(tasks)
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-    json_path = output / f"benchmark_{split}_{stamp}.json"
-    csv_path = output / f"benchmark_{split}_{stamp}.csv"
-    md_path = output / f"benchmark_{split}_{stamp}.md"
-    payload = {
-        "generated_at": datetime.now(UTC).isoformat(),
-        "split": split,
-        "dataset_hash": split_hash(tasks),
-        "tasks": [task.to_dict() for task in tasks],
-        "baselines": [name for name, _ in BASELINES],
-        "per_task": per_task,
-        "summary": summary,
-        "by_task_family": by_family,
-        "protocol": {
-            "memory_setting": "frozen_memory",
-            "memory_snapshot": "one per run, created before retrieval",
-            "retrieval_scope": "run",
-            "agent": "deterministic-reference-agent-v1",
-            "provider": "deterministic",
-            "environment": "mock-api",
-            "metrics_source": "persisted_run_records",
-            "note": ("Deterministic mock pipeline test. Not evidence of real LLM performance."),
-        },
-    }
-    json_path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
-    _write_csv(csv_path, per_task)
-    md_path.write_text(_render_markdown(payload), encoding="utf-8")
-    return {
-        "summary": summary,
-        "per_task": per_task,
-        "report_path": str(md_path),
-        "json_path": str(json_path),
-        "csv_path": str(csv_path),
-    }
+    # Never reuse a workspace across runs: stale memories or chunk documents
+    # from an earlier run would compete with the freshly seeded ones and make
+    # the summaries drift. An explicit workspace is reset; otherwise each run
+    # gets its own name and is torn down afterwards.
+    workspace = workspace_id or f"bench-{dataset_hash[:8]}-{stamp.lower()}"
+    from recap.maintenance import reset_workspace
+
+    reset_workspace(container, [workspace])
+    try:
+        _seed_memories(container, workspace, tasks)
+
+        per_task: list[dict[str, Any]] = []
+        for baseline, mode, chunk_strategy in BASELINES:
+            for task in tasks:
+                per_task.append(
+                    _run_task(
+                        container,
+                        workspace,
+                        task,
+                        baseline=baseline,
+                        mode=mode,
+                        chunk_strategy=chunk_strategy,
+                    )
+                )
+
+        summary = _summarize(per_task)
+        by_family = _summarize_by_family(per_task)
+        performance = _summarize_performance(per_task)
+        output = Path(output_dir)
+        output.mkdir(parents=True, exist_ok=True)
+        json_path = output / f"benchmark_{split}_{stamp}.json"
+        csv_path = output / f"benchmark_{split}_{stamp}.csv"
+        md_path = output / f"benchmark_{split}_{stamp}.md"
+        embedding_usage = _embedding_usage(container.embeddings)
+        cache_table = (
+            container.embedding_cache.stats() if container.embedding_cache is not None else None
+        )
+        payload = {
+            "generated_at": datetime.now(UTC).isoformat(),
+            "split": split,
+            "dataset_hash": dataset_hash,
+            "workspace_id": workspace,
+            "tasks": [task.to_dict() for task in tasks],
+            "baselines": [name for name, _, _ in BASELINES],
+            "per_task": per_task,
+            "summary": summary,
+            "by_task_family": by_family,
+            "performance": performance,
+            "embedding": embedding_usage,
+            "embedding_cache_table": cache_table,
+            "protocol": {
+                "memory_setting": "frozen_memory",
+                "memory_snapshot": "one per run, created before retrieval",
+                "retrieval_scope": "run",
+                "agent": "deterministic-reference-agent-v1",
+                "provider": "deterministic",
+                "environment": "mock-api",
+                "metrics_source": "persisted_run_records",
+                "workspace_isolation": "unique workspace per run, reset before and after",
+                "note": ("Deterministic mock pipeline test. Not evidence of real LLM performance."),
+            },
+        }
+        json_path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
+        _write_csv(csv_path, per_task)
+        md_path.write_text(_render_markdown(payload), encoding="utf-8")
+        return {
+            "summary": summary,
+            "per_task": per_task,
+            "report_path": str(md_path),
+            "json_path": str(json_path),
+            "csv_path": str(csv_path),
+            "workspace_id": workspace,
+        }
+    finally:
+        if cleanup:
+            reset_workspace(container, [workspace])
 
 
 def _seed_memories(container: Container, workspace_id: str, tasks: list[BenchmarkTask]) -> None:
@@ -172,11 +216,19 @@ def _seed_memories(container: Container, workspace_id: str, tasks: list[Benchmar
         for memory in memories:
             if memory.environment_id.rsplit("-v", 1)[-1] not in versions:
                 continue
-            chunk_report = services.chunk_service.rebuild(memory)
-            if not chunk_report.indexed:
-                logger.warning(
-                    "benchmark chunk build failed for %s: %s", memory.id, chunk_report.error
+            # Build both ablation sets into the same workspace/index. Chunk
+            # ids include the strategy, so neither rebuild deletes the other.
+            for strategy in ("event_aware", "naive_fixed"):
+                chunk_report = services.chunk_service.rebuild(
+                    memory, config=ChunkingSettings(strategy=strategy)
                 )
+                if not chunk_report.indexed:
+                    logger.warning(
+                        "benchmark %s chunk build failed for %s: %s",
+                        strategy,
+                        memory.id,
+                        chunk_report.error,
+                    )
 
 
 def _run_task(
@@ -186,6 +238,7 @@ def _run_task(
     *,
     baseline: str,
     mode: RetrievalMode | None,
+    chunk_strategy: str = "",
 ) -> dict[str, Any]:
     environment = PaginatedApiEnvironment(version=task.environment_version)
     fingerprint = environment.fingerprint()
@@ -201,6 +254,7 @@ def _run_task(
         config_snapshot={
             "baseline": baseline,
             "retrieval_mode": mode.value if mode is not None else None,
+            "chunk_strategy": chunk_strategy or None,
             "split": task.split,
             "dataset_hash": split_hash([task]),
             "run_scoped_retrieval": True,
@@ -229,6 +283,7 @@ def _run_task(
         else "cursor is invalid or expired"
     )
     request: RetrievalRequest | None = None
+    decision = None
     if mode is not None:
         with container.services() as services:
             request = RetrievalRequest(
@@ -249,6 +304,7 @@ def _run_task(
                     state={"tool_schema_fingerprints": fingerprint.tool_schema_hashes},
                 ),
                 mode=mode,
+                chunk_strategy=chunk_strategy or "event_aware",
                 final_k=3,
                 run_id=run.id,
             )
@@ -334,6 +390,14 @@ def _run_task(
         "used_memory_id": used_memory_id,
         "harmful_transfer": bool(used_memory_id and not success),
         "incompatible_selected": incompatible_selected,
+        "retrieval_latency_ms": (
+            round(decision.total_latency_ms, 3) if decision is not None else None
+        ),
+        "retrieval_stage_latency_ms": (
+            {key: round(value, 3) for key, value in decision.stage_latency_ms.items()}
+            if decision is not None
+            else {}
+        ),
         "error": error,
     }
 
@@ -412,6 +476,20 @@ def _relevant_ids(container: Container, workspace_id: str, task: BenchmarkTask) 
     return relevant
 
 
+def _reset_embedding_stats(provider: Any) -> None:
+    reset = getattr(provider, "reset_stats", None)
+    if callable(reset):
+        reset()
+
+
+def _embedding_usage(provider: Any) -> dict[str, Any] | None:
+    usage = getattr(provider, "embedding_usage", None)
+    if not callable(usage):
+        return None
+    result = usage()
+    return dict(result) if isinstance(result, dict) else None
+
+
 def _summarize(per_task: list[dict[str, Any]]) -> dict[str, Any]:
     baselines = sorted({row["baseline"] for row in per_task})
     return {
@@ -446,6 +524,32 @@ def _summarize_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
         ),
         "total_incompatible_selected": sum(row["incompatible_selected"] for row in rows),
     }
+
+
+def _summarize_performance(per_task: list[dict[str, Any]]) -> dict[str, Any]:
+    """Latency is reported separately because it is not reproducible.
+
+    Keeping it out of ``summary`` preserves the CI reproducibility gate, which
+    must compare quality/safety metrics and not machine speed.
+    """
+    baselines = sorted({row["baseline"] for row in per_task})
+    result: dict[str, Any] = {}
+    for baseline in baselines:
+        latencies = [
+            float(row["retrieval_latency_ms"])
+            for row in per_task
+            if row["baseline"] == baseline and row.get("retrieval_latency_ms") is not None
+        ]
+        result[baseline] = {
+            "retrieval_tasks": len(latencies),
+            "retrieval_latency_p50_ms": (
+                round(percentile(latencies, 50.0), 3) if latencies else None
+            ),
+            "retrieval_latency_p95_ms": (
+                round(percentile(latencies, 95.0), 3) if latencies else None
+            ),
+        }
+    return result
 
 
 def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
@@ -525,6 +629,46 @@ def _render_markdown(payload: dict[str, Any]) -> str:
         lines.append(
             f"| {row['task_id']} | {row['baseline']} | `{row['run_id']}` | "
             f"{row['task_success']} | {row['retrieval_status']} | {error[:60]} |"
+        )
+    performance = payload.get("performance") or {}
+    if performance:
+        lines.extend(
+            [
+                "",
+                "## Retrieval latency (non-reproducible)",
+                "",
+                "| baseline | measured tasks | p50 ms | p95 ms |",
+                "|---|---|---|---|",
+            ]
+        )
+        for baseline, stats in performance.items():
+            p50 = stats.get("retrieval_latency_p50_ms")
+            p95 = stats.get("retrieval_latency_p95_ms")
+            p50_text = "n/a" if p50 is None else f"{p50:.3f}"
+            p95_text = "n/a" if p95 is None else f"{p95:.3f}"
+            lines.append(
+                f"| {baseline} | {stats.get('retrieval_tasks', 0)} | {p50_text} | {p95_text} |"
+            )
+
+    embedding = payload.get("embedding")
+    if isinstance(embedding, dict):
+        prompt_tokens = embedding.get("prompt_tokens")
+        lines.extend(
+            [
+                "",
+                "## Embedding usage",
+                "",
+                f"- provider: `{embedding.get('provider', 'unknown')}`",
+                f"- model: `{embedding.get('model', '')}`",
+                f"- dimension: {embedding.get('dimension', 0)}",
+                f"- cache hits / misses: {embedding.get('hits', 0)} / "
+                f"{embedding.get('misses', 0)} "
+                f"(hit rate {embedding.get('hit_rate', 0.0):.3f})",
+                f"- provider batches / texts: {embedding.get('embedded_batches', 0)} / "
+                f"{embedding.get('embedded_texts', 0)}",
+                f"- provider latency: {embedding.get('provider_latency_ms', 0.0):.3f} ms",
+                f"- prompt tokens: {'not reported' if prompt_tokens is None else prompt_tokens}",
+            ]
         )
     lines.extend(
         [

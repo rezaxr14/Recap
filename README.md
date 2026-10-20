@@ -1,6 +1,9 @@
 # RECAP
 
 [![CI](https://github.com/rezaxr14/Recap/actions/workflows/ci.yml/badge.svg)](https://github.com/rezaxr14/Recap/actions/workflows/ci.yml)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/downloads/)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![Status: alpha](https://img.shields.io/badge/status-alpha-orange.svg)](#project-status)
 
 **R**etrieval-**E**nhanced **C**orrection and **A**daptive **P**ersistence for tool-using agents.
 
@@ -14,6 +17,24 @@ falsifiable: **retrieval relevance alone is not enough to decide whether a memor
 apply.** A memory that is textually similar can be stale, schema-incompatible, or have a bad
 verified track record. RECAP separates retrieval from selection so it can say *no safe
 memory* instead of confidently returning the wrong one.
+
+## Project status
+
+**Alpha, single-node, deterministic by default.** The vertical slice is real: every
+implemented local path is exercised against PostgreSQL 17 and Elasticsearch 8.19.3, and the
+full suite runs in CI. It is not a hosted product. There is no multi-tenant auth layer, the
+default embedder is a deterministic hashing embedder rather than a semantic model, and the
+bundled evaluation split is deliberately small. Benchmark numbers measure pipeline and
+safety behaviour, not LLM capability. See [Known limits](#known-limits) for the honest gaps.
+
+| At a glance | |
+|---|---|
+| **Core loop** | record -> compile a typed repair -> execute it in a sandbox -> promote only if valid -> retrieve with compatibility and outcome-aware selection |
+| **Source of truth** | PostgreSQL 17 (runs, memories, chunks, outbox, snapshots, audit) |
+| **Search** | Elasticsearch 8.19: BM25, dense vectors, hybrid RRF, card and chunk indices |
+| **Interfaces** | `recap` CLI, FastAPI HTTP API, Python package |
+| **Stack** | Python 3.12, FastAPI, SQLAlchemy 2, Alembic, Pydantic 2, Docker Compose |
+| **Verification** | `238 passed, 1 skipped`; real-service integration tests; benchmark reproducibility gate |
 
 ---
 
@@ -33,30 +54,78 @@ Elasticsearch 8.19.3 node. There are no stub endpoints in the implemented paths.
 | Static + executing mock-sandbox validators | Working | `tests/unit/test_repair_compiler.py` |
 | Promotion gate (no bypass path) | Working | `tests/unit/test_repair_compiler.py`, `tests/integration/test_api.py` |
 | MemoryShift drift detection + revalidation queue | Working | `tests/integration/test_postgres.py`, demo step 8 |
-| Benchmark with card + chunk ablations and safety audit | Working | `recap eval run`, `benchmark/reports/` |
+| Benchmark with card + chunk ablations and safety audit | Working (degenerate chunk ablation on current data) | `recap eval run`, `docs/results/2026-10-20-dev.md` |
 | Transactional outbox + retry worker | Working | `tests/unit/test_outbox_worker.py`, `recap search drain` |
 | Explicit memory versions + supersession | Working | `tests/unit/test_memory_versions.py`, `tests/e2e/test_lifecycle.py` |
 | Run-level memory snapshot pinning | Working | `tests/integration/test_memory_snapshots.py` |
 | Deterministic event-aware chunker (no downloads, fail-closed redaction) | Working | `tests/unit/test_chunking.py` |
-| Chunk persistence, indexing, lifecycle, `reconcile --chunks` | Working | `tests/integration/test_chunks.py`, `migrations/versions/0004_memory_chunks.py` |
+| Chunk persistence, indexing, lifecycle, `reconcile --chunks` | Working | `tests/integration/test_chunks.py`, `migrations/versions/0004`-`0008` |
 | Chunk-level retrieval (`*_chunk` modes) with supporting evidence | Working | `tests/integration/test_chunks.py`, `recap eval run` |
+| Content-addressed Postgres embedding cache + usage reporting | Working | `tests/unit/test_embedding_cache.py`, `recap embedding-cache`, `recap eval run` |
 | API-first chat/embedding providers (OpenAI-compatible) | Implemented; live endpoint not configured in CI | `tests/unit/test_providers.py`, opt-in `tests/integration/test_live_providers.py` |
 | LLM repair-candidate generation with typed validation | Working when `REPAIR_GENERATOR=llm` | `tests/unit/test_llm_generator.py` |
 | Real LLM tool-using agent (`recap agent run`) | Implemented; live endpoint not configured in CI | `tests/unit/test_llm_agent.py`, `tests/integration/test_llm_agent_recording.py` |
 | End-to-end demo (10 steps) | Working | `recap demo run` |
 
-Honest limitations are listed in [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md). The
-most important ones: the default embedding provider is a deterministic **hashing lexical
-embedder**, not a neural model; the demo/benchmark still use the deterministic reference
-agent for reproducibility; the Postgres **embedding cache is designed but not implemented**
-(ADR 0004 section 5), so no cache metric is reported; and the chunk token counter is a
-download-free approximation, not a model tokenizer. A configured-LLM tool-using agent exists
-(`recap agent run`) and is validated with a scripted provider plus the real PostgreSQL
-recorder; it has not been run against a real model endpoint here. The real-model provider
-layer is unit-tested against the exact wire format, but no real endpoint is configured in CI,
-so live-provider tests skip there. Benchmark numbers measure pipeline behaviour and safety
-properties, not LLM capability. Reports and `recap providers` say which mode produced a
-result.
+## Known limits
+
+The project is deliberately explicit about what is not built. The full list lives in
+[`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md).
+
+- The default embedding provider is a deterministic **hashing lexical embedder**, not a
+  neural model. The numbers below do not measure semantic embedding quality.
+- The demo and benchmark use a **scripted reference agent** for reproducibility. A
+  configured-LLM tool-using agent exists (`recap agent run`) and is validated with a scripted
+  provider plus the real PostgreSQL recorder, but it has not been run against a live model
+  endpoint in this repository. Live-provider tests are opt-in and skip in CI.
+- The Postgres **embedding cache** is implemented and keyed by the exact fingerprint; it
+  caches vectors, not query results, so a hit does not bypass retrieval or policy checks.
+  Cache hits, misses, provider batches, latency, and provider-reported prompt tokens appear in
+  the benchmark JSON/Markdown; missing provider usage is reported as `null`. The cache has no
+  automatic eviction yet; `last_accessed_at`/`hit_count` support manual pruning, and
+  `recap embedding-cache --clear` is always safe.
+- The chunk token counter is a download-free approximation, not a model tokenizer.
+- The current dev split has one memory per environment version, so the `naive_fixed` vs
+  `event_aware` chunk ablation is **degenerate**. It needs same-environment distractor
+  memories and paraphrase queries before it can support a claim.
+- The stack is single-node and local-first. Elasticsearch security is disabled in the local
+  Compose file, and there is no multi-tenant auth or RBAC layer.
+- Benchmark numbers measure **pipeline and safety behaviour**, not LLM capability. Reports
+  and `recap providers` state which mode produced a result.
+
+## Results snapshot (dev split, deterministic)
+
+These are real measured numbers from `recap eval run --split dev`, not projections. They are
+a pipeline/safety check: two tasks, a scripted reference agent, and the local 256-dimensional
+hashing embedder. The raw retrieval baselines rank a version-incompatible memory on every
+task; `outcome_aware` rejects it.
+
+| Baseline | recall@3 | MRR | task success | incompatible selection |
+|---|---:|---:|---:|---:|
+| `no_memory` / `retry_only` | 0.000 | 0.000 | 0.000 | 0.000 |
+| `bm25` / `vector` / `hybrid_rrf` | 1.000 | 1.000 | 1.000 | 1.000 |
+| `outcome_aware` | 1.000 | 1.000 | 1.000 | **0.000** |
+| `*_naive_chunk` / `*_chunk` | 1.000 | 1.000 | 1.000 | 0.000 |
+
+Full matrix and caveats: [`docs/results/2026-10-20-dev.md`](docs/results/2026-10-20-dev.md).
+The chunk-strategy comparison is **degenerate on this dataset** (one memory per environment
+version), so it does not support a claim that event-aware chunking beats naive chunking. The
+chunk rows' `0.000` incompatible selection is environment scoping, not policy; the policy
+effect is the card-level `outcome_aware` row.
+
+## Documentation
+
+| If you want to... | Read |
+|---|---|
+| Understand the system | [`docs/architecture.md`](docs/architecture.md), [`docs/data-model.md`](docs/data-model.md), [`docs/retrieval.md`](docs/retrieval.md) |
+| Run and operate it | [`docs/operations.md`](docs/operations.md), [Quickstart](#quickstart) |
+| Understand repair and safety | [`docs/repair-validation.md`](docs/repair-validation.md), [`docs/threat-model.md`](docs/threat-model.md) |
+| Evaluate it | [`docs/evaluation-methodology.md`](docs/evaluation-methodology.md), [`docs/results/2026-10-20-dev.md`](docs/results/2026-10-20-dev.md) |
+| Connect a model | [`docs/providers.md`](docs/providers.md) |
+| Contribute | [`CONTRIBUTING.md`](CONTRIBUTING.md), [`SECURITY.md`](SECURITY.md), [`CHANGELOG.md`](CHANGELOG.md) |
+| Repository metadata | [`docs/github-repository.md`](docs/github-repository.md) |
+
+The full index is [`docs/README.md`](docs/README.md).
 
 ---
 
@@ -159,6 +228,12 @@ Reports land in `benchmark/reports/`. See
 [`docs/evaluation-methodology.md`](docs/evaluation-methodology.md) for what the numbers do
 and do not mean.
 
+Reproducibility check (the same gate CI runs):
+
+```bash
+python scripts/run_benchmark_repro.py
+```
+
 ### 7. HTTP API
 
 ```bash
@@ -209,6 +284,24 @@ evaluates preconditions and compatibility, scores utility with logged features, 
 the full decision including *why each candidate was rejected*. MemoryShift watches outcomes
 and environment fingerprints, downgrades memories to `suspect`, and queues revalidation
 instead of silently rewriting history.
+
+```mermaid
+flowchart LR
+    A[Run + events] --> B[Failure window]
+    B --> C[Typed repair candidate]
+    C --> D{Validators execute it}
+    D -- failed --> C
+    D -- passed --> E[Promotion gate]
+    E --> F[(Postgres<br/>source of truth)]
+    F --> G[Event-aware chunks]
+    G --> H[(Elasticsearch<br/>card + chunk indices)]
+    H --> I[BM25 + vector + RRF]
+    I --> J[Hard filters + applicability<br/>+ compatibility + utility]
+    J --> K{Safe?}
+    K -- yes --> L[Selected memory<br/>with evidence]
+    K -- no --> M[no_safe_memory<br/>+ rejection reasons]
+    F -. outcomes .-> N[MemoryShift<br/>suspect / revalidate]
+```
 
 Deeper reading:
 
@@ -296,6 +389,14 @@ docs/                design + operations documentation
 
 ---
 
+## Contributing
+
+Contributions are welcome. Read [`CONTRIBUTING.md`](CONTRIBUTING.md) for the local setup,
+test matrix, migration rules, and pull-request checklist. Participation follows the
+[`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md). Report vulnerabilities privately using the
+process in [`SECURITY.md`](SECURITY.md), not a public issue. Release notes are in
+[`CHANGELOG.md`](CHANGELOG.md).
+
 ## License
 
-Apache-2.0. See `pyproject.toml`.
+Apache-2.0. See [`LICENSE`](LICENSE).

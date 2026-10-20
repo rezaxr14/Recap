@@ -91,9 +91,12 @@ implement the same `Reranker` protocol later.
 
 ### 2.5 Chunk-granule retrieval
 
-The card index stores one document per memory. The chunk index (`recap-chunks-v1`) stores
-deterministic chunks derived from the same memories and their evidence runs (see
-`docs/adr/0005-event-aware-chunking.md`). Chunk modes run the same BM25/vector branches over
+The card index stores one document per memory. The chunk index (`recap-chunks-*`, currently
+generation 2) stores deterministic chunks derived from the same memories and their evidence
+runs (see `docs/adr/0005-event-aware-chunking.md`). Both `event_aware` and `naive_fixed` chunks
+can coexist: `chunk_strategy` is stored on the document and is a query filter. Chunk queries
+are also scoped to the request's environment fingerprint, because a chunk compiled for one API
+version must not be retrieved for another. Chunk modes run the same BM25/vector branches over
 chunk documents, fuse at chunk level with application RRF, then group by `memory_id:version`:
 
 - the memory's group score is the **best supporting chunk** RRF score;
@@ -101,11 +104,16 @@ chunk documents, fuse at chunk level with application RRF, then group by `memory
 - the grouped memory is then fed into the **unchanged** applicability/compatibility/utility
   policy.
 
-Chunk modes: `bm25_chunk`, `vector_chunk`, `hybrid_rrf_chunk`, and `outcome_aware_chunk`.
-The card modes (`bm25`, `vector`, `hybrid_rrf`, `outcome_aware`) remain, so the report can
-compare granule choice on identical tasks. Chunk similarity never overrides safety: only
-`outcome_aware_chunk` applies the policy, and the decision records
+Chunk modes: `bm25_chunk`, `vector_chunk`, `hybrid_rrf_chunk`, and `outcome_aware_chunk`
+for `event_aware` chunks; the benchmark runs the same four over `naive_fixed` chunks as
+`*_naive_chunk`. The card modes (`bm25`, `vector`, `hybrid_rrf`, `outcome_aware`) remain, so
+the report can compare granule and strategy choice on identical tasks. Chunk similarity never
+overrides safety: only `outcome_aware_chunk` applies the policy, and the decision records
 `retrieval_granule=chunk` plus `supporting_chunk_ids`/`supporting_event_ids`.
+
+Current caveat: the dev dataset has one memory per environment version. Environment scoping
+therefore leaves a single candidate, so the `naive_fixed` vs `event_aware` comparison is
+degenerate and is not presented as evidence of a chunking win.
 
 There is no silent fallback: if the chunk index is empty or unavailable, chunk retrieval
 reports a degraded/empty result rather than returning card hits under a chunk label.

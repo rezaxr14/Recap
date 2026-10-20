@@ -74,7 +74,9 @@ is unavailable because `0003_memory_snapshots` already exists.
 Use `token_counter: approx_regex`: split on words/punctuation with a fixed regex and apply a
 conservative multiplier (1.3 by default). Do not use `tiktoken` or any tokenizer that fetches
 vocabulary files. The counter name is stored in the chunk record and is part of the chunker
-version contract.
+version contract. Switching to a real tokenizer changes chunk boundaries and therefore
+requires a `chunker_version` bump plus a full chunk rebuild (and usually an index generation
+bump, because the chunk ids and texts change).
 
 ### 5. Redaction before chunking
 
@@ -93,8 +95,10 @@ chunk_type, seq_start, seq_end, event_ids jsonb, text, text_hash,
 token_estimate, truncated, chunker_version, redaction_rule_version, created_at
 ```
 
-New Elasticsearch index `recap-chunks-v1` with `recap-chunks-read` / `recap-chunks-write`
-aliases and `dynamic: strict`.
+Later migrations add embedding identity (`0005`), `anchor_seq` (`0006`), and
+`chunk_strategy` (`0007`). New Elasticsearch index `recap-chunks-v<generation>` (currently
+`recap-chunks-v2`) with `recap-chunks-read` / `recap-chunks-write` aliases and
+`dynamic: strict`.
 
 Keyword fields: `chunk_id`, `memory_id`, `memory_version`, `workspace_id`, `run_id`,
 `chunk_type`, `failure_code`, `tool_names`, `tool_versions`, `environment_fingerprint`,

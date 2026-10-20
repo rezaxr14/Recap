@@ -27,6 +27,7 @@ logger = get_logger(__name__)
 
 CHUNK_SOURCE_FIELDS = [
     "chunk_id",
+    "text_hash",
     "memory_id",
     "memory_version",
     "workspace_id",
@@ -34,6 +35,7 @@ CHUNK_SOURCE_FIELDS = [
     "chunk_type",
     "seq_start",
     "seq_end",
+    "anchor_seq",
     "event_ids",
     "failure_code",
     "tool_names",
@@ -41,6 +43,7 @@ CHUNK_SOURCE_FIELDS = [
     "environment_id",
     "environment_fingerprint",
     "chunker_version",
+    "chunk_strategy",
     "embedding_fingerprint",
     "exact_ids",
     "truncated",
@@ -48,14 +51,41 @@ CHUNK_SOURCE_FIELDS = [
 ]
 
 
-def _filters(workspace_id: str) -> list[dict[str, Any]]:
-    return [
+def _filters(
+    workspace_id: str,
+    embedding_fingerprint: str = "",
+    chunk_strategy: str = "",
+    environment_fingerprint: str = "",
+) -> list[dict[str, Any]]:
+    filters: list[dict[str, Any]] = [
         {"term": {"workspace_id": workspace_id}},
         {"term": {"active_for_retrieval": True}},
     ]
+    # Vectors from two fingerprints must never share a result set. The index
+    # ``_meta`` check catches misconfiguration at startup; this filter keeps a
+    # stale document from leaking into results if one ever slips in.
+    if embedding_fingerprint:
+        filters.append({"term": {"embedding_fingerprint": embedding_fingerprint}})
+    if chunk_strategy:
+        filters.append({"term": {"chunk_strategy": chunk_strategy}})
+    # A chunk is only meaningful inside the environment version its parent
+    # memory was compiled for. Unlike card-level retrieval (where an
+    # incompatible memory must still be retrieved and explained), chunk
+    # retrieval should never mix API versions.
+    if environment_fingerprint:
+        filters.append({"term": {"environment_fingerprint": environment_fingerprint}})
+    return filters
 
 
-def build_chunk_lexical_query(*, query: str, workspace_id: str, size: int = 30) -> dict[str, Any]:
+def build_chunk_lexical_query(
+    *,
+    query: str,
+    workspace_id: str,
+    size: int = 30,
+    embedding_fingerprint: str = "",
+    chunk_strategy: str = "",
+    environment_fingerprint: str = "",
+) -> dict[str, Any]:
     should: list[dict[str, Any]] = []
     if query.strip():
         should.append(
@@ -78,7 +108,12 @@ def build_chunk_lexical_query(*, query: str, workspace_id: str, size: int = 30) 
             "bool": {
                 "should": should,
                 "minimum_should_match": 1,
-                "filter": _filters(workspace_id),
+                "filter": _filters(
+                    workspace_id,
+                    embedding_fingerprint,
+                    chunk_strategy,
+                    environment_fingerprint,
+                ),
             }
         },
         "sort": [{"_score": {"order": "desc"}}],
@@ -86,7 +121,14 @@ def build_chunk_lexical_query(*, query: str, workspace_id: str, size: int = 30) 
 
 
 def build_chunk_vector_query(
-    *, embedding: list[float], workspace_id: str, size: int = 30, num_candidates: int = 200
+    *,
+    embedding: list[float],
+    workspace_id: str,
+    size: int = 30,
+    num_candidates: int = 200,
+    embedding_fingerprint: str = "",
+    chunk_strategy: str = "",
+    environment_fingerprint: str = "",
 ) -> dict[str, Any]:
     return {
         "size": size,
@@ -97,7 +139,16 @@ def build_chunk_vector_query(
             "query_vector": embedding,
             "k": size,
             "num_candidates": max(num_candidates, size),
-            "filter": {"bool": {"filter": _filters(workspace_id)}},
+            "filter": {
+                "bool": {
+                    "filter": _filters(
+                        workspace_id,
+                        embedding_fingerprint,
+                        chunk_strategy,
+                        environment_fingerprint,
+                    )
+                }
+            },
         },
     }
 
@@ -115,7 +166,11 @@ class ElasticsearchChunkRepository:
         self.settings = settings
         self.embedding_fingerprint = embedding_fingerprint
         self.embedding_model_id = embedding_model_id
-        self.index_manager = IndexManager(client, settings)
+        self.index_manager = IndexManager(
+            client,
+            settings,
+            embedding_fingerprint=embedding_fingerprint,
+        )
 
     def ensure_ready(self) -> None:
         self.index_manager.initialize_chunks()
@@ -208,6 +263,7 @@ class ElasticsearchChunkRepository:
         mode: str,
         candidate_k: int,
         embedding: Sequence[float] | None = None,
+        chunk_strategy: str = "",
     ) -> dict[str, Any]:
         index = self.index_manager.chunks_read_alias
         warnings: list[str] = []
@@ -230,6 +286,24 @@ class ElasticsearchChunkRepository:
                 ids.append(chunk_id)
                 scores[chunk_id] = float(hit.get("_score") or 0.0)
                 hits[chunk_id] = dict(hit.get("_source") or {})
+
+            # Deterministic tie-break (see the memory repository): Lucene's
+            # internal order is not stable across merges. ``chunk_id`` contains
+            # a random memory id, so stable content fields come first.
+            def _key(chunk_id: str) -> tuple[float, str, str, str, int, str]:
+                source_doc = hits.get(chunk_id, {})
+                # ``chunk_id`` embeds a random memory id, so it is the last
+                # resort. Environment and text are stable across runs.
+                return (
+                    -scores[chunk_id],
+                    str(source_doc.get("environment_fingerprint") or ""),
+                    str(source_doc.get("text_hash") or ""),
+                    str(source_doc.get("chunk_type") or ""),
+                    int(source_doc.get("anchor_seq") or 0),
+                    chunk_id,
+                )
+
+            ids = sorted(scores, key=_key)
             branches[source] = {"ids": ids, "scores": scores}
 
         lexical_mode = mode in {
@@ -238,7 +312,6 @@ class ElasticsearchChunkRepository:
             "hybrid_rrf",
             "hybrid_rrf_chunk",
             "hybrid_rerank",
-            "hybrid_rerank_chunk",
             "outcome_aware",
             "outcome_aware_chunk",
         }
@@ -248,14 +321,18 @@ class ElasticsearchChunkRepository:
             "hybrid_rrf",
             "hybrid_rrf_chunk",
             "hybrid_rerank",
-            "hybrid_rerank_chunk",
             "outcome_aware",
             "outcome_aware_chunk",
         }
         if lexical_mode:
             run(
                 build_chunk_lexical_query(
-                    query=context.query, workspace_id=context.workspace_id, size=candidate_k
+                    query=context.query,
+                    workspace_id=context.workspace_id,
+                    size=candidate_k,
+                    embedding_fingerprint=self.embedding_fingerprint,
+                    chunk_strategy=chunk_strategy,
+                    environment_fingerprint=context.environment_fingerprint,
                 ),
                 "lexical",
             )
@@ -268,8 +345,53 @@ class ElasticsearchChunkRepository:
                         embedding=list(embedding),
                         workspace_id=context.workspace_id,
                         size=candidate_k,
+                        embedding_fingerprint=self.embedding_fingerprint,
+                        chunk_strategy=chunk_strategy,
+                        environment_fingerprint=context.environment_fingerprint,
                     ),
                     "vector",
+                )
+        if not hits:
+            workspace_total = self.count(workspace_id=context.workspace_id)
+            fingerprint_total = self.count(
+                workspace_id=context.workspace_id,
+                embedding_fingerprint=self.embedding_fingerprint,
+            )
+            environment_total = fingerprint_total
+            if context.environment_fingerprint:
+                environment_total = self.count(
+                    workspace_id=context.workspace_id,
+                    embedding_fingerprint=self.embedding_fingerprint,
+                    environment_fingerprint=context.environment_fingerprint,
+                )
+            strategy_total = environment_total
+            if chunk_strategy:
+                strategy_total = self.count(
+                    workspace_id=context.workspace_id,
+                    embedding_fingerprint=self.embedding_fingerprint,
+                    chunk_strategy=chunk_strategy,
+                    environment_fingerprint=context.environment_fingerprint,
+                )
+            if workspace_total == 0:
+                warnings.append(
+                    "chunk_index_empty: no chunk documents for this workspace; "
+                    "run `recap search reconcile --chunks`"
+                )
+            elif fingerprint_total == 0:
+                warnings.append(
+                    "no chunk documents match the configured embedding fingerprint "
+                    f"{self.embedding_fingerprint or '<unset>'}; bump "
+                    "chunks_index_generation and run `recap search reconcile --chunks`"
+                )
+            elif context.environment_fingerprint and environment_total == 0:
+                warnings.append(
+                    "chunk_environment_empty: no chunk documents for environment "
+                    f"{context.environment_fingerprint}; rebuild chunks"
+                )
+            elif chunk_strategy and strategy_total == 0:
+                warnings.append(
+                    f"chunk_strategy_empty: no chunk documents for chunk_strategy="
+                    f"{chunk_strategy} in this workspace; rebuild chunks"
                 )
         degraded = bool(warnings) and not hits
         return {
@@ -279,10 +401,86 @@ class ElasticsearchChunkRepository:
             "warnings": warnings,
         }
 
-    def count(self) -> int:
+    def count(
+        self,
+        workspace_id: str | None = None,
+        *,
+        embedding_fingerprint: str = "",
+        chunk_strategy: str = "",
+        environment_fingerprint: str = "",
+    ) -> int:
         try:
-            return int(self.client.count(index=self.index_manager.chunks_read_alias)["count"])
+            filters: list[dict[str, Any]] = []
+            if workspace_id:
+                filters.append({"term": {"workspace_id": workspace_id}})
+            if embedding_fingerprint:
+                filters.append({"term": {"embedding_fingerprint": embedding_fingerprint}})
+            if chunk_strategy:
+                filters.append({"term": {"chunk_strategy": chunk_strategy}})
+            if environment_fingerprint:
+                filters.append({"term": {"environment_fingerprint": environment_fingerprint}})
+            kwargs: dict[str, Any] = {"index": self.index_manager.chunks_read_alias}
+            if filters:
+                kwargs["query"] = {"bool": {"filter": filters}}
+            return int(self.client.count(**kwargs)["count"])
         except TRANSPORT_ERRORS as exc:
             raise SearchUnavailable("cannot count chunks: Elasticsearch unreachable") from exc
         except es_exceptions.NotFoundError:
             return 0
+
+    def list_chunk_ids(self, workspace_id: str, *, page_size: int = 1000) -> list[str]:
+        """Return every chunk document id for one workspace (paginated)."""
+        ids: list[str] = []
+        search_after: list[Any] | None = None
+        while True:
+            body: dict[str, Any] = {
+                "size": page_size,
+                "track_total_hits": False,
+                "_source": False,
+                "query": {"term": {"workspace_id": workspace_id}},
+                "sort": [{"chunk_id": {"order": "asc"}}],
+            }
+            if search_after is not None:
+                body["search_after"] = search_after
+            try:
+                response = self.client.search(index=self.index_manager.chunks_read_alias, **body)
+            except es_exceptions.NotFoundError:
+                return ids
+            except TRANSPORT_ERRORS as exc:
+                raise SearchUnavailable("cannot list chunks: Elasticsearch unreachable") from exc
+            hits = response.get("hits", {}).get("hits", [])
+            if not hits:
+                break
+            for hit in hits:
+                ids.append(str(hit.get("_id")))
+            search_after = list(hits[-1].get("sort") or [])
+            if len(hits) < page_size or not search_after:
+                break
+        return ids
+
+    def delete_chunks(self, chunk_ids: Sequence[str], *, refresh: bool = True) -> int:
+        if not chunk_ids:
+            return 0
+        operations: list[dict[str, Any]] = [
+            {
+                "delete": {
+                    "_index": self.index_manager.chunks_write_index,
+                    "_id": chunk_id,
+                }
+            }
+            for chunk_id in chunk_ids
+        ]
+        try:
+            response = self.client.bulk(
+                operations=operations, refresh="wait_for" if refresh else False
+            )
+        except TRANSPORT_ERRORS as exc:
+            raise SearchUnavailable("cannot delete chunks: Elasticsearch unreachable") from exc
+        removed = 0
+        for item in response.get("items", []):
+            result = item.get("delete", {})
+            if result.get("error"):
+                continue
+            if result.get("result") in {"deleted", "not_found"}:
+                removed += 1
+        return removed

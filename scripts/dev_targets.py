@@ -27,6 +27,7 @@ TARGETS: dict[str, str] = {
     "test-all": "pytest --run-integration",
     "demo": "recap demo run",
     "eval": "recap eval run --split dev",
+    "repro": "python scripts/run_benchmark_repro.py",
     "smoke": "python scripts/run_smoke_test.py",
 }
 

@@ -17,7 +17,6 @@ Everything here is deterministic and requires no external model or API key.
 
 from __future__ import annotations
 
-import contextlib
 import json
 from datetime import UTC, datetime
 from pathlib import Path
@@ -38,11 +37,15 @@ from recap.logging import get_logger
 logger = get_logger(__name__)
 
 WORKSPACE = "demo-workspace"
+# The benchmark used to hard-code this workspace. It is reset by the demo only
+# to clean up documents left behind by older runs.
+LEGACY_BENCHMARK_WORKSPACE = "benchmark-workspace"
 
 
 def run_demo(container: Container, *, write_report: bool = True) -> dict[str, Any]:
     container.migrate()
     container.init_search()
+    container.init_search_chunks()
     _reset_demo_state(container)
     report: dict[str, Any] = {
         "started_at": datetime.now(UTC).isoformat(),
@@ -273,74 +276,16 @@ def run_demo(container: Container, *, write_report: bool = True) -> dict[str, An
     return report
 
 
-def _reset_demo_state(container: Container) -> None:
+def _reset_demo_state(container: Container) -> dict[str, Any]:
     """Remove only this demo workspace's data so the demo is reproducible.
 
-    Scoped to ``WORKSPACE`` and to benchmark workspaces; never a global wipe.
+    Scoped to ``WORKSPACE`` (plus the benchmark workspace name used by older
+    releases); never a global wipe. Both Postgres and *both* search indices are
+    cleared, including ``memory_chunks``.
     """
-    from sqlalchemy import delete
+    from recap.maintenance import reset_workspace
 
-    from recap.infrastructure.db.models import (
-        AuditEventRow,
-        CompatibilityRow,
-        MemoryRow,
-        MemorySnapshotRow,
-        OutboxRow,
-        OutcomeRow,
-        RepairCandidateRow,
-        RetrievalDecisionRow,
-        RevalidationJobRow,
-        RunEventRow,
-        RunRow,
-        ValidationRow,
-    )
-
-    with container.database.session() as session:
-        run_ids = [
-            row
-            for row in session.scalars(
-                __import__("sqlalchemy")
-                .select(RunRow.id)
-                .where(RunRow.workspace_id.in_([WORKSPACE, "benchmark-workspace"]))
-            )
-        ]
-        if run_ids:
-            session.execute(delete(RunEventRow).where(RunEventRow.run_id.in_(run_ids)))
-        candidate_ids = [
-            row
-            for row in session.scalars(
-                __import__("sqlalchemy")
-                .select(RepairCandidateRow.id)
-                .where(RepairCandidateRow.workspace_id.in_([WORKSPACE, "benchmark-workspace"]))
-            )
-        ]
-        if candidate_ids:
-            session.execute(
-                delete(ValidationRow).where(ValidationRow.candidate_id.in_(candidate_ids))
-            )
-        for model in (
-            RetrievalDecisionRow,
-            RepairCandidateRow,
-            RevalidationJobRow,
-            CompatibilityRow,
-            OutcomeRow,
-            MemoryRow,
-            MemorySnapshotRow,
-            AuditEventRow,
-            OutboxRow,
-            RunRow,
-        ):
-            session.execute(
-                delete(model).where(model.workspace_id.in_([WORKSPACE, "benchmark-workspace"]))
-            )
-    with contextlib.suppress(Exception):
-        # The index may not exist yet on a truly clean checkout.
-        container.es_client.delete_by_query(
-            index=container.index_manager.write_index,
-            query={"terms": {"workspace_id": [WORKSPACE, "benchmark-workspace"]}},
-            refresh=True,
-            conflicts="proceed",
-        )
+    return reset_workspace(container, [WORKSPACE, LEGACY_BENCHMARK_WORKSPACE])
 
 
 def _record_failed_run(container: Container, environment: PaginatedApiEnvironment) -> str:

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 import typer
 from rich.console import Console
@@ -91,6 +91,30 @@ def providers(config: str | None = None) -> None:
         _fail(exc)
         return
     console.print_json(json.dumps(report, indent=2, default=str))
+
+
+@app.command("embedding-cache")
+def embedding_cache(
+    config: str | None = None,
+    clear: Annotated[
+        bool,
+        typer.Option("--clear", help="Delete all cached vectors (next rebuild re-embeds)"),
+    ] = False,
+) -> None:
+    """Show or clear the content-addressed Postgres embedding cache."""
+    from recap.infrastructure.embeddings.cache import SqlEmbeddingCache
+
+    try:
+        container = _container(config)
+        cache = container.embedding_cache or SqlEmbeddingCache(container.database)
+        result = cache.stats()
+        result["enabled"] = container.settings.embeddings.cache_enabled
+        if clear:
+            result["deleted"] = cache.clear()
+    except Exception as exc:
+        _fail(exc)
+        return
+    console.print_json(json.dumps(result, indent=2, default=str))
 
 
 @app.command()
@@ -210,32 +234,100 @@ def search_reconcile(
     chunks: Annotated[
         bool, typer.Option("--chunks", help="Also rebuild chunk documents from Postgres")
     ] = False,
+    prune_orphans: Annotated[
+        bool,
+        typer.Option(
+            "--prune-orphans",
+            help="Delete chunk documents whose chunk row or parent memory is gone",
+        ),
+    ] = False,
+    workspace: Annotated[
+        str,
+        typer.Option("--workspace", "-w", help="Workspace to reconcile (default: demo-workspace)"),
+    ] = "",
 ) -> None:
-    """Reindex all active memories (and optionally their chunks) from the database."""
+    """Reindex active memories (and optionally chunks) for one workspace."""
+    from recap.maintenance import prune_orphan_chunks
+
+    workspace_id = workspace or _default_workspace()
+    indexed = 0
+    failed = 0
+    chunk_count = 0
+    chunks_rebuilt = 0
+    skipped_secret = 0
+    failed_memories: list[dict[str, str]] = []
+    orphan_result: dict[str, Any] | None = None
     try:
         container = _container(config)
-        indexed = 0
-        failed = 0
-        chunk_count = 0
         with container.services() as services:
             memories = services.memories.list_memories(
-                workspace_id=_default_workspace(), status=MemoryStatus.ACTIVE, limit=10_000
+                workspace_id=workspace_id, status=MemoryStatus.ACTIVE, limit=10_000
             )
             for memory in memories:
-                if services.index_sync(memory):
-                    indexed += 1
-                else:
+                try:
+                    if services.index_sync(memory):
+                        indexed += 1
+                    else:
+                        failed += 1
+                        failed_memories.append(
+                            {
+                                "memory_id": memory.id,
+                                "stage": "memory_index",
+                                "error": services.index_sync.last_error,
+                            }
+                        )
+                    if chunks:
+                        report = services.chunk_service.rebuild(memory)
+                        chunk_count += report.count
+                        if report.indexed:
+                            chunks_rebuilt += 1
+                        else:
+                            failed += 1
+                            failed_memories.append(
+                                {
+                                    "memory_id": memory.id,
+                                    "stage": "chunk_index",
+                                    "error": report.error or "chunk indexing failed",
+                                }
+                            )
+                except ValueError as exc:
+                    # The chunker fails closed on secrets. One bad memory must
+                    # not abort the whole workspace reconcile.
                     failed += 1
-                if chunks:
-                    report = services.chunk_service.rebuild(memory)
-                    chunk_count += report.count
+                    message = str(exc)
+                    if "secret" in message.lower():
+                        skipped_secret += 1
+                    failed_memories.append(
+                        {"memory_id": memory.id, "stage": "chunk_build", "error": message}
+                    )
+                except Exception as exc:  # per-memory boundary
+                    failed += 1
+                    failed_memories.append(
+                        {
+                            "memory_id": memory.id,
+                            "stage": "unknown",
+                            "error": f"{type(exc).__name__}: {exc}",
+                        }
+                    )
+            pending_outbox = services.outbox.pending_count()
+        if prune_orphans:
+            orphan_result = prune_orphan_chunks(container, workspace_id)
     except Exception as exc:
         _fail(exc)
         return
-    console.print(
-        f"indexed={indexed} failed={failed} chunks={chunk_count} "
-        f"pending_outbox={services.outbox.pending_count()}"
-    )
+    summary: dict[str, Any] = {
+        "workspace_id": workspace_id,
+        "indexed": indexed,
+        "failed": failed,
+        "chunks_rebuilt": chunks_rebuilt,
+        "chunks_total": chunk_count,
+        "skipped_secret": skipped_secret,
+        "pending_outbox": pending_outbox,
+        "failed_memories": failed_memories,
+    }
+    if orphan_result is not None:
+        summary["orphans"] = orphan_result
+    console.print_json(json.dumps(summary, indent=2, default=str))
 
 
 @search_app.command("drain")

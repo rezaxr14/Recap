@@ -66,21 +66,27 @@ vectors (`normalize: true` by default for OpenAI-compatible APIs, which return u
 vectors) but does not silently normalize provider output. Any response dimension mismatch is
 a hard error, as today.
 
-### 5. Postgres embedding cache (planned, not yet implemented)
+### 5. Postgres embedding cache (implemented)
 
-The `embedding_cache` table is **not implemented yet**; this section records the intended
-design so the decision is not lost. Until it lands, every rebuild re-embeds its chunks, and no
-cache-hit/miss metric is reported (it is not faked). The plan is an `embedding_cache` table
-keyed by `(text_hash, embedding_fingerprint)`, storing the JSON vector, dimension, provider,
-and creation time. The cache is an optimization only:
+Migration `0008_embedding_cache` adds an `embedding_cache` table keyed by
+`(embedding_fingerprint, text_hash)` and storing the JSON vector, dimension, provider, model,
+document/query kind, creation time, last access time, and hit count. The cache is an
+optimization only and is never the source of truth:
 
-- lookups are scoped to the exact fingerprint;
-- a cache hit with the wrong dimension is a hard error;
-- cache misses call the provider and write the vector in the same transaction as the chunk
-  persistence where practical;
-- benchmark reports count cache hits/misses and embedding tokens.
-
-No cache key or vector is shared across fingerprints.
+- lookups are scoped to the exact fingerprint, so no vector is shared across models,
+  dimensions, prefixes, or normalization settings;
+- the namespaced text hash includes the document/query role, preventing an asymmetric model's
+  query vector from being reused as a document vector;
+- a cache hit with the wrong dimension is a hard error, never padded or truncated;
+- cache read/write failures fail open and are counted, because an unavailable optimization
+  must not make indexing or retrieval unavailable;
+- cache misses call the provider once for duplicate texts in a batch, then write vectors in a
+  short transaction; the cache is not coupled to the chunk persistence transaction;
+- `recap embedding-cache --clear` is the explicit invalidation path; a fingerprint change
+  naturally produces different keys and a new index generation still requires a full rebuild;
+- benchmark reports count cache hits/misses, provider batches/texts, provider latency, and
+  prompt tokens when the endpoint returns usage. Missing usage is reported as `null`, not
+  invented.
 
 ### 6. No downloads and no silent fallback
 
@@ -102,8 +108,8 @@ usage; if it does not, it records `null`, not an invented count.
 
 - The vector branch can be evaluated with a real model while CI remains offline and cheap.
 - Prefix and fingerprint handling prevents the most common "mixed vector spaces" failure.
-- Once implemented, the cache will make ablation reruns practical and report their cost
-  honestly; the ADR records the design up front.
+- The cache makes ablation reruns practical and reports hits, provider calls, latency, and
+  provider-reported tokens without pretending a missing count is zero.
 
 ### Negative
 

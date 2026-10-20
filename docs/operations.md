@@ -32,8 +32,10 @@ python scripts/run_smoke_test.py
 ```
 
 `recap db migrate` applies Alembic migrations. `recap search init` is idempotent: it creates
-`recap-memories-v1` (and `recap-chunks-v1`), then points `recap-memories-read` /
-`recap-memories-write` and `recap-chunks-read` / `recap-chunks-write` at them.
+`recap-memories-v1` and `recap-chunks-v2`, then points `recap-memories-read` /
+`recap-memories-write` and `recap-chunks-read` / `recap-chunks-write` at them. The chunk
+generation is a configuration value (`elasticsearch.chunks_index_generation`, default `2`);
+bump it when the chunk mapping changes so a new index can be built beside the old one.
 
 ## 3. Health
 
@@ -140,11 +142,25 @@ recap chunk count
 ```
 
 Chunks live in Postgres (`memory_chunks`) as the source of truth and are indexed into
-`recap-chunks-v1` through the same outbox. Rebuilding is idempotent: unchanged chunks keep
+`recap-chunks-v2` through the same outbox. Rebuilding is idempotent: unchanged chunks keep
 their id, and chunks no longer produced by the current chunker version are deleted. A memory
 transition flips `active_for_retrieval` on its chunk documents; if the chunk index is
 unreachable the memory index still succeeds (chunks are rebuildable), and
 `recap search reconcile --chunks` is the recovery path.
+
+### Inspect or clear the embedding cache
+
+```bash
+recap embedding-cache
+recap embedding-cache --clear
+recap providers                 # includes per-process cache hits/misses and provider usage
+```
+
+The cache is keyed by the exact embedding fingerprint plus a namespaced document/query text
+hash. Clearing it is always safe; the next chunk rebuild or query re-embeds. Do not edit cache
+rows by hand to change a vector: delete the cache and rebuild with the intended provider.
+There is no automatic eviction yet; `last_accessed_at` and `hit_count` are recorded so an
+operator can prune old entries, and `--clear` is the blunt but safe option.
 
 ### Drain the index outbox
 
@@ -279,7 +295,7 @@ recap db migrate
 ```
 
 Alembic is configured from `alembic.ini` + `migrations/`; the CLI injects the configured
-URL. Current head: `0004_memory_chunks`.
+URL. Current head: `0008_embedding_cache`.
 
 ### Inspection
 
@@ -295,6 +311,9 @@ SELECT state, count(*) FROM index_outbox GROUP BY state;
 
 -- chunk counts per type
 SELECT chunk_type, count(*) FROM memory_chunks GROUP BY chunk_type ORDER BY 2 DESC;
+
+-- embedding cache size and hit counters (the cache is optional)
+SELECT count(*) AS entries, coalesce(sum(hit_count), 0) AS hits FROM embedding_cache;
 
 -- recent degraded memories
 SELECT entity_id, action, reason, created_at

@@ -64,6 +64,9 @@ def embedding_role_report(settings: Any, provider: EmbeddingProvider | None) -> 
     }
     if provider is not None:
         entry["capabilities"] = provider.capabilities.to_dict()
+        usage = getattr(provider, "embedding_usage", None)
+        if callable(usage):
+            entry["cache"] = usage()
     return entry
 
 

@@ -17,7 +17,7 @@ elasticsearch:
   chunks_read_alias: recap-chunks-read
   chunks_write_alias: recap-chunks-write
   index_generation: 1
-  chunks_index_generation: 1
+  chunks_index_generation: 2
   request_timeout_seconds: 5.0
   vector_dimension: 256
   hybrid_strategy: app_rrf
@@ -53,6 +53,8 @@ embeddings:
   document_prefix: ""
   query_prefix: ""
   normalize: true
+  # Content-addressed Postgres cache; optional optimization, never a source of truth.
+  cache_enabled: true
   allow_degraded: false
 
 llm:
@@ -103,7 +105,7 @@ chunking:
   # Deterministic event-aware chunks. No model or tokenizer download.
   # naive_fixed exists only as an evaluation baseline and is never the default.
   strategy: event_aware
-  version: "1"
+  version: "2"
   target_tokens: 256
   max_tokens: 512
   overlap_units: 1

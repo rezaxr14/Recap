@@ -1,0 +1,74 @@
+name: Feature request
+description: Propose a focused improvement or new capability
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        RECAP values reproducible evidence. If the proposal changes retrieval, chunking, or
+        scoring, describe how it can be measured and what would falsify it.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What can a user not do today, or what is unsafe, slow, or unclear?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+      description: Describe the smallest useful change and which subsystem owns it.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What else did you try or reject, and why?
+    validations:
+      required: false
+  - type: textarea
+    id: evidence
+    attributes:
+      label: How it can be measured
+      description: Tests, benchmark baselines, datasets, or failure cases that would demonstrate the change.
+    validations:
+      required: false
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Recording / redaction
+        - PostgreSQL / migrations
+        - Elasticsearch / retrieval
+        - Chunking
+        - Repair compiler / validation
+        - Promotion / lifecycle
+        - Benchmark / evaluation
+        - CLI
+        - HTTP API
+        - Providers / agent
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: limitations
+    attributes:
+      label: Limitations and risks
+      description: What should this proposal explicitly not claim or not try to solve?
+    validations:
+      required: false
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I searched existing issues and documentation for prior discussion.
+          required: true
+        - label: I understand that benchmark claims require measured, reproducible evidence.
+          required: true

@@ -46,8 +46,18 @@ class RetrievalRequest(BaseModel):
     require_compatible_environment: bool = True
     latency_budget_ms: int = Field(default=800, ge=1, le=30_000)
     policy_version: str = "policy-v1"
+    # Ablation selector for chunk modes. Normal operation is event_aware;
+    # benchmark runs pin naive_fixed for the chunker ablation.
+    chunk_strategy: str = "event_aware"
     run_id: str | None = None
     request_id: str = Field(default_factory=lambda: new_id("req"))
+
+    @field_validator("chunk_strategy")
+    @classmethod
+    def _known_chunk_strategy(cls, value: str) -> str:
+        if value not in {"", "event_aware", "naive_fixed"}:
+            raise ValueError("chunk_strategy must be event_aware|naive_fixed|empty")
+        return value
 
     @field_validator("final_k")
     @classmethod

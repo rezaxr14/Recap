@@ -11,10 +11,11 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from recap.chunking.chunker import build_chunks
-from recap.config import Settings
+from recap.config import ChunkingSettings, Settings
 from recap.domain.chunks import MemoryChunk
 from recap.domain.enums import ChunkType, MemoryStatus
 from recap.domain.memories import ExperienceMemory
+from recap.domain.runs import utc_now
 from recap.errors import (
     EmbeddingUnavailable,
     ProviderAuthenticationError,
@@ -62,11 +63,17 @@ class ChunkService:
 
     # ------------------------------------------------------------- building
     def build_for_memory(
-        self, memory: ExperienceMemory, *, run_ids: list[str] | None = None
+        self,
+        memory: ExperienceMemory,
+        *,
+        run_ids: list[str] | None = None,
+        config: ChunkingSettings | None = None,
     ) -> ChunkBuildReport:
         report = ChunkBuildReport(memory_id=memory.id, memory_version=memory.memory_version)
         evidence_runs = run_ids if run_ids is not None else list(memory.evidence_run_ids)
         seen: dict[str, MemoryChunk] = {}
+        built_at = utc_now()
+        chunk_settings = config or self.settings.chunking
 
         def add(chunks: tuple[MemoryChunk, ...] | list[MemoryChunk]) -> None:
             for chunk in chunks:
@@ -76,12 +83,16 @@ class ChunkService:
         events_by_run = {run_id: self.runs.list_events(run_id) for run_id in evidence_runs}
         for run_id, events in events_by_run.items():
             result = build_chunks(
-                memory, events=events, run_id=run_id, config=self.settings.chunking
+                memory,
+                events=events,
+                run_id=run_id,
+                config=chunk_settings,
+                created_at=built_at,
             )
             add(result.chunks)
             report.warnings.extend(result.warnings)
         if not events_by_run:
-            result = build_chunks(memory, config=self.settings.chunking)
+            result = build_chunks(memory, config=chunk_settings, created_at=built_at)
             add(result.chunks)
             report.warnings.extend(result.warnings)
 
@@ -97,7 +108,8 @@ class ChunkService:
                 events=(),
                 validation=validation,
                 run_id=anchor_run,
-                config=self.settings.chunking,
+                config=chunk_settings,
+                created_at=built_at,
             )
             validation_chunks.extend(
                 chunk
@@ -107,16 +119,33 @@ class ChunkService:
         add(validation_chunks)
 
         report.chunks = list(seen.values())
-        report.removed_stale = self.chunks.delete_stale(memory.id, memory.memory_version, set(seen))
+        stale = self.chunks.delete_stale(
+            memory.id,
+            memory.memory_version,
+            set(seen),
+            chunk_strategy=chunk_settings.strategy,
+        )
+        report.removed_stale = len(stale)
+        if stale and getattr(self.sync, "search", None) is not None:
+            try:
+                self.sync.search.delete_chunks(stale)
+            except SearchUnavailable as exc:
+                # Orphan pruning in reconcile is the safety net; do not fail a
+                # rebuild because the cleanup write failed.
+                report.warnings.append(f"stale chunk documents not removed: {exc.message}")
         return report
 
     # ------------------------------------------------------------- indexing
     def rebuild(
-        self, memory: ExperienceMemory, *, run_ids: list[str] | None = None
+        self,
+        memory: ExperienceMemory,
+        *,
+        run_ids: list[str] | None = None,
+        config: ChunkingSettings | None = None,
     ) -> ChunkBuildReport:
-        report = self.build_for_memory(memory, run_ids=run_ids)
+        report = self.build_for_memory(memory, run_ids=run_ids, config=config)
         active = memory.status is MemoryStatus.ACTIVE
-        self.chunks.upsert_many(report.chunks, active_for_retrieval=active)
+        report.chunks = self.chunks.upsert_many(report.chunks, active_for_retrieval=active)
         report.indexed = self.sync.sync(memory, report.chunks, active=active)
         if not report.indexed:
             report.error = self.sync.last_error
@@ -144,7 +173,24 @@ class ChunkIndexSynchronizer:
     def sync(self, memory: ExperienceMemory, chunks: list[MemoryChunk], *, active: bool) -> bool:
         if not chunks:
             return True
-        for chunk in chunks:
+        fingerprint = getattr(self.embeddings, "embedding_fingerprint", "")
+        generation = self.settings.elasticsearch.chunks_index_generation
+        # Content-addressed ids mean an unchanged chunk needs no re-embedding.
+        # Skip only when the stored vector identity and visibility already match.
+        pending = [
+            chunk
+            for chunk in chunks
+            if not (
+                chunk.index_status == "indexed"
+                and chunk.embedding_fingerprint == fingerprint
+                and chunk.indexed_generation == generation
+                and chunk.active_for_retrieval == active
+            )
+        ]
+        self.last_error = ""
+        if not pending:
+            return True
+        for chunk in pending:
             self.outbox.enqueue(
                 workspace_id=chunk.workspace_id,
                 entity_id=chunk.chunk_id,
@@ -153,7 +199,7 @@ class ChunkIndexSynchronizer:
                 entity_type="chunk",
             )
         try:
-            embeddings = self.embeddings.embed_documents([chunk.text for chunk in chunks])
+            embeddings = self.embeddings.embed_documents([chunk.text for chunk in pending])
         except (
             EmbeddingUnavailable,
             ProviderUnavailable,
@@ -161,20 +207,25 @@ class ChunkIndexSynchronizer:
             ProviderResponseError,
         ) as exc:
             self.last_error = exc.message
-            for chunk in chunks:
+            for chunk in pending:
                 self.outbox.mark_failed_by_key(f"index:chunk:{chunk.chunk_id}", exc.message)
-            self.store.mark_indexed([chunk.chunk_id for chunk in chunks], success=False)
+            self.store.mark_indexed([chunk.chunk_id for chunk in pending], success=False)
             return False
         try:
-            self.search.index_chunks(chunks, embeddings, active_for_retrieval=active)
+            self.search.index_chunks(pending, embeddings, active_for_retrieval=active)
         except SearchUnavailable as exc:
             self.last_error = exc.message
-            for chunk in chunks:
+            for chunk in pending:
                 self.outbox.mark_failed_by_key(f"index:chunk:{chunk.chunk_id}", exc.message)
-            self.store.mark_indexed([chunk.chunk_id for chunk in chunks], success=False)
+            self.store.mark_indexed([chunk.chunk_id for chunk in pending], success=False)
             return False
-        ids = [chunk.chunk_id for chunk in chunks]
-        self.store.mark_indexed(ids, success=True)
+        ids = [chunk.chunk_id for chunk in pending]
+        self.store.mark_indexed(
+            ids,
+            success=True,
+            embedding_fingerprint=fingerprint,
+            generation=generation,
+        )
         for chunk_id in ids:
             self.outbox.mark_done_by_key(f"index:chunk:{chunk_id}")
         self.last_error = ""

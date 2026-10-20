@@ -67,14 +67,26 @@ budget.
 | `vector` | dense-vector retrieval, **no policy** |
 | `hybrid_rrf` | fused lexical + vector, **no policy** |
 | `outcome_aware` | RECAP's full selection policy |
-| `bm25_chunk` / `vector_chunk` / `hybrid_rrf_chunk` | the same three retrieval baselines run over **chunk** documents (best-chunk RRF per memory), still **no policy** |
-| `outcome_aware_chunk` | chunk retrieval fed into RECAP's full selection policy |
+| `bm25_chunk` / `vector_chunk` / `hybrid_rrf_chunk` | the same three retrieval baselines run over **event-aware** chunk documents (best-chunk RRF per memory), still **no policy** |
+| `outcome_aware_chunk` | event-aware chunk retrieval fed into RECAP's full selection policy |
+| `*_naive_chunk` | the same four chunk baselines over `naive_fixed` chunks, on the same tasks and embedder |
+
+Both chunk strategies are indexed side by side: `chunk_strategy` is stored on every chunk and
+is a query filter. Chunk queries are also scoped to the request's environment fingerprint,
+because a chunk compiled for one API version is not a valid candidate for another. Card
+retrieval still returns incompatible memories so the decision can explain the rejection.
 
 The three card retrieval baselines deliberately skip applicability, compatibility, and utility
-policy. That is the ablation: it isolates what the policy adds. The `_chunk` baselines repeat
-the comparison at chunk granularity on identical tasks, so the report separates "does the
-policy help?" from "does chunking help?". See
+policy. That is the ablation: it isolates what the policy adds. The `_chunk` and
+`*_naive_chunk` baselines repeat the comparison at chunk granularity on identical tasks, so the
+report separates "does the policy help?" from "does chunking help?". See
 [`retrieval.md` §8](retrieval.md#8-ablation-design-why-the-baselines-are-fair).
+
+**Current limitation:** the dev split seeds one memory per environment version. After
+environment scoping, both chunk strategies see the same single correct candidate and every
+chunk baseline succeeds. The chunk-strategy matrix is wired and reproducible, but it is
+degenerate until the dataset adds same-environment distractor memories and paraphrase
+queries. No "event-aware beats naive" claim is made from the current numbers.
 
 ## 4. Metrics
 

@@ -28,12 +28,20 @@ class MemoryChunk(BaseModel):
     chunk_type: ChunkType
     seq_start: int
     seq_end: int
+    # Sequence number of the failing event for failure windows. ``seq_start``
+    # is the first event actually present in the text, which can be earlier
+    # context.
+    anchor_seq: int = 0
     event_ids: list[str] = Field(default_factory=list)
     text: str
     text_hash: str
     token_estimate: int
     truncated: bool = False
-    chunker_version: str = "1"
+    chunker_version: str = "2"
+    # Which chunking strategy produced this chunk ("event_aware" or the
+    # naive_fixed ablation). Coexists in one index so both can be compared on
+    # the same tasks with the same embedder.
+    chunk_strategy: str = "event_aware"
     redaction_rule_version: str = "redaction-v1"
     failure_code: str = ""
     tool_names: list[str] = Field(default_factory=list)
@@ -42,6 +50,12 @@ class MemoryChunk(BaseModel):
     environment_fingerprint: str = ""
     task_families: list[str] = Field(default_factory=list)
     exact_ids: list[str] = Field(default_factory=list)
+    # Index bookkeeping. Postgres records which embedding fingerprint produced
+    # the vector so a model/prefix change can be detected without guessing.
+    active_for_retrieval: bool = True
+    index_status: str = "pending"
+    embedding_fingerprint: str = ""
+    indexed_generation: int = 0
     created_at: datetime = Field(default_factory=utc_now)
 
     @field_validator("event_ids", "exact_ids")
@@ -62,8 +76,10 @@ class MemoryChunk(BaseModel):
             "run_id": self.run_id or "",
             "chunk_type": str(self.chunk_type),
             "chunk_text": self.text,
+            "text_hash": self.text_hash,
             "seq_start": self.seq_start,
             "seq_end": self.seq_end,
+            "anchor_seq": self.anchor_seq,
             "token_estimate": self.token_estimate,
             "event_ids": self.event_ids,
             "failure_code": self.failure_code,
@@ -73,6 +89,7 @@ class MemoryChunk(BaseModel):
             "environment_fingerprint": self.environment_fingerprint,
             "task_families": self.task_families,
             "chunker_version": self.chunker_version,
+            "chunk_strategy": self.chunk_strategy,
             "redaction_rule_version": self.redaction_rule_version,
             "exact_ids": self.exact_ids,
             "truncated": self.truncated,
@@ -92,6 +109,7 @@ def chunk_id_for(
     chunker_version: str,
     text_hash: str,
     run_id: str | None = None,
+    chunk_strategy: str = "event_aware",
 ) -> str:
     # ``run_id`` is an extension to the brief's formula. Without it, identical
     # event text at the same sequence numbers from two evidence runs would
@@ -106,6 +124,7 @@ def chunk_id_for(
             "seq_start": seq_start,
             "seq_end": seq_end,
             "chunker_version": chunker_version,
+            "chunk_strategy": chunk_strategy,
             "text_hash": text_hash,
         }
     )

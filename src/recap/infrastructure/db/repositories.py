@@ -170,12 +170,14 @@ def _chunk_to_domain(row: MemoryChunkRow) -> MemoryChunk:
         chunk_type=ChunkType(row.chunk_type),
         seq_start=row.seq_start,
         seq_end=row.seq_end,
+        anchor_seq=row.anchor_seq,
         event_ids=row.event_ids or [],
         text=row.text,
         text_hash=row.text_hash,
         token_estimate=row.token_estimate,
         truncated=row.truncated,
         chunker_version=row.chunker_version,
+        chunk_strategy=row.chunk_strategy,
         redaction_rule_version=row.redaction_rule_version,
         failure_code=row.failure_code,
         tool_names=row.tool_names or [],
@@ -184,6 +186,10 @@ def _chunk_to_domain(row: MemoryChunkRow) -> MemoryChunk:
         environment_fingerprint=row.environment_fingerprint,
         task_families=row.task_families or [],
         exact_ids=row.exact_ids or [],
+        active_for_retrieval=row.active_for_retrieval,
+        index_status=row.index_status,
+        embedding_fingerprint=row.embedding_fingerprint,
+        indexed_generation=row.indexed_generation,
         created_at=row.created_at,
     )
 
@@ -198,12 +204,14 @@ def _chunk_to_row(chunk: MemoryChunk, *, active_for_retrieval: bool) -> MemoryCh
         chunk_type=str(chunk.chunk_type),
         seq_start=chunk.seq_start,
         seq_end=chunk.seq_end,
+        anchor_seq=chunk.anchor_seq,
         event_ids=list(chunk.event_ids),
         text=chunk.text,
         text_hash=chunk.text_hash,
         token_estimate=chunk.token_estimate,
         truncated=chunk.truncated,
         chunker_version=chunk.chunker_version,
+        chunk_strategy=chunk.chunk_strategy,
         redaction_rule_version=chunk.redaction_rule_version,
         failure_code=chunk.failure_code,
         tool_names=list(chunk.tool_names),
@@ -213,7 +221,9 @@ def _chunk_to_row(chunk: MemoryChunk, *, active_for_retrieval: bool) -> MemoryCh
         task_families=list(chunk.task_families),
         exact_ids=list(chunk.exact_ids),
         active_for_retrieval=active_for_retrieval,
-        index_status="pending",
+        index_status=chunk.index_status,
+        embedding_fingerprint=chunk.embedding_fingerprint,
+        indexed_generation=chunk.indexed_generation,
         created_at=chunk.created_at,
     )
 
@@ -600,15 +610,21 @@ class SqlMemoryChunkRepository:
             if existing is None:
                 self.session.add(_chunk_to_row(chunk, active_for_retrieval=active_for_retrieval))
             else:
+                # The chunk id is content-addressed, so an existing row already
+                # has this exact text. Preserve its index identity: resetting it
+                # here would force a re-embedding on every rebuild and defeat
+                # the fingerprint-based embedding skip.
                 existing.active_for_retrieval = active_for_retrieval
                 existing.text = chunk.text
                 existing.text_hash = chunk.text_hash
                 existing.token_estimate = chunk.token_estimate
                 existing.truncated = chunk.truncated
                 existing.exact_ids = list(chunk.exact_ids)
-                existing.index_status = "pending"
-            stored.append(chunk)
         self.session.flush()
+        for chunk in chunks:
+            row = self.session.get(MemoryChunkRow, chunk.chunk_id)
+            if row is not None:
+                stored.append(_chunk_to_domain(row))
         return stored
 
     def get(self, chunk_id: str) -> MemoryChunk | None:
@@ -643,18 +659,26 @@ class SqlMemoryChunkRepository:
         ).all()
         return [_chunk_to_domain(row) for row in rows]
 
-    def delete_stale(self, memory_id: str, memory_version: int, keep_chunk_ids: set[str]) -> int:
-        rows = self.session.scalars(
-            select(MemoryChunkRow).where(
-                MemoryChunkRow.memory_id == memory_id,
-                MemoryChunkRow.memory_version == memory_version,
-            )
-        ).all()
-        removed = 0
+    def delete_stale(
+        self,
+        memory_id: str,
+        memory_version: int,
+        keep_chunk_ids: set[str],
+        *,
+        chunk_strategy: str | None = None,
+    ) -> list[str]:
+        statement = select(MemoryChunkRow).where(
+            MemoryChunkRow.memory_id == memory_id,
+            MemoryChunkRow.memory_version == memory_version,
+        )
+        if chunk_strategy is not None:
+            statement = statement.where(MemoryChunkRow.chunk_strategy == chunk_strategy)
+        rows = self.session.scalars(statement).all()
+        removed: list[str] = []
         for row in rows:
             if row.chunk_id not in keep_chunk_ids:
+                removed.append(row.chunk_id)
                 self.session.delete(row)
-                removed += 1
         self.session.flush()
         return removed
 
@@ -672,16 +696,25 @@ class SqlMemoryChunkRepository:
         # releases; ``rowcount`` only exists on the cursor-backed result.
         return int(getattr(result, "rowcount", 0) or 0)
 
-    def mark_indexed(self, chunk_ids: list[str], *, success: bool) -> None:
+    def mark_indexed(
+        self,
+        chunk_ids: list[str],
+        *,
+        success: bool,
+        embedding_fingerprint: str = "",
+        generation: int = 0,
+    ) -> None:
         if not chunk_ids:
             return
+        values: dict[str, object] = {
+            "index_status": "indexed" if success else "failed",
+            "indexed_at": utc_now() if success else None,
+        }
+        if success:
+            values["embedding_fingerprint"] = embedding_fingerprint
+            values["indexed_generation"] = generation
         self.session.execute(
-            update(MemoryChunkRow)
-            .where(MemoryChunkRow.chunk_id.in_(chunk_ids))
-            .values(
-                index_status="indexed" if success else "failed",
-                indexed_at=utc_now() if success else None,
-            )
+            update(MemoryChunkRow).where(MemoryChunkRow.chunk_id.in_(chunk_ids)).values(**values)
         )
         self.session.flush()
 

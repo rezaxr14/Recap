@@ -19,19 +19,25 @@ from recap.errors import ConfigurationError
 DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[2] / "configs" / "default.yaml"
 
 
-class AppSettings(BaseModel):
+class _SettingsModel(BaseModel):
+    """Reject unknown keys so a misspelled setting cannot silently no-op."""
+
+    model_config = {"extra": "forbid"}
+
+
+class AppSettings(_SettingsModel):
     name: str = "recap"
     environment: str = "local"
     log_level: str = "INFO"
     api_prefix: str = "/api/v1"
 
 
-class StorageSettings(BaseModel):
+class StorageSettings(_SettingsModel):
     postgres_url: str = "postgresql+psycopg://recap:recap@localhost:5433/recap"
     max_event_payload_bytes: int = 65_536
 
 
-class ElasticsearchSettings(BaseModel):
+class ElasticsearchSettings(_SettingsModel):
     url: str = "http://localhost:9200"
     api_key: str = ""
     index_prefix: str = "recap"
@@ -40,7 +46,7 @@ class ElasticsearchSettings(BaseModel):
     chunks_read_alias: str = "recap-chunks-read"
     chunks_write_alias: str = "recap-chunks-write"
     index_generation: int = 1
-    chunks_index_generation: int = 1
+    chunks_index_generation: int = 2
     request_timeout_seconds: float = 5.0
     vector_dimension: int = 256
     hybrid_strategy: str = "app_rrf"
@@ -62,7 +68,7 @@ class ElasticsearchSettings(BaseModel):
         return f"{self.index_prefix}-chunks-v{self.chunks_index_generation}"
 
 
-class EmbeddingSettings(BaseModel):
+class EmbeddingSettings(_SettingsModel):
     """Embedding role. Never downloads weights; ``openai_compatible`` calls an API."""
 
     provider: str = "hashing"
@@ -80,6 +86,10 @@ class EmbeddingSettings(BaseModel):
     document_prefix: str = ""
     query_prefix: str = ""
     normalize: bool = True
+    # The Postgres embedding cache is an optimization only. It is safe to leave
+    # on: keys include the exact fingerprint and provider-input hash, so a hit
+    # can never cross models, dimensions, prefixes, or document/query roles.
+    cache_enabled: bool = True
     # A lexical hashing/fake embedder is allowed in local development and
     # tests. Production and any deployment that claims semantic RAG must set a
     # real provider, or explicitly acknowledge the degraded mode here.
@@ -100,7 +110,7 @@ class EmbeddingSettings(BaseModel):
         return value
 
 
-class LlmSettings(BaseModel):
+class LlmSettings(_SettingsModel):
     """One chat/completions role (agent or repair compiler)."""
 
     provider: str = "disabled"
@@ -129,7 +139,7 @@ class LlmSettings(BaseModel):
         return value
 
 
-class RecallSettings(BaseModel):
+class RecallSettings(_SettingsModel):
     default_mode: str = "outcome_aware"
     lexical_candidate_k: int = 30
     vector_candidate_k: int = 30
@@ -158,11 +168,11 @@ CHUNK_TYPES = (
 )
 
 
-class ChunkingSettings(BaseModel):
+class ChunkingSettings(_SettingsModel):
     """Deterministic, event-aware chunking. No tokenizer or model downloads."""
 
     strategy: str = "event_aware"
-    version: str = "1"
+    version: str = "2"
     target_tokens: int = 256
     max_tokens: int = 512
     overlap_units: int = 1
@@ -215,7 +225,7 @@ class ChunkingSettings(BaseModel):
         return self
 
 
-class ReliabilitySettings(BaseModel):
+class ReliabilitySettings(_SettingsModel):
     beta_prior_alpha: float = 1.0
     beta_prior_beta: float = 1.0
     minimum_verified_outcomes_for_alert: int = 5
@@ -224,7 +234,7 @@ class ReliabilitySettings(BaseModel):
     consecutive_failures_for_suspect: int = 3
 
 
-class RepairCompilerSettings(BaseModel):
+class RepairCompilerSettings(_SettingsModel):
     enabled: bool = True
     generator: str = "deterministic"
     max_failure_window_events: int = 20
@@ -241,14 +251,14 @@ class RepairCompilerSettings(BaseModel):
         return value
 
 
-class MemoryShiftSettings(BaseModel):
+class MemoryShiftSettings(_SettingsModel):
     enabled: bool = True
     schema_mismatch_status: str = "incompatible"
     version_mismatch_status: str = "suspect"
     revalidation_enabled: bool = True
 
 
-class EvaluationSettings(BaseModel):
+class EvaluationSettings(_SettingsModel):
     default_split: str = "dev"
     frozen_memory_default: bool = True
     store_per_task_results: bool = True
@@ -256,7 +266,7 @@ class EvaluationSettings(BaseModel):
     random_seed: int = 7
 
 
-class Settings(BaseModel):
+class Settings(_SettingsModel):
     app: AppSettings = Field(default_factory=AppSettings)
     storage: StorageSettings = Field(default_factory=StorageSettings)
     elasticsearch: ElasticsearchSettings = Field(default_factory=ElasticsearchSettings)
@@ -386,9 +396,11 @@ def _apply_env_overrides(raw: dict[str, Any]) -> dict[str, Any]:
         ("EMBEDDING_DOCUMENT_PREFIX", "embeddings", "document_prefix", "str"),
         ("EMBEDDING_QUERY_PREFIX", "embeddings", "query_prefix", "str"),
         ("EMBEDDING_NORMALIZE", "embeddings", "normalize", "bool"),
+        ("EMBEDDING_CACHE_ENABLED", "embeddings", "cache_enabled", "bool"),
         ("EMBEDDING_ALLOW_DEGRADED", "embeddings", "allow_degraded", "bool"),
         ("RECAP_EMBEDDING_PROVIDER", "embeddings", "provider", "str"),
         ("RECAP_EMBEDDING_DIMENSION", "embeddings", "dimension", "int"),
+        ("RECAP_EMBEDDING_CACHE_ENABLED", "embeddings", "cache_enabled", "bool"),
         ("RECAP_EMBEDDING_ALLOW_DEGRADED", "embeddings", "allow_degraded", "bool"),
         # Agent LLM role.
         ("LLM_PROVIDER", "llm", "provider", "str"),

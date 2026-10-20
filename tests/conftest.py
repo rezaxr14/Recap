@@ -67,7 +67,7 @@ def live_settings(request: pytest.FixtureRequest) -> Settings:
     settings.elasticsearch.memories_write_alias = "recap-test-memories-write"
     settings.elasticsearch.chunks_read_alias = "recap-test-chunks-read"
     settings.elasticsearch.chunks_write_alias = "recap-test-chunks-write"
-    settings.elasticsearch.chunks_index_generation = 1
+    settings.elasticsearch.chunks_index_generation = 2
     return settings
 
 

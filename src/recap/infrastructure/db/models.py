@@ -167,12 +167,14 @@ class MemoryChunkRow(Base):
     chunk_type: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     seq_start: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     seq_end: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    anchor_seq: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     event_ids: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     text: Mapped[str] = mapped_column(Text, nullable=False)
     text_hash: Mapped[str] = mapped_column(String(80), nullable=False)
     token_estimate: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     truncated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     chunker_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    chunk_strategy: Mapped[str] = mapped_column(String(32), nullable=False, default="event_aware")
     redaction_rule_version: Mapped[str] = mapped_column(String(32), nullable=False)
     failure_code: Mapped[str] = mapped_column(String(64), nullable=False, default="")
     tool_names: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
@@ -183,8 +185,35 @@ class MemoryChunkRow(Base):
     exact_ids: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     active_for_retrieval: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     index_status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
+    embedding_fingerprint: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    indexed_generation: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     indexed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class EmbeddingCacheRow(Base):
+    """Content-addressed embedding cache.
+
+    The cache is an optimization only: Postgres ``memory_chunks`` remains the
+    source of truth, and a lost cache is rebuilt by re-embedding. The key is the
+    exact embedding fingerprint plus a namespaced hash of the provider input, so
+    a vector can never be reused across models, dimensions, prefixes, or
+    document/query roles.
+    """
+
+    __tablename__ = "embedding_cache"
+    __table_args__ = (Index("ix_embedding_cache_last_accessed", "last_accessed_at"),)
+
+    embedding_fingerprint: Mapped[str] = mapped_column(String(128), primary_key=True)
+    text_hash: Mapped[str] = mapped_column(String(80), primary_key=True)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False, default="document")
+    dimension: Mapped[int] = mapped_column(Integer, nullable=False)
+    provider: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    model_id: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    vector_json: Mapped[list[float]] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_accessed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    hit_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
 
 class MemoryRow(Base):

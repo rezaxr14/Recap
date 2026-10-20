@@ -23,6 +23,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from recap.domain.enums import MemoryStatus
 from recap.errors import SearchUnavailable
 from recap.logging import get_logger
 
@@ -65,6 +66,10 @@ class OutboxWorker:
             "skipped": 0,
             "failed": 0,
             "dead": 0,
+            "chunk_indexed": 0,
+            "chunk_deleted": 0,
+            "chunk_skipped": 0,
+            "lifecycle_applied": 0,
         }
         for _ in range(self.max_batches):
             progressed = 0
@@ -87,31 +92,20 @@ class OutboxWorker:
 
     def _process(self, services: Services, row: OutboxRow, counts: dict[str, int]) -> None:
         try:
-            memory = services.memories.get_memory(row.entity_id, row.workspace_id)
-            if memory is None:
-                # The entity is gone. There is nothing to index and nothing to
-                # delete; completing the row is the honest outcome.
-                services.outbox.mark_done(row)
-                counts["skipped"] += 1
-                return
-
-            if row.operation == "delete":
-                services.container.search_repository.delete_memory(memory.id, memory.memory_version)
-                services.outbox.mark_done(row)
-                counts["deleted"] += 1
-                return
-
-            if services.index_sync(memory):
-                services.outbox.mark_done(row)
-                counts["indexed"] += 1
+            entity_type = row.entity_type or "memory"
+            if entity_type == "chunk":
+                self._process_chunk(services, row, counts)
+            elif entity_type == "chunk_lifecycle":
+                self._process_chunk_lifecycle(services, row, counts)
+            elif entity_type in {"memory", "memory_card"}:
+                self._process_memory(services, row, counts)
             else:
-                services.outbox.mark_failed(
-                    row, services.index_sync.last_error or "index_memory reported failure"
-                )
+                services.outbox.mark_failed(row, f"unknown outbox entity_type {entity_type!r}")
                 counts["failed"] += 1
                 if row.state == "dead":
                     counts["dead"] += 1
         except SearchUnavailable as exc:
+            self._mark_chunk_failure(services, row)
             services.outbox.mark_failed(row, exc.message)
             counts["failed"] += 1
             if row.state == "dead":
@@ -122,11 +116,97 @@ class OutboxWorker:
                 extra={
                     "event": "outbox_row_failed",
                     "outbox_id": row.id,
+                    "entity_type": row.entity_type,
                     "entity_id": row.entity_id,
                     "error": f"{type(exc).__name__}: {exc}",
                 },
             )
+            self._mark_chunk_failure(services, row)
             services.outbox.mark_failed(row, f"{type(exc).__name__}: {exc}")
             counts["failed"] += 1
             if row.state == "dead":
                 counts["dead"] += 1
+
+    def _mark_chunk_failure(self, services: Services, row: OutboxRow) -> None:
+        if row.entity_type == "chunk" and row.operation == "index":
+            services.chunk_store.mark_indexed([row.entity_id], success=False)
+
+    def _process_memory(self, services: Services, row: OutboxRow, counts: dict[str, int]) -> None:
+        memory = services.memories.get_memory(row.entity_id, row.workspace_id)
+        if memory is None:
+            # The entity is gone. There is nothing to index and nothing to
+            # delete; completing the row is the honest outcome.
+            services.outbox.mark_done(row)
+            counts["skipped"] += 1
+            return
+
+        if row.operation == "delete":
+            services.container.search_repository.delete_memory(memory.id, memory.memory_version)
+            services.outbox.mark_done(row)
+            counts["deleted"] += 1
+            return
+
+        if services.index_sync(memory):
+            services.outbox.mark_done(row)
+            counts["indexed"] += 1
+        else:
+            services.outbox.mark_failed(
+                row, services.index_sync.last_error or "index_memory reported failure"
+            )
+            counts["failed"] += 1
+            if row.state == "dead":
+                counts["dead"] += 1
+
+    def _process_chunk(self, services: Services, row: OutboxRow, counts: dict[str, int]) -> None:
+        chunk = services.chunk_store.get(row.entity_id)
+        if chunk is None:
+            # Postgres is authoritative for indexing, but a delete intent still
+            # owns the search document id. Remove it even if the row is gone so
+            # an ES orphan cannot outlive a completed delete row.
+            if row.operation == "delete":
+                services.chunk_sync.search.delete_chunks([row.entity_id])
+                services.outbox.mark_done(row)
+                counts["chunk_deleted"] += 1
+            else:
+                services.outbox.mark_done(row)
+                counts["chunk_skipped"] += 1
+            return
+        if row.operation == "delete":
+            services.chunk_sync.search.delete_chunks([chunk.chunk_id])
+            services.outbox.mark_done(row)
+            counts["chunk_deleted"] += 1
+            return
+        embedding = services.chunk_sync.embeddings.embed_documents([chunk.text])[0]
+        services.chunk_sync.search.index_chunks(
+            [chunk],
+            [embedding],
+            active_for_retrieval=chunk.active_for_retrieval,
+        )
+        services.chunk_store.mark_indexed(
+            [chunk.chunk_id],
+            success=True,
+            embedding_fingerprint=getattr(
+                services.chunk_sync.embeddings, "embedding_fingerprint", ""
+            ),
+            generation=services.settings.elasticsearch.chunks_index_generation,
+        )
+        services.outbox.mark_done(row)
+        counts["chunk_indexed"] += 1
+
+    def _process_chunk_lifecycle(
+        self, services: Services, row: OutboxRow, counts: dict[str, int]
+    ) -> None:
+        memory = services.memories.get_memory(row.entity_id, row.workspace_id)
+        if memory is None:
+            services.outbox.mark_done(row)
+            counts["skipped"] += 1
+            return
+        # Re-read the current status: a stale row must never resurrect chunks of
+        # a memory that has since been retired.
+        active = memory.status is MemoryStatus.ACTIVE
+        services.chunk_store.set_active_for_memory(memory.id, memory.memory_version, active=active)
+        services.chunk_sync.search.set_active_for_memory(
+            memory.id, memory.memory_version, active=active
+        )
+        services.outbox.mark_done(row)
+        counts["lifecycle_applied"] += 1

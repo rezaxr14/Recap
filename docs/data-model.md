@@ -391,7 +391,7 @@ Fields are a flattened projection of `MemoryContent` plus operational metadata (
 counters, fingerprint, content hash, index generation). The mapping is `dynamic: strict`, so
 an accidental new field fails loudly instead of silently creating a mapping.
 
-The chunk index (`recap-chunks-v1`, aliases `recap-chunks-read`/`recap-chunks-write`) stores one
+The chunk index (`recap-chunks-v2`, aliases `recap-chunks-read`/`recap-chunks-write`) stores one
 document per chunk, id `= chunk_id`, with `chunk_text`, the same provenance fields, a
 `content_embedding` dense vector, `embedding_fingerprint`, and `active_for_retrieval`. Card and
 chunk indices are separate so chunk-granule retrieval can be ablated against card retrieval on
@@ -420,6 +420,11 @@ the same tasks.
   a fresh database may already have them from the baseline `create_all`).
 - `0004_memory_chunks` — adds `memory_chunks` (same defensive pattern). Note: the chunking
   brief suggested numbering this `0003`, but `0003` was already taken by snapshots.
+- `0005_chunk_embedding_identity` — adds chunk embedding fingerprint and index generation.
+- `0006_chunk_anchor_seq` — adds the failure anchor sequence to chunks.
+- `0007_chunk_strategy` — adds the `event_aware` / `naive_fixed` strategy label.
+- `0008_embedding_cache` — adds the optional content-addressed embedding cache; clearing it
+  never loses source-of-truth data.
 
 Migrations are applied with `recap db migrate` (Alembic). `recap db init` is a development
 shortcut that calls `Base.metadata.create_all`; it is not a substitute for migrations in a

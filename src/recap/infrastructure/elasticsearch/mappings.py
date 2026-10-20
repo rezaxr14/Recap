@@ -93,6 +93,7 @@ def memory_index_body(*, dimension: int, number_of_shards: int = 1) -> dict[str,
 # ------------------------------------------------------------------- chunks
 CHUNK_PROPERTIES: dict[str, Any] = {
     "chunk_id": {"type": "keyword"},
+    "text_hash": {"type": "keyword"},
     "memory_id": {"type": "keyword"},
     "memory_version": {"type": "integer"},
     "workspace_id": {"type": "keyword"},
@@ -101,6 +102,7 @@ CHUNK_PROPERTIES: dict[str, Any] = {
     "chunk_text": {"type": "text", "analyzer": "standard"},
     "seq_start": {"type": "integer"},
     "seq_end": {"type": "integer"},
+    "anchor_seq": {"type": "integer"},
     "token_estimate": {"type": "integer"},
     "event_ids": {"type": "keyword"},
     "failure_code": {"type": "keyword"},
@@ -110,6 +112,7 @@ CHUNK_PROPERTIES: dict[str, Any] = {
     "environment_fingerprint": {"type": "keyword"},
     "task_families": {"type": "keyword"},
     "chunker_version": {"type": "keyword"},
+    "chunk_strategy": {"type": "keyword"},
     "embedding_model_id": {"type": "keyword"},
     "embedding_fingerprint": {"type": "keyword"},
     "redaction_rule_version": {"type": "keyword"},
@@ -127,7 +130,12 @@ CHUNK_LEXICAL_FIELDS: dict[str, float] = {
 }
 
 
-def chunk_index_body(*, dimension: int, number_of_shards: int = 1) -> dict[str, Any]:
+def chunk_index_body(
+    *,
+    dimension: int,
+    number_of_shards: int = 1,
+    meta: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     properties = dict(CHUNK_PROPERTIES)
     properties["content_embedding"] = {
         "type": "dense_vector",
@@ -136,14 +144,19 @@ def chunk_index_body(*, dimension: int, number_of_shards: int = 1) -> dict[str, 
         "similarity": "cosine",
         "index_options": {"type": "hnsw", "m": 16, "ef_construction": 100},
     }
+    mappings: dict[str, Any] = {
+        "dynamic": "strict",
+        "properties": properties,
+    }
+    if meta:
+        # The fingerprint/dimension identity of the vectors in this field.
+        # ``IndexManager`` refuses to start when this disagrees with settings.
+        mappings["_meta"] = dict(meta)
     return {
         "settings": {
             "number_of_shards": number_of_shards,
             "number_of_replicas": 0,
             "refresh_interval": "1s",
         },
-        "mappings": {
-            "dynamic": "strict",
-            "properties": properties,
-        },
+        "mappings": mappings,
     }

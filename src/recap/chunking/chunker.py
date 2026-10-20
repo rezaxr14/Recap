@@ -13,6 +13,7 @@ import json
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from recap.chunking.tokens import estimate_tokens
@@ -21,7 +22,7 @@ from recap.domain.chunks import MemoryChunk, chunk_id_for
 from recap.domain.enums import ChunkType, EventType
 from recap.domain.memories import ExperienceMemory, build_embedding_text
 from recap.domain.repairs import ValidationResult
-from recap.domain.runs import RunEvent
+from recap.domain.runs import RunEvent, utc_now
 from recap.recorder.redaction import (
     REDACTION_RULE_VERSION,
     contains_secret,
@@ -33,7 +34,7 @@ MAX_UNIT_CHARS = 12_000
 TRUNCATION_MARKER = "[...truncated {count} chars...]"
 
 _UUID_RE = re.compile(
-    r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}\b"
+    r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"
 )
 _ISO_TIMESTAMP_RE = re.compile(
     r"\b\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?\b"
@@ -45,9 +46,20 @@ _CURSOR_KEYS = {"cursor", "page_token", "next_cursor", "next_page_token", "conti
 _REQUEST_ID_KEYS = {
     "request_id",
     "trace_id",
+    "span_id",
     "correlation_id",
     "idempotency_key",
     "client_request_id",
+    # Internal ids are random per run. Leaving them in the chunk text makes the
+    # same logical memory render differently on every seed and destabilizes
+    # lexical scoring; the values stay available via ``exact_ids``.
+    "run_id",
+    "event_id",
+    "snapshot_id",
+    "memory_snapshot_id",
+    "candidate_id",
+    "validation_id",
+    "attempt_id",
 }
 _TIMESTAMP_KEYS = {
     "timestamp",
@@ -75,6 +87,7 @@ class AtomicUnit:
     terminal: bool = False
     rows: tuple[dict[str, Any], ...] = ()
     exact_ids: tuple[str, ...] = ()
+    truncated: bool = False
 
 
 @dataclass(frozen=True)
@@ -172,7 +185,7 @@ def _unit_from_event(event: RunEvent, renderer: _Renderer) -> AtomicUnit:
         lines.append(f"Tool: {tool}")
     if body and body != "{}":
         lines.append(f"Data: {body}")
-    text, _ = _bounded("\n".join(lines))
+    text, truncated = _bounded("\n".join(lines))
     failure_code = ""
     if event.event_type is EventType.TOOL_CALL_FAILED:
         failure_code = str(payload.get("error_code") or payload.get("code") or "")
@@ -189,6 +202,7 @@ def _unit_from_event(event: RunEvent, renderer: _Renderer) -> AtomicUnit:
         terminal=event.event_type in {EventType.RUN_FINISHED, EventType.POSTCONDITION_CHECKED},
         rows=(payload,),
         exact_ids=tuple(renderer.exact_ids.snapshot()),
+        truncated=truncated,
     )
 
 
@@ -240,7 +254,7 @@ def _pair_units(events: Sequence[RunEvent]) -> list[AtomicUnit]:
                     failure_code = code
                 lines = [f"Action: {tool or 'unknown'}", f"Request: {request_text}"]
                 lines.append(f"{status}: {result_text}")
-                text, _ = _bounded("\n".join(lines))
+                text, truncated = _bounded("\n".join(lines))
                 units.append(
                     AtomicUnit(
                         event_ids=(event.id, nxt.id),
@@ -254,6 +268,7 @@ def _pair_units(events: Sequence[RunEvent]) -> list[AtomicUnit]:
                         failure_code=failure_code,
                         rows=(request, result),
                         exact_ids=tuple(renderer.exact_ids.snapshot()),
+                        truncated=truncated,
                     )
                 )
                 index += 2
@@ -305,6 +320,7 @@ def _truncate_unit(unit: AtomicUnit, max_tokens: int, multiplier: float) -> tupl
             terminal=unit.terminal,
             rows=unit.rows,
             exact_ids=unit.exact_ids,
+            truncated=True,
         ),
         True,
     )
@@ -317,7 +333,13 @@ def _pack_units(
     max_tokens: int,
     overlap_units: int,
     multiplier: float,
+    overhead_tokens: int = 0,
 ) -> list[tuple[list[AtomicUnit], bool]]:
+    # The contextual header is part of the chunk text, so its tokens must be
+    # reserved from the packing budget or ``token_estimate`` can exceed
+    # ``max_tokens`` after the header is prepended.
+    budget = max(1, target_tokens - overhead_tokens)
+    hard_limit = max(1, max_tokens - overhead_tokens)
     packed: list[tuple[list[AtomicUnit], bool]] = []
     index = 0
     while index < len(units):
@@ -328,21 +350,37 @@ def _pack_units(
         while cursor < len(units):
             unit = units[cursor]
             tokens = estimate_tokens(unit.text, multiplier)
-            if not selected and tokens > max_tokens:
-                unit, truncated = _truncate_unit(unit, max_tokens, multiplier)
+            if not selected and tokens > hard_limit:
+                unit, truncated = _truncate_unit(unit, hard_limit, multiplier)
                 tokens = estimate_tokens(unit.text, multiplier)
-            if selected and chars + tokens > target_tokens:
+            if selected and chars + tokens > budget:
                 break
             selected.append(unit)
             chars += tokens
             cursor += 1
-            if chars >= target_tokens:
+            if chars >= budget:
                 break
-        packed.append((selected, truncated))
+        packed.append((selected, truncated or any(unit.truncated for unit in selected)))
         if cursor >= len(units):
             break
         index = max(index + 1, cursor - max(0, overlap_units))
     return packed
+
+
+def _fit_text(text: str, max_tokens: int, multiplier: float) -> tuple[str, bool]:
+    """Guarantee ``token_estimate <= max_tokens`` after the header is added."""
+    if estimate_tokens(text, multiplier) <= max_tokens:
+        return text, False
+    target = max(64, int(max_tokens * 2.2))
+    while target >= 8:
+        removed = max(len(text) - target, 0)
+        head = target * 2 // 3
+        tail = target - head
+        candidate = f"{text[:head]}\n{TRUNCATION_MARKER.format(count=removed)}\n{text[-tail:]}"
+        if estimate_tokens(candidate, multiplier) <= max_tokens:
+            return candidate, True
+        target = int(target * 0.7)
+    return text[:1], True
 
 
 def _finalize(
@@ -359,11 +397,15 @@ def _finalize(
     config: ChunkingSettings,
     truncated: bool,
     failure_code: str | None = None,
+    anchor_seq: int = 0,
+    created_at: datetime | None = None,
 ) -> MemoryChunk:
     text = f"{header}\n\n{body}".strip()
     redacted, _ = redact_text(text)
     if contains_secret(redacted):
         raise ValueError("chunk text still contains a configured secret pattern after redaction")
+    redacted, fit_truncated = _fit_text(redacted, config.max_tokens, config.token_multiplier)
+    truncated = truncated or fit_truncated
     text_hash = f"sha256:{hashlib.sha256(redacted.encode('utf-8')).hexdigest()}"
     chunk_id = chunk_id_for(
         workspace_id=memory.workspace_id,
@@ -375,6 +417,7 @@ def _finalize(
         chunker_version=config.version,
         text_hash=text_hash,
         run_id=run_id,
+        chunk_strategy=config.strategy,
     )
     return MemoryChunk(
         chunk_id=chunk_id,
@@ -385,12 +428,14 @@ def _finalize(
         chunk_type=chunk_type,
         seq_start=seq_start,
         seq_end=seq_end,
+        anchor_seq=anchor_seq,
         event_ids=list(event_ids),
         text=redacted,
         text_hash=text_hash,
         token_estimate=estimate_tokens(redacted, config.token_multiplier),
         truncated=truncated,
         chunker_version=config.version,
+        chunk_strategy=config.strategy,
         redaction_rule_version=REDACTION_RULE_VERSION,
         failure_code=memory.content.failure_code if failure_code is None else failure_code,
         tool_names=list(memory.content.tool_names),
@@ -399,10 +444,15 @@ def _finalize(
         environment_fingerprint=memory.environment_fingerprint,
         task_families=list(memory.content.task_families),
         exact_ids=list(dict.fromkeys(exact_ids))[:200],
+        created_at=created_at or utc_now(),
     )
 
 
-def _card_chunk(memory: ExperienceMemory, config: ChunkingSettings) -> MemoryChunk:
+def _card_chunk(
+    memory: ExperienceMemory,
+    config: ChunkingSettings,
+    created_at: datetime,
+) -> MemoryChunk:
     body = build_embedding_text(memory)
     return _finalize(
         memory=memory,
@@ -416,12 +466,23 @@ def _card_chunk(memory: ExperienceMemory, config: ChunkingSettings) -> MemoryChu
         exact_ids=(),
         config=config,
         truncated=False,
+        created_at=created_at,
     )
 
 
 def _failure_window(
-    units: Sequence[AtomicUnit], config: ChunkingSettings
+    units: Sequence[AtomicUnit],
+    config: ChunkingSettings,
+    *,
+    header_tokens: int = 0,
 ) -> list[tuple[list[AtomicUnit], bool]]:
+    """Keep the failure-to-outcome window and as much preceding context as fits.
+
+    The failure anchor is mandatory. Context is added nearest-first only when it
+    fits alongside the whole tail; if the tail alone exceeds the budget it is
+    packed on its own (never dropping the anchor).
+    """
+
     failure_index = next((index for index, unit in enumerate(units) if unit.failed), None)
     if failure_index is None:
         return []
@@ -434,36 +495,37 @@ def _failure_window(
     context_start = max(0, failure_index - config.failure_window_events)
     context = list(units[context_start:failure_index])
     tail = list(units[failure_index:end])
+    budget = max(1, config.max_tokens - header_tokens)
+
+    def tokens(seq: Sequence[AtomicUnit]) -> int:
+        return estimate_tokens("\n\n".join(unit.text for unit in seq), config.token_multiplier)
+
     combined = context + tail
-    body = "\n\n".join(unit.text for unit in combined)
-    if estimate_tokens(body, config.token_multiplier) <= config.max_tokens:
-        return [(combined, False)]
-    # Preserve the failure anchor. Drop preceding context before splitting the
-    # failure-to-outcome window, and never split an atomic action/observation.
-    first_tail_tokens = estimate_tokens(tail[0].text, config.token_multiplier)
-    context_tokens = estimate_tokens(body, config.token_multiplier) - first_tail_tokens
-    if context and context_tokens + first_tail_tokens <= config.max_tokens:
-        # Keep as much context as fits before the anchor.
+    if tokens(combined) <= budget:
+        return [(combined, any(unit.truncated for unit in combined))]
+
+    tail_tokens = tokens(tail)
+    if context and tail_tokens < budget:
         kept: list[AtomicUnit] = []
-        used = first_tail_tokens
+        used = tail_tokens
         for unit in reversed(context):
-            tokens = estimate_tokens(unit.text, config.token_multiplier)
-            if used + tokens > config.max_tokens:
+            unit_tokens = estimate_tokens(unit.text, config.token_multiplier)
+            if used + unit_tokens > budget:
                 break
             kept.insert(0, unit)
-            used += tokens
-        packed = _pack_units(
-            kept + tail,
-            target_tokens=config.max_tokens,
-            max_tokens=config.max_tokens,
-            overlap_units=0,
-            multiplier=config.token_multiplier,
-        )
-        return packed
+            used += unit_tokens
+        if kept:
+            return _pack_units(
+                kept + tail,
+                target_tokens=budget,
+                max_tokens=budget,
+                overlap_units=0,
+                multiplier=config.token_multiplier,
+            )
     return _pack_units(
         tail,
-        target_tokens=config.target_tokens,
-        max_tokens=config.max_tokens,
+        target_tokens=budget,
+        max_tokens=budget,
         overlap_units=0,
         multiplier=config.token_multiplier,
     )
@@ -474,6 +536,7 @@ def _validation_chunk(
     validation: ValidationResult,
     run_id: str | None,
     config: ChunkingSettings,
+    created_at: datetime,
 ) -> MemoryChunk:
     checks = json.dumps(validation.checks, sort_keys=True, ensure_ascii=True, separators=(",", ":"))
     lines = [
@@ -501,6 +564,7 @@ def _validation_chunk(
         exact_ids=(validation.id, validation.candidate_id),
         config=config,
         truncated=False,
+        created_at=created_at,
     )
 
 
@@ -509,6 +573,7 @@ def _naive_chunks(
     units: Sequence[AtomicUnit],
     run_id: str | None,
     config: ChunkingSettings,
+    created_at: datetime,
 ) -> list[MemoryChunk]:
     """Fixed-size baseline that intentionally ignores event boundaries."""
 
@@ -542,7 +607,11 @@ def _naive_chunks(
                 header=_header(memory, ChunkType.NAIVE_FIXED, included),
                 exact_ids=(),
                 config=config,
-                truncated=end < len(joined),
+                # A character slice is *supposed* to cut events; units whose
+                # own rendering was bounded carry that forward. Set
+                # ``truncated`` unconditionally and it stops meaning anything.
+                truncated=any(unit.truncated for unit in included),
+                created_at=created_at,
             )
         )
         if end >= len(joined):
@@ -558,29 +627,34 @@ def build_chunks(
     validation: ValidationResult | None = None,
     run_id: str | None = None,
     config: ChunkingSettings | None = None,
+    created_at: datetime | None = None,
 ) -> ChunkBuildResult:
     """Build chunks for one memory and (optionally) one backing run.
 
     The function is pure. Events must belong to one run; the caller decides
     which evidence run to materialize. ``card_only`` is the fair card baseline.
     ``naive_fixed`` exists only for evaluation and is labeled in the chunk type.
+
+    ``created_at`` is accepted so callers (and tests) can pass a fixed clock;
+    otherwise a single timestamp is used for every chunk in the build.
     """
 
     settings = config or ChunkingSettings()
     if run_id is None and events:
         run_id = events[0].run_id
+    built_at = created_at or utc_now()
     included = set(settings.include_types)
     warnings: list[str] = []
     chunks: list[MemoryChunk] = []
 
     if settings.strategy == "card_only" or "memory_card" in included:
-        chunks.append(_card_chunk(memory, settings))
+        chunks.append(_card_chunk(memory, settings, built_at))
     if settings.strategy == "card_only":
         return ChunkBuildResult(chunks=tuple(chunks))
 
     units = _pair_units(events)
     if settings.strategy == "naive_fixed":
-        naive = _naive_chunks(memory, units, run_id, settings)
+        naive = _naive_chunks(memory, units, run_id, settings, built_at)
         if len(naive) > settings.max_chunks_per_memory:
             warnings.append(
                 f"naive_fixed chunks truncated from {len(naive)} to "
@@ -594,44 +668,61 @@ def build_chunks(
         )
 
     typed: list[MemoryChunk] = []
-    failure_anchor = next((unit.seq_start for unit in units if unit.failed), 0)
+    # A failed tool call is paired with its request, so ``seq_end`` is the
+    # failed event itself; ``seq_start`` would point at the request instead.
+    failure_anchor = next((unit.seq_end for unit in units if unit.failed), 0)
     if "failure_window" in included:
-        for packed, truncated in _failure_window(units, settings):
+        failure_header = _header(memory, ChunkType.FAILURE_WINDOW, units)
+        for packed, truncated in _failure_window(
+            units,
+            settings,
+            header_tokens=estimate_tokens(failure_header, settings.token_multiplier),
+        ):
             if not packed:
                 continue
             body = "\n\n".join(unit.text for unit in packed)
             event_ids = [event_id for unit in packed for event_id in unit.event_ids]
             exact = [value for unit in packed for value in unit.exact_ids]
+            seq_start = min(unit.seq_start for unit in packed)
+            seq_end = max(unit.seq_end for unit in packed)
             typed.append(
                 _finalize(
                     memory=memory,
                     chunk_type=ChunkType.FAILURE_WINDOW,
-                    # Context may precede the failure in the text, but the
-                    # window is anchored at the failure sequence.
-                    seq_start=max(failure_anchor, min(unit.seq_start for unit in packed)),
-                    seq_end=max(unit.seq_end for unit in packed),
+                    # ``seq_start`` is the first event actually present in the
+                    # text (context can precede the failure). ``anchor_seq``
+                    # carries the failure position separately, but only on the
+                    # pack that actually contains it: a long tail can span
+                    # several continuation chunks, and those have no failure
+                    # event of their own.
+                    seq_start=seq_start,
+                    seq_end=seq_end,
+                    anchor_seq=(failure_anchor if seq_start <= failure_anchor <= seq_end else 0),
                     event_ids=event_ids,
                     body=body,
                     run_id=run_id,
-                    header=_header(memory, ChunkType.FAILURE_WINDOW, packed),
+                    header=failure_header,
                     exact_ids=exact,
                     config=settings,
                     truncated=truncated,
                     failure_code=next(
                         (unit.failure_code for unit in packed if unit.failure_code), None
                     ),
+                    created_at=built_at,
                 )
             )
     if validation is not None and "validation_evidence" in included:
-        typed.append(_validation_chunk(memory, validation, run_id, settings))
+        typed.append(_validation_chunk(memory, validation, run_id, settings, built_at))
     if "action_observation" in included:
         action_units = [unit for unit in units if unit.tool_name]
+        action_header = _header(memory, ChunkType.ACTION_OBSERVATION, action_units)
         for packed, truncated in _pack_units(
             action_units,
             target_tokens=settings.target_tokens,
             max_tokens=settings.max_tokens,
             overlap_units=settings.overlap_units,
             multiplier=settings.token_multiplier,
+            overhead_tokens=estimate_tokens(action_header, settings.token_multiplier),
         ):
             if not packed:
                 continue
@@ -645,13 +736,14 @@ def build_chunks(
                     event_ids=[event_id for unit in packed for event_id in unit.event_ids],
                     body=body,
                     run_id=run_id,
-                    header=_header(memory, ChunkType.ACTION_OBSERVATION, packed),
+                    header=action_header,
                     exact_ids=[value for unit in packed for value in unit.exact_ids],
                     config=settings,
                     truncated=truncated,
                     failure_code=next(
                         (unit.failure_code for unit in packed if unit.failure_code), None
                     ),
+                    created_at=built_at,
                 )
             )
 

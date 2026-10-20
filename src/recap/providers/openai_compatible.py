@@ -16,6 +16,7 @@ import contextlib
 import json
 import time
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Any
 
 import httpx
@@ -41,6 +42,28 @@ logger = get_logger(__name__)
 
 RETRYABLE_STATUS = {408, 425, 429, 500, 502, 503, 504}
 MAX_ERROR_BODY = 400
+
+
+@dataclass(frozen=True)
+class EmbeddingResponse:
+    """Vectors plus the provider-reported usage, when the endpoint returns it.
+
+    ``None`` means the provider did not report the field. RECAP never invents a
+    token count to make a cost table look complete.
+    """
+
+    vectors: list[list[float]]
+    prompt_tokens: int | None = None
+    total_tokens: int | None = None
+
+
+def _optional_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _normalize_base_url(base_url: str) -> str:
@@ -266,7 +289,7 @@ class OpenAICompatibleClient:
         model: str,
         texts: Sequence[str],
         dimensions: int | None = None,
-    ) -> list[list[float]]:
+    ) -> EmbeddingResponse:
         payload: dict[str, Any] = {"model": model, "input": list(texts)}
         if dimensions is not None:
             payload["dimensions"] = dimensions
@@ -293,7 +316,13 @@ class OpenAICompatibleClient:
                 "provider returned invalid or duplicate embedding indices",
                 details={"expected": len(texts), "received": len(ordered)},
             )
-        return [vector for _, vector in ordered]
+        usage = result.get("usage") if isinstance(result, dict) else None
+        usage = usage if isinstance(usage, dict) else {}
+        return EmbeddingResponse(
+            vectors=[vector for _, vector in ordered],
+            prompt_tokens=_optional_int(usage.get("prompt_tokens")),
+            total_tokens=_optional_int(usage.get("total_tokens")),
+        )
 
 
 class OpenAICompatibleChatProvider:
@@ -519,6 +548,9 @@ class OpenAICompatibleEmbeddingProvider:
         self.dimension = settings.dimension
         self.batch_size = max(1, settings.batch_size)
         self.send_dimensions = settings.send_dimensions
+        self.total_requests = 0
+        self.total_prompt_tokens: int | None = None
+        self.usage_complete = True
         self._client = OpenAICompatibleClient(
             base_url=settings.base_url,
             api_key=settings.api_key,
@@ -567,7 +599,7 @@ class OpenAICompatibleEmbeddingProvider:
         for start in range(0, len(texts), self.batch_size):
             batch = list(texts[start : start + self.batch_size])
             try:
-                batch_vectors = self._client.embed(
+                response = self._client.embed(
                     model=self.model_id,
                     texts=batch,
                     dimensions=self.dimension if self.send_dimensions else None,
@@ -577,7 +609,16 @@ class OpenAICompatibleEmbeddingProvider:
                     f"embedding provider failed: {exc.message}",
                     details={**exc.details, "model": self.model_id},
                 ) from exc
-            for vector in batch_vectors:
+            self.total_requests += 1
+            if response.prompt_tokens is None:
+                self.usage_complete = False
+            else:
+                self.total_prompt_tokens = (
+                    response.prompt_tokens
+                    if self.total_prompt_tokens is None
+                    else self.total_prompt_tokens + response.prompt_tokens
+                )
+            for vector in response.vectors:
                 if len(vector) != self.dimension:
                     # Never truncate or pad: that would silently mix incompatible
                     # vector spaces in one Elasticsearch field.
@@ -596,6 +637,14 @@ class OpenAICompatibleEmbeddingProvider:
 
     def embed_query(self, text: str) -> list[float]:
         return self.embed_documents([text])[0]
+
+    def embedding_usage(self) -> dict[str, Any]:
+        """Report observed provider usage without inventing missing counts."""
+        return {
+            "requests": self.total_requests,
+            "prompt_tokens": self.total_prompt_tokens if self.usage_complete else None,
+            "usage_complete": self.usage_complete,
+        }
 
 
 def _loads_json_object(content: str) -> dict[str, Any]:

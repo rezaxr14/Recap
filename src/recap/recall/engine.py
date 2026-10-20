@@ -140,6 +140,7 @@ class RecallEngine:
                 mode=str(request.mode),
                 candidate_k=request.candidate_k,
                 embedding=embedding,
+                chunk_strategy=request.chunk_strategy,
             )
         else:
             branch_payload = self.search.search(
@@ -156,7 +157,7 @@ class RecallEngine:
         # 4-5. Fuse, dedupe, cap
         t0 = time.perf_counter()
         if len(branches) > 1:
-            fused = self.search.fuse(branches, limit=self.settings.recall.max_candidates)
+            fused = self.search.fuse(branch_payload, limit=self.settings.recall.max_candidates)
             fused_order = [hit.doc_id for hit in fused]
             fused_scores = {hit.doc_id: hit.score for hit in fused}
             branch_ranks = {hit.doc_id: hit.ranks for hit in fused}
@@ -176,13 +177,26 @@ class RecallEngine:
         # The group score is the best supporting chunk; no chunk score can add
         # beyond what the policy already evaluates.
         supporting: dict[str, dict[str, list[str]]] = {}
+        orphan_chunk_hits = 0
         if chunk_mode:
             chunk_hits: dict[str, dict[str, Any]] = branch_payload["hits"]
             grouped: dict[str, dict[str, Any]] = {}
+            resolved_parents: dict[str, bool] = {}
             for chunk_id in fused_order:
                 source = chunk_hits.get(chunk_id, {})
                 memory_id = str(source.get("memory_id") or "")
                 if not memory_id:
+                    orphan_chunk_hits += 1
+                    continue
+                parent_exists = resolved_parents.get(memory_id)
+                if parent_exists is None:
+                    existing = self.memories.get_memory(memory_id, context.workspace_id)
+                    parent_exists = existing is not None
+                    resolved_parents[memory_id] = parent_exists
+                if not parent_exists:
+                    # A chunk document without a parent memory is index drift.
+                    # It must not consume a candidate slot or a rank.
+                    orphan_chunk_hits += 1
                     continue
                 version = int(source.get("memory_version") or 1)
                 doc_id = f"{memory_id}:v{version}"
@@ -193,6 +207,7 @@ class RecallEngine:
                         "ranks": {},
                         "chunks": [],
                         "events": [],
+                        "environment_fingerprint": str(source.get("environment_fingerprint") or ""),
                     },
                 )
                 bucket["score"] = max(bucket["score"], fused_scores.get(chunk_id, 0.0))
@@ -209,6 +224,8 @@ class RecallEngine:
                 key=lambda item: (
                     -item[1]["score"],
                     min(item[1]["ranks"].values()) if item[1]["ranks"] else 10**9,
+                    item[1]["environment_fingerprint"],
+                    item[0],
                 ),
             )
             fused_order = [doc_id for doc_id, _ in ordered]
@@ -221,6 +238,12 @@ class RecallEngine:
                 }
                 for doc_id, bucket in ordered
             }
+            if orphan_chunk_hits:
+                warnings.append(
+                    f"orphan_chunk_hits={orphan_chunk_hits}: chunk documents had no "
+                    "parent memory and were excluded; run `recap search reconcile "
+                    "--chunks --prune-orphans`"
+                )
 
         # 5b. Optional reranking (HYBRID_RERANK only). Reranking changes order,
         # never safety: eligibility/applicability/compatibility run afterwards.
@@ -495,6 +518,7 @@ class RecallEngine:
                 "retrieval_granule": "chunk" if chunk_mode else "memory_card",
                 "chunker_version": self.settings.chunking.version,
                 "chunk_index_generation": self.settings.elasticsearch.chunks_index_generation,
+                "orphan_chunk_hits": orphan_chunk_hits,
                 "embedding_fingerprint": getattr(self.embeddings, "embedding_fingerprint", ""),
             },
         )

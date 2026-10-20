@@ -255,9 +255,30 @@ class ElasticsearchMemoryRepository:
                 ids=data["ids"],
                 scores=data.get("scores", {}),
             )
-            for name, data in branch_payload.items()
+            for name, data in branch_payload.get("branches", {}).items()
         ]
-        return reciprocal_rank_fusion(branches, k=self.settings.rrf_k, limit=limit)
+        hits = branch_payload.get("hits", {})
+        fused = reciprocal_rank_fusion(branches, k=self.settings.rrf_k, limit=None)
+
+        # RRF can produce exact score ties (for example, lexical ranks v1 first
+        # while vector ranks v2 first). Resolve those with stable content keys,
+        # never Lucene/doc ids, so reruns and merges cannot change the order.
+        def _key(hit: Any) -> tuple[float, str, str, str, int, str]:
+            source = hits.get(hit.doc_id, {})
+            return (
+                -hit.score,
+                str(source.get("environment_fingerprint") or ""),
+                str(source.get("content_hash") or source.get("text_hash") or ""),
+                str(source.get("chunk_type") or ""),
+                int(source.get("anchor_seq") or 0),
+                hit.doc_id,
+            )
+
+        fused.sort(key=_key)
+        fused = fused[:limit]
+        for index, hit in enumerate(fused, start=1):
+            hit.ranks["fused"] = index
+        return fused
 
     def count(self) -> int:
         try:
@@ -278,4 +299,18 @@ def _collect_branch(
         ids.append(doc_id)
         scores[doc_id] = float(hit.get("_score") or 0.0)
         hits.setdefault(doc_id, hit.get("_source", {}))
+
+    # ES tie order depends on segment/doc ids and can change after merges. Rank
+    # identical scores by stable content keys, never by a random id, so a rerun
+    # cannot flip a tie.
+    def _key(doc_id: str) -> tuple[float, str, str, str]:
+        source = hits.get(doc_id, {})
+        return (
+            -scores[doc_id],
+            str(source.get("environment_fingerprint") or ""),
+            str(source.get("content_hash") or ""),
+            doc_id,
+        )
+
+    ids = sorted(scores, key=_key)
     return {"ids": ids, "scores": scores, "source": source}

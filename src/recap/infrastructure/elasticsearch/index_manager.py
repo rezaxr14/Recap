@@ -4,6 +4,11 @@ Idempotent initialization: create the versioned index, apply the write alias,
 and atomically point the read alias at the new generation. Both indices are
 rebuildable from Postgres, so generation changes are safe when the embedding
 fingerprint changes.
+
+The chunk index records the embedding fingerprint, dimension, chunker version,
+and index generation in its mapping ``_meta``. A mismatch with the running
+configuration is a hard error: writing vectors from two fingerprints into one
+dense_vector field silently corrupts ranking.
 """
 
 from __future__ import annotations
@@ -14,18 +19,31 @@ from elasticsearch import Elasticsearch
 from elasticsearch import exceptions as es_exceptions
 
 from recap.config import ElasticsearchSettings
-from recap.errors import SearchUnavailable
+from recap.errors import ConfigurationError, SearchUnavailable
 from recap.infrastructure.elasticsearch.client import TRANSPORT_ERRORS
-from recap.infrastructure.elasticsearch.mappings import chunk_index_body, memory_index_body
+from recap.infrastructure.elasticsearch.mappings import (
+    CHUNK_PROPERTIES,
+    chunk_index_body,
+    memory_index_body,
+)
 from recap.logging import get_logger
 
 logger = get_logger(__name__)
 
 
 class IndexManager:
-    def __init__(self, client: Elasticsearch, settings: ElasticsearchSettings) -> None:
+    def __init__(
+        self,
+        client: Elasticsearch,
+        settings: ElasticsearchSettings,
+        *,
+        embedding_fingerprint: str = "",
+        chunker_version: str = "",
+    ) -> None:
         self.client = client
         self.settings = settings
+        self.embedding_fingerprint = embedding_fingerprint
+        self.chunker_version = chunker_version
 
     @property
     def read_alias(self) -> str:
@@ -70,22 +88,45 @@ class IndexManager:
         """Create the chunk index and aliases idempotently. Safe to repeat."""
         return self._initialize(
             index=self.chunks_write_index,
-            body=chunk_index_body(dimension=self.settings.vector_dimension),
+            body=chunk_index_body(
+                dimension=self.settings.vector_dimension,
+                meta=self.chunk_meta(),
+            ),
             read_alias=self.chunks_read_alias,
             write_alias=self.chunks_write_alias,
+            validate_chunk_meta=True,
         )
 
+    def chunk_meta(self) -> dict[str, Any]:
+        return {
+            "embedding_fingerprint": self.embedding_fingerprint,
+            "vector_dimension": self.settings.vector_dimension,
+            "chunker_version": self.chunker_version,
+            "chunks_index_generation": self.settings.chunks_index_generation,
+        }
+
     def _initialize(
-        self, *, index: str, body: dict[str, Any], read_alias: str, write_alias: str
+        self,
+        *,
+        index: str,
+        body: dict[str, Any],
+        read_alias: str,
+        write_alias: str,
+        validate_chunk_meta: bool = False,
     ) -> dict[str, Any]:
         created = False
         try:
-            if not self.client.indices.exists(index=index):
+            exists = bool(self.client.indices.exists(index=index))
+            if not exists:
                 self.client.indices.create(index=index, **body)
                 created = True
+            elif validate_chunk_meta:
+                self._validate_chunk_index(index)
             self._ensure_alias(index, write_alias)
             self._ensure_read_alias(index, read_alias)
             self.client.indices.refresh(index=index)
+        except ConfigurationError:
+            raise
         except TRANSPORT_ERRORS as exc:
             raise SearchUnavailable(
                 "cannot connect to Elasticsearch during index initialization"
@@ -101,7 +142,74 @@ class IndexManager:
             "read_alias": read_alias,
             "write_alias": write_alias,
             "vector_dimension": self.settings.vector_dimension,
+            **({"meta": self.chunk_meta()} if validate_chunk_meta else {}),
         }
+
+    def _validate_chunk_index(self, index: str) -> None:
+        """Fail fast when an existing chunk index does not match the settings."""
+        try:
+            mapping = self.client.indices.get_mapping(index=index)[index]["mappings"]
+        except (KeyError, es_exceptions.NotFoundError):
+            return
+        properties = mapping.get("properties") or {}
+        embedding = properties.get("content_embedding") or {}
+        existing_dimension = embedding.get("dims")
+        if existing_dimension is not None and int(existing_dimension) != int(
+            self.settings.vector_dimension
+        ):
+            raise ConfigurationError(
+                "chunk index dimension does not match embeddings.dimension",
+                details={
+                    "index": index,
+                    "index_dimension": existing_dimension,
+                    "configured_dimension": self.settings.vector_dimension,
+                    "action": (
+                        "bump elasticsearch.chunks_index_generation and run "
+                        "`recap search reconcile --chunks`"
+                    ),
+                },
+            )
+        meta = mapping.get("_meta") or {}
+        existing_fingerprint = str(meta.get("embedding_fingerprint") or "")
+        if self.embedding_fingerprint and existing_fingerprint != self.embedding_fingerprint:
+            raise ConfigurationError(
+                "chunk index was built with a different embedding fingerprint",
+                details={
+                    "index": index,
+                    "index_fingerprint": existing_fingerprint or "<missing>",
+                    "configured_fingerprint": self.embedding_fingerprint,
+                    "action": (
+                        "bump elasticsearch.chunks_index_generation and run "
+                        "`recap search reconcile --chunks`"
+                    ),
+                },
+            )
+        existing_generation = meta.get("chunks_index_generation")
+        if existing_generation is not None and int(existing_generation) != int(
+            self.settings.chunks_index_generation
+        ):
+            raise ConfigurationError(
+                "chunk index generation metadata does not match the configured index",
+                details={
+                    "index": index,
+                    "index_generation": existing_generation,
+                    "configured_generation": self.settings.chunks_index_generation,
+                },
+            )
+        expected_fields = set(CHUNK_PROPERTIES) | {"content_embedding"}
+        missing = sorted(expected_fields - set(properties))
+        if missing:
+            raise ConfigurationError(
+                "chunk index mapping is missing fields required by this version",
+                details={
+                    "index": index,
+                    "missing_fields": missing,
+                    "action": (
+                        "bump elasticsearch.chunks_index_generation and run "
+                        "`recap search reconcile --chunks`"
+                    ),
+                },
+            )
 
     def _ensure_alias(self, index: str, alias: str) -> None:
         actions: list[dict[str, Any]] = [{"add": {"index": index, "alias": alias}}]

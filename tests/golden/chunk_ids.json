@@ -1,0 +1,52 @@
+{
+  "chunker_version": "2",
+  "chunks": [
+    {
+      "chunk_type": "memory_card",
+      "chunk_id": "1b1e4199af3c0f44d81b421e1b2b0866",
+      "text_hash": "sha256:7af37bb99acbd6719b55e62234f78bc2138bc13dff7c5a41b7f5c92b4f4fa2b9",
+      "seq_start": 0,
+      "seq_end": 0,
+      "anchor_seq": 0,
+      "event_ids": [],
+      "token_estimate": 116,
+      "truncated": false,
+      "chunk_strategy": "event_aware"
+    },
+    {
+      "chunk_type": "failure_window",
+      "chunk_id": "9a03eb837276c6984d957c268999ccb4",
+      "text_hash": "sha256:649b32436b0f89bf33de2b52bc3efe1059c3d5984573c2bf08c58da2eb085ffb",
+      "seq_start": 1,
+      "seq_end": 5,
+      "anchor_seq": 3,
+      "event_ids": [
+        "evt_1",
+        "evt_2",
+        "evt_3",
+        "evt_4",
+        "evt_5"
+      ],
+      "token_estimate": 219,
+      "truncated": false,
+      "chunk_strategy": "event_aware"
+    },
+    {
+      "chunk_type": "action_observation",
+      "chunk_id": "e6749a51372ca7e3b054821755cc0380",
+      "text_hash": "sha256:7bbd48121cf37b9b78e4c2d35b20f5ec3becb0c08b3aff2448a9109c44472694",
+      "seq_start": 2,
+      "seq_end": 5,
+      "anchor_seq": 0,
+      "event_ids": [
+        "evt_2",
+        "evt_3",
+        "evt_4",
+        "evt_5"
+      ],
+      "token_estimate": 201,
+      "truncated": false,
+      "chunk_strategy": "event_aware"
+    }
+  ]
+}

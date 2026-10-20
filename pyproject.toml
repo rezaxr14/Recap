@@ -9,6 +9,30 @@ description = "Retrieval-Enhanced Correction and Adaptive Persistence for tool-u
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "Apache-2.0" }
+authors = [{ name = "RECAP contributors" }]
+keywords = [
+  "ai-agents",
+  "agent-memory",
+  "tool-use",
+  "retrieval",
+  "rag",
+  "hybrid-search",
+  "postgresql",
+  "elasticsearch",
+  "llm",
+  "repair",
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: Apache Software License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+  "Topic :: Software Development :: Libraries :: Application Frameworks",
+  "Typing :: Typed",
+]
 dependencies = [
   "fastapi>=0.115,<0.116",
   "uvicorn[standard]>=0.38,<0.39",
@@ -38,6 +62,17 @@ sentence-transformers = [
 
 [project.scripts]
 recap = "recap.cli:app"
+
+[project.urls]
+Homepage = "https://github.com/rezaxr14/Recap"
+Repository = "https://github.com/rezaxr14/Recap"
+Issues = "https://github.com/rezaxr14/Recap/issues"
+Changelog = "https://github.com/rezaxr14/Recap/blob/master/CHANGELOG.md"
+Documentation = "https://github.com/rezaxr14/Recap/blob/master/docs/README.md"
+Security = "https://github.com/rezaxr14/Recap/blob/master/SECURITY.md"
+
+[tool.setuptools]
+license-files = ["LICENSE"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

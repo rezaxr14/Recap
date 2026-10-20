@@ -1,0 +1,10 @@
+# Normalize text files to LF in the repository regardless of the checkout OS.
+* text=auto eol=lf
+
+# Binary assets must never be normalized.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.pdf binary
+*.zip binary

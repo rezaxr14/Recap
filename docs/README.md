@@ -9,6 +9,7 @@ the code and its tests are authoritative and the document should be fixed in the
 |---|---|
 | [`../README.md`](../README.md) | What RECAP is, what works, quickstart, measured results, known limits |
 | [`../IMPLEMENTATION_STATUS.md`](../IMPLEMENTATION_STATUS.md) | Current implementation state, evidence, review follow-up, and remaining gaps |
+| [`../NEXT_STEPS.md`](../NEXT_STEPS.md) | The staged plan for real models, benchmark v2, RAG depth, packaging, and the web app |
 | [`architecture.md`](architecture.md) | Components, data flow, and the separation between retrieval and selection |
 | [`data-model.md`](data-model.md) | Postgres tables, Elasticsearch mappings, ids, versions, and lifecycle fields |
 
@@ -29,6 +30,7 @@ the code and its tests are authoritative and the document should be fixed in the
 | [`operations.md`](operations.md) | Local stack, health, migrations, index initialization, outbox, reconcile, backup/restore |
 | [`evaluation-methodology.md`](evaluation-methodology.md) | Dataset, baselines, metrics, reproducibility rules, and what the benchmark does not prove |
 | [`results/2026-10-20-dev.md`](results/2026-10-20-dev.md) | Measured dev-split matrix and caveats |
+| [`evidence/phase0-audit.md`](evidence/phase0-audit.md) | Fresh-clone quickstart, live LM Studio probe, and capability-claim corrections |
 
 ## Decisions
 

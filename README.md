@@ -34,7 +34,7 @@ safety behaviour, not LLM capability. See [Known limits](#known-limits) for the 
 | **Search** | Elasticsearch 8.19: BM25, dense vectors, hybrid RRF, card and chunk indices |
 | **Interfaces** | `recap` CLI, FastAPI HTTP API, Python package |
 | **Stack** | Python 3.12, FastAPI, SQLAlchemy 2, Alembic, Pydantic 2, Docker Compose |
-| **Verification** | `238 passed, 1 skipped`; real-service integration tests; benchmark reproducibility gate |
+| **Verification** | `245 passed, 1 skipped`; real-service integration tests; benchmark reproducibility gate |
 
 ---
 
@@ -62,9 +62,9 @@ Elasticsearch 8.19.3 node. There are no stub endpoints in the implemented paths.
 | Chunk persistence, indexing, lifecycle, `reconcile --chunks` | Working | `tests/integration/test_chunks.py`, `migrations/versions/0004`-`0008` |
 | Chunk-level retrieval (`*_chunk` modes) with supporting evidence | Working | `tests/integration/test_chunks.py`, `recap eval run` |
 | Content-addressed Postgres embedding cache + usage reporting | Working | `tests/unit/test_embedding_cache.py`, `recap embedding-cache`, `recap eval run` |
-| API-first chat/embedding providers (OpenAI-compatible) | Implemented; live endpoint not configured in CI | `tests/unit/test_providers.py`, opt-in `tests/integration/test_live_providers.py` |
-| LLM repair-candidate generation with typed validation | Working when `REPAIR_GENERATOR=llm` | `tests/unit/test_llm_generator.py` |
-| Real LLM tool-using agent (`recap agent run`) | Implemented; live endpoint not configured in CI | `tests/unit/test_llm_agent.py`, `tests/integration/test_llm_agent_recording.py` |
+| API-first chat/embedding providers (OpenAI-compatible) | Implemented; live-tested locally against LM Studio (`llama-3.2-3b-instruct` + `nomic-embed-text-v1.5`), not in CI | `tests/unit/test_providers.py`, opt-in `tests/integration/test_live_providers.py`, `docs/evidence/phase0-live-provider-tests.txt` |
+| LLM repair-candidate generation with typed validation | Implemented and unit-tested; live acceptance pending | `tests/unit/test_llm_generator.py` |
+| Real LLM tool-using agent (`recap agent run`) | Implemented; live tool/structured tests pass locally, not in CI | `tests/unit/test_llm_agent.py`, `tests/integration/test_llm_agent_recording.py`, live suite |
 | End-to-end demo (10 steps) | Working | `recap demo run` |
 
 ## Known limits
@@ -75,9 +75,10 @@ The project is deliberately explicit about what is not built. The full list live
 - The default embedding provider is a deterministic **hashing lexical embedder**, not a
   neural model. The numbers below do not measure semantic embedding quality.
 - The demo and benchmark use a **scripted reference agent** for reproducibility. A
-  configured-LLM tool-using agent exists (`recap agent run`) and is validated with a scripted
-  provider plus the real PostgreSQL recorder, but it has not been run against a live model
-  endpoint in this repository. Live-provider tests are opt-in and skip in CI.
+  configured-LLM tool-using agent exists (`recap agent run`) and passed the opt-in live suite
+  locally against LM Studio with `llama-3.2-3b-instruct` and `nomic-embed-text-v1.5`
+  (`docs/evidence/phase0-live-provider-tests.txt`). Live-provider tests still skip in CI, and
+  the benchmark numbers below were not produced by an LLM agent.
 - The Postgres **embedding cache** is implemented and keyed by the exact fingerprint; it
   caches vectors, not query results, so a hit does not bypass retrieval or policy checks.
   Cache hits, misses, provider batches, latency, and provider-reported prompt tokens appear in
@@ -140,6 +141,10 @@ docker compose up -d postgres elasticsearch
 - PostgreSQL 17 on `localhost:5433` (`recap` / `recap` / `recap`)
 - Elasticsearch 8.19.3 on `localhost:9200`, security disabled for local use only
 
+If another RECAP checkout is already running on this machine, stop that stack first
+(`docker compose down` in the other checkout). The Compose file uses fixed container names
+and host ports, so two checkouts cannot run simultaneously without overriding them.
+
 ### 2. Install
 
 ```bash
@@ -168,6 +173,27 @@ non-zero on any deviation.
 RECAP never downloads model weights. Point it at an already-running OpenAI-compatible
 endpoint:
 
+PowerShell:
+
+```powershell
+$env:EMBEDDING_PROVIDER = "openai_compatible"
+$env:EMBEDDING_BASE_URL = "https://api.example.com/v1"
+$env:EMBEDDING_API_KEY = "..."
+$env:EMBEDDING_MODEL = "text-embedding-3-small"
+$env:EMBEDDING_DIMENSIONS = "1536"
+
+$env:LLM_PROVIDER = "openai_compatible"
+$env:LLM_BASE_URL = "https://api.example.com/v1"
+$env:LLM_API_KEY = "..."
+$env:LLM_MODEL = "gpt-4.1-mini"
+
+recap providers          # offline capability report, no secrets
+recap doctor --live      # probes configured endpoints, one small chat + embedding
+recap agent run --environment-version 2 --workspace live-agent
+```
+
+Bash / zsh:
+
 ```bash
 export EMBEDDING_PROVIDER=openai_compatible
 export EMBEDDING_BASE_URL=https://api.example.com/v1
@@ -180,8 +206,8 @@ export LLM_BASE_URL=https://api.example.com/v1
 export LLM_API_KEY=...
 export LLM_MODEL=gpt-4.1-mini
 
-recap providers          # offline capability report, no secrets
-recap doctor --live      # probes configured endpoints, one small chat + embedding
+recap providers
+recap doctor --live
 recap agent run --environment-version 2 --workspace live-agent
 ```
 

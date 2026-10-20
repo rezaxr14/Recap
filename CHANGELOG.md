@@ -29,6 +29,8 @@ All notable changes to this project are documented here. The format follows
 - Repository polish: Apache-2.0 `LICENSE`, `CONTRIBUTING.md`, `SECURITY.md`,
   `CODE_OF_CONDUCT.md`, `CHANGELOG.md`, a documentation index, GitHub issue forms and a
   pull-request template, package metadata, GitHub About/topics, and a social-preview image.
+- Phase 0 audit evidence: fresh-clone quickstart, live LM Studio doctor output, and the
+  opt-in live-provider test result under `docs/evidence/`.
 
 ### Changed
 
@@ -41,6 +43,10 @@ All notable changes to this project are documented here. The format follows
 - Unchanged chunks with matching embedding fingerprint, generation, and index status are not
   re-embedded.
 - Documentation now states the hashing-embedder and small-dataset limitations explicitly.
+- README quickstart now includes PowerShell commands, and warns that fixed Compose container
+  names/ports prevent two checkouts from running simultaneously.
+- Stale embedding-cache and test-count claims were corrected; live chat/embedding/tool
+  evidence is now distinguished from CI coverage.
 
 ### Fixed
 

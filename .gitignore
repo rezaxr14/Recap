@@ -18,4 +18,5 @@ demo_report.md
 dist/
 build/
 node_modules/
+models/
 .DS_Store

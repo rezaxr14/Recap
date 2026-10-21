@@ -3,6 +3,11 @@
 This is a *real* small policy loop over the mock environment, not an LLM. It is
 explicitly labelled deterministic so its results are never presented as evidence
 of real LLM agent performance.
+
+The agent starts from a plausible pre-memory request shape and may apply typed
+memory actions after a failure. It never reads the environment version or the
+answer directly from the environment; the recovery must come from the selected
+memory.
 """
 
 from __future__ import annotations
@@ -12,7 +17,12 @@ from typing import Any
 
 from recap.domain.enums import ActionType
 from recap.domain.retrieval import SelectedMemory
-from recap.environments.mock_api import MockApiSuite, PaginatedApiEnvironment, ToolCallResult
+from recap.environments.mock_api import (
+    MockApiSuite,
+    PaginatedApiEnvironment,
+    ToolCallResult,
+    family_error,
+)
 
 
 @dataclass
@@ -39,12 +49,7 @@ class AgentRunResult:
 
 
 class ReferenceAgent:
-    """Executes a pagination task, optionally applying a retrieved memory strategy.
-
-    Without memory it uses a plausible-but-wrong cursor assumption so the first
-    attempt fails deterministically. With an applicable memory it follows the
-    declared strategy actions.
-    """
+    """Executes a collection task, optionally applying a retrieved memory."""
 
     def __init__(self, *, tenant: str = "acme") -> None:
         self.tenant = tenant
@@ -58,20 +63,14 @@ class ReferenceAgent:
     ) -> AgentRunResult:
         result = AgentRunResult(success=False)
         collected: list[dict[str, Any]] = []
+        base = environment.naive_parameters()
+        base["tenant"] = self.tenant
         token: str | None = None
-        first = True
-        # The agent's belief about the pagination parameter name. It starts from
-        # its own prior ("cursor") and is only changed by a retrieved memory or
-        # by an explicit error that names the required parameter. It never peeks
-        # at the environment version.
-        parameter_name = "cursor"
+        response_field = environment.naive_response_field()
+        parameter_name = _paginations_parameter(environment)
         while result.tool_calls < max_tool_calls:
-            parameters: dict[str, Any] = {"tenant": self.tenant}
-            if first:
-                # A naive agent guesses a cursor value on the first call.
-                parameters[parameter_name] = "start"
-                first = False
-            elif token is not None:
+            parameters = dict(base)
+            if token is not None:
                 parameters[parameter_name] = token
             call = environment.list_records(**parameters)
             result.tool_calls += 1
@@ -86,71 +85,124 @@ class ReferenceAgent:
             )
             if not call.ok:
                 result.final_error = (call.error or {}).get("error_message", "tool call failed")
-                if memory is not None:
-                    recovered, recovery_token, parameter_name = self._recover(
-                        environment, memory, parameters, call, parameter_name
+                if memory is None:
+                    return result
+                recovered, base, token, response_field = self._recover(
+                    memory, base, token, response_field, call
+                )
+                if not recovered:
+                    return result
+                result.retries += 1
+                result.used_memory_id = memory.memory_id
+                continue
+
+            items = call.payload.get(response_field)
+            if items is None:
+                # A successful HTTP response with no expected record field is a
+                # response-shape failure, not a successful empty page.
+                error = dict(family_error("response_field"))
+                result.steps.append(
+                    AgentStep(
+                        action="list_records",
+                        request=parameters,
+                        result=call.payload,
+                        ok=False,
+                        error=error,
                     )
-                    if not recovered:
-                        return result
-                    token = recovery_token
-                    result.retries += 1
-                    result.used_memory_id = memory.memory_id
-                    continue
-                return result
-            collected.extend(call.payload.get("items", []))
-            token = call.payload.get("cursor") or call.payload.get("page_token")
+                )
+                result.final_error = str(error["error_message"])
+                if memory is None:
+                    return result
+                recovered, base, token, response_field = self._recover(
+                    memory,
+                    base,
+                    token,
+                    response_field,
+                    ToolCallResult(ok=False, payload=call.payload, error=error),
+                )
+                if not recovered:
+                    return result
+                result.retries += 1
+                result.used_memory_id = memory.memory_id
+                continue
+
+            collected.extend(items)
+            token = call.payload.get(parameter_name)
             if not call.payload.get("has_more"):
                 result.success = len(collected) == len(environment.records)
+                if not result.success:
+                    result.final_error = (
+                        f"collected {len(collected)}/{len(environment.records)} records"
+                    )
                 return result
         return result
 
     def _recover(
         self,
-        environment: PaginatedApiEnvironment,
         memory: SelectedMemory,
-        failed_parameters: dict[str, Any],
+        base: dict[str, Any],
+        token: str | None,
+        response_field: str,
         failed_call: ToolCallResult,
-        parameter_name: str,
-    ) -> tuple[bool, str | None, str]:
-        """Apply only allowlisted typed actions; never execute free-form text.
-
-        Returns ``(recovered, next_token, parameter_name)``. ``recovered`` is
-        False when no safe action applies or the strategy explicitly halts.
-        """
-        error_code = (failed_call.error or {}).get("error_code", "")
+    ) -> tuple[bool, dict[str, Any], str | None, str]:
+        """Apply only allowlisted typed actions; never execute free-form text."""
+        error = failed_call.error or {}
+        error_code = str(error.get("error_code", ""))
+        next_base = dict(base)
+        next_token = token
+        next_response_field = response_field
         for action in memory.actions:
             action_type = action.get("action_type")
+            parameters = action.get("parameters") or {}
             if action_type == ActionType.RETRY_WITH_BACKOFF.value and error_code in {
                 "RATE_LIMITED",
                 "TIMEOUT",
                 "UNAVAILABLE",
             }:
-                # Retrying with the same parameters is only safe for transient errors.
-                return (
-                    True,
-                    failed_parameters.get(parameter_name),
-                    parameter_name,
-                )
+                return True, next_base, next_token, next_response_field
             if action_type == ActionType.REFRESH_PAGINATION_CURSOR.value:
-                # Start a fresh page sequence instead of reusing the invalid cursor.
-                return True, None, parameter_name
+                next_base.pop("cursor", None)
+                next_base.pop("page_token", None)
+                return True, next_base, None, next_response_field
             if action_type == ActionType.MAP_PARAMETER.value:
-                mapping = action.get("parameters", {})
-                old = mapping.get("from")
-                new = mapping.get("to")
-                if old and new and old in failed_parameters:
-                    value = failed_parameters[old]
-                    if value in {None, "", "start"}:
-                        # The value itself is invalid; a fresh token is required.
-                        return True, None, new
-                    return True, str(value), new
-                return True, None, parameter_name
+                old = parameters.get("from")
+                new = parameters.get("to")
+                if old and new and old in next_base:
+                    value = next_base.pop(old)
+                    if value not in {None, "", "start"}:
+                        next_base[new] = value
+                elif old:
+                    next_base.pop(old, None)
+                return True, next_base, None, next_response_field
+            if action_type == ActionType.REFRESH_AUTH_TOKEN.value:
+                next_base["auth_token"] = str(parameters.get("token", "fresh-token"))
+                return True, next_base, None, next_response_field
+            if action_type == ActionType.SUPPLY_REQUIRED_PARAMETER.value:
+                for key, value in parameters.items():
+                    if isinstance(key, str) and isinstance(value, (str, int, float, bool)):
+                        next_base[key] = value
+                return True, next_base, None, next_response_field
+            if action_type == ActionType.MAP_PARAMETER_VALUE.value:
+                field = parameters.get("field")
+                target = parameters.get("to")
+                if isinstance(field, str) and target is not None:
+                    next_base[field] = target
+                return True, next_base, None, next_response_field
+            if action_type == ActionType.NORMALIZE_TIMESTAMP.value:
+                field = parameters.get("field", "since")
+                value = parameters.get("value", "2026-01-01T00:00:00Z")
+                next_base[str(field)] = value
+                return True, next_base, None, next_response_field
+            if action_type == ActionType.MAP_RESPONSE_FIELD.value:
+                target = parameters.get("field", "data")
+                next_response_field = str(target)
+                return True, next_base, None, next_response_field
             if action_type in {
                 ActionType.REQUEST_MISSING_FIELD.value,
                 ActionType.HALT.value,
             }:
-                return False, None, parameter_name
-        return False, None, parameter_name
+                return False, next_base, next_token, next_response_field
+        return False, next_base, next_token, next_response_field
 
     def run_task(
         self,
@@ -159,9 +211,16 @@ class ReferenceAgent:
         *,
         memory: SelectedMemory | None = None,
         expire_first_cursor: bool = False,
+        failure_family: str | None = None,
     ) -> AgentRunResult:
-        environment = suite.get(version)
+        environment = suite.get(version, failure_family)
         if expire_first_cursor:
             # Force the failure mode used by the seeded demo.
             environment.expire_cursor("cur_1_0001")
         return self.run(environment, memory=memory)
+
+
+def _paginations_parameter(environment: PaginatedApiEnvironment) -> str:
+    if environment.failure_family == "renamed_parameter" and environment.version == "2":
+        return "page_token"
+    return "cursor"

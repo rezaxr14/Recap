@@ -165,11 +165,9 @@ class LlmAgent:
                 step, tool_payload = self._execute(environment, call)
                 result.steps.append(step)
                 if step.ok:
-                    items = step.result.get("items")
-                    if isinstance(items, list):
-                        for record in items:
-                            if isinstance(record, dict) and record.get("id") is not None:
-                                collected[str(record["id"])] = record
+                    for record in _record_items(step.result):
+                        if record.get("id") is not None:
+                            collected[str(record["id"])] = record
                 else:
                     failures += 1
                     result.retries += 1
@@ -262,6 +260,20 @@ class LlmAgent:
         else:
             payload.update(call_result.error or {})
         return step, payload
+
+
+def _record_items(result: dict[str, Any]) -> list[dict[str, Any]]:
+    """Extract record dicts from a tool payload's declared list field.
+
+    ``items`` is the original response shape. The response-field family renames
+    it to ``data`` in v2, and the agent must still be able to verify success
+    from the real returned records. No other field is treated as a record list.
+    """
+    for key in ("items", "data"):
+        value = result.get(key)
+        if isinstance(value, list):
+            return [item for item in value if isinstance(item, dict)]
+    return []
 
 
 def _memory_prompt(memory: MemoryAdvisory) -> str:

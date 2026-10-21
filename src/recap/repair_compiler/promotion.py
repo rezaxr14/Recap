@@ -115,6 +115,7 @@ class PromotionService:
             tool_names=content.tool_names,
             failure_code=content.failure_code,
             content_hash=content.compute_hash(),
+            environment_id=candidate.environment_id,
         )
         now = datetime.now(UTC)
         memory = ExperienceMemory(

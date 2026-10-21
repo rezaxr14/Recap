@@ -52,6 +52,61 @@ class CandidateGenerator(Protocol):
     ) -> list[CandidateDraft]: ...
 
 
+def _family_draft(
+    *,
+    evidence: list[str],
+    tool: str,
+    schema_hash: str,
+    error_code: str,
+    summary: str,
+    hypothesis: str,
+    action: StrategyAction,
+    limitations: list[str] | None = None,
+    postcondition_field: str = "records_collected",
+) -> CandidateDraft:
+    """Build a typed candidate for a schema-versioned failure family."""
+    postcondition = (
+        Predicate(
+            field="tool_call_succeeded",
+            operator="eq",
+            value=True,
+            description="retried call succeeds",
+        )
+        if postcondition_field == "tool_call_succeeded"
+        else Predicate(
+            field="records_collected",
+            operator="gte",
+            value=1,
+            description="at least one record retrieved after recovery",
+        )
+    )
+    return CandidateDraft(
+        summary=summary,
+        hypothesis=hypothesis,
+        evidence_event_ids=evidence,
+        preconditions=[
+            Predicate(
+                field="tool_schema_fingerprints." + tool,
+                operator="eq",
+                value=schema_hash,
+                description="tool schema matches the validated version",
+            ),
+            Predicate(
+                field="error_code",
+                operator="eq",
+                value=error_code,
+                description="failure matches this recovery family",
+            ),
+        ],
+        actions=[action],
+        postconditions=[postcondition],
+        limitations=limitations or ["Only valid for the schema version cited in the evidence."],
+        risk_factors=["schema_dependent", "read_only_operation"],
+        confidence_rationale=f"Deterministic rule matched {error_code}.",
+        validation_steps=["replay_failure_window", "verify_postconditions"],
+    )
+
+
 class DeterministicGenerator:
     """Rule-based generator covering the supported failure categories.
 
@@ -72,6 +127,7 @@ class DeterministicGenerator:
         category = window.failure_category
         tool = window.tool_name or "list_records"
         schema_hash = str(environment.get("tool_schema_hash", ""))
+        version = str(environment.get("environment_version", "1"))
         evidence = window.event_ids[:10]
 
         if category == "invalid_pagination_cursor":
@@ -122,7 +178,7 @@ class DeterministicGenerator:
                     validation_steps=["replay_failure_window", "verify_postconditions"],
                 )
             ]
-        if category == "transient_rate_limit":
+        if category in {"transient_rate_limit", "transient_timeout"}:
             return [
                 CandidateDraft(
                     summary="Retry the read-only tool call with bounded exponential backoff.",
@@ -130,11 +186,17 @@ class DeterministicGenerator:
                     evidence_event_ids=evidence,
                     preconditions=[
                         Predicate(
+                            field="tool_schema_fingerprints." + tool,
+                            operator="eq",
+                            value=schema_hash,
+                            description=f"{tool} schema matches the validated version",
+                        ),
+                        Predicate(
                             field="error_code",
                             operator="in",
                             value=["RATE_LIMITED", "TIMEOUT", "UNAVAILABLE"],
                             description="failure is classified as transient",
-                        )
+                        ),
                     ],
                     actions=[
                         StrategyAction(
@@ -179,7 +241,11 @@ class DeterministicGenerator:
                             action_type=ActionType.MAP_PARAMETER,
                             tool_name=tool,
                             description="Translate the renamed parameter using the verified schema.",
-                            parameters={"from": "cursor", "to": "page_token"},
+                            parameters=(
+                                {"from": "page_token", "to": "cursor"}
+                                if version == "1"
+                                else {"from": "cursor", "to": "page_token"}
+                            ),
                             side_effect_class=SideEffectClass.READ_ONLY,
                         )
                     ],
@@ -195,6 +261,124 @@ class DeterministicGenerator:
                     risk_factors=["schema_dependent"],
                     confidence_rationale="Deterministic rule matched an unknown-parameter failure.",
                     validation_steps=["check_schema_compatibility"],
+                )
+            ]
+        if category == "authentication_expired":
+            return [
+                _family_draft(
+                    evidence=evidence,
+                    tool=tool,
+                    schema_hash=schema_hash,
+                    error_code=window.error_code or "TOKEN_EXPIRED",
+                    summary="Refresh the expired credential, then retry the read-only call.",
+                    hypothesis="The request used an expired access token.",
+                    action=StrategyAction(
+                        action_type=ActionType.REFRESH_AUTH_TOKEN,
+                        tool_name=tool,
+                        description="Refresh the token and retry with the current credential.",
+                        parameters={"token": f"fresh-token-v{version}"},
+                        side_effect_class=SideEffectClass.READ_ONLY,
+                    ),
+                    limitations=["Credential refresh must be authorized by the host."],
+                )
+            ]
+        if category == "missing_idempotency_key":
+            key = "idempotency_key" if version == "1" else "request_id"
+            return [
+                _family_draft(
+                    evidence=evidence,
+                    tool=tool,
+                    schema_hash=schema_hash,
+                    error_code=window.error_code or "MISSING_IDEMPOTENCY_KEY",
+                    summary=f"Supply the required {key} for this API version.",
+                    hypothesis=f"The API version requires a stable {key} on read requests.",
+                    action=StrategyAction(
+                        action_type=ActionType.SUPPLY_REQUIRED_PARAMETER,
+                        tool_name=tool,
+                        description=f"Add a bounded {key} value.",
+                        parameters={key: "bench-request-key"},
+                        side_effect_class=SideEffectClass.READ_ONLY,
+                    ),
+                    postcondition_field="tool_call_succeeded",
+                )
+            ]
+        if category == "missing_required_parameter":
+            parameter = "account" if version == "1" else "account_id"
+            return [
+                _family_draft(
+                    evidence=evidence,
+                    tool=tool,
+                    schema_hash=schema_hash,
+                    error_code=window.error_code or "MISSING_REQUIRED_PARAMETER",
+                    summary=f"Supply the required {parameter} parameter.",
+                    hypothesis=f"The API version added a required {parameter} parameter.",
+                    action=StrategyAction(
+                        action_type=ActionType.SUPPLY_REQUIRED_PARAMETER,
+                        tool_name=tool,
+                        description=f"Add a bounded {parameter} value.",
+                        parameters={parameter: "acct-bench"},
+                        side_effect_class=SideEffectClass.READ_ONLY,
+                    ),
+                    postcondition_field="tool_call_succeeded",
+                )
+            ]
+        if category == "enum_value_mismatch":
+            value = "created" if version == "1" else "created_at"
+            return [
+                _family_draft(
+                    evidence=evidence,
+                    tool=tool,
+                    schema_hash=schema_hash,
+                    error_code=window.error_code or "INVALID_ENUM_VALUE",
+                    summary=f"Map the sort value to the current enum ({value}).",
+                    hypothesis="The API renamed an enum value between versions.",
+                    action=StrategyAction(
+                        action_type=ActionType.MAP_PARAMETER_VALUE,
+                        tool_name=tool,
+                        description="Use the enum value declared by the verified schema.",
+                        parameters={"field": "sort", "to": value},
+                        side_effect_class=SideEffectClass.READ_ONLY,
+                    ),
+                    postcondition_field="tool_call_succeeded",
+                )
+            ]
+        if category == "timestamp_format_mismatch":
+            value = "2026/01/01" if version == "1" else "2026-01-01T00:00:00Z"
+            return [
+                _family_draft(
+                    evidence=evidence,
+                    tool=tool,
+                    schema_hash=schema_hash,
+                    error_code=window.error_code or "INVALID_DATE_FORMAT",
+                    summary="Normalize the timestamp to the format required by this version.",
+                    hypothesis="The API changed its accepted timestamp format.",
+                    action=StrategyAction(
+                        action_type=ActionType.NORMALIZE_TIMESTAMP,
+                        tool_name=tool,
+                        description="Use the timestamp format declared by the verified schema.",
+                        parameters={"field": "since", "value": value},
+                        side_effect_class=SideEffectClass.READ_ONLY,
+                    ),
+                    postcondition_field="tool_call_succeeded",
+                )
+            ]
+        if category == "response_shape_changed":
+            field = "items" if version == "1" else "data"
+            return [
+                _family_draft(
+                    evidence=evidence,
+                    tool=tool,
+                    schema_hash=schema_hash,
+                    error_code=window.error_code or "MISSING_RESPONSE_FIELD",
+                    summary=f"Read records from the renamed response field '{field}'.",
+                    hypothesis="The response payload moved records to a different field.",
+                    action=StrategyAction(
+                        action_type=ActionType.MAP_RESPONSE_FIELD,
+                        tool_name=tool,
+                        description="Read the field declared by the verified response shape.",
+                        parameters={"field": field},
+                        side_effect_class=SideEffectClass.READ_ONLY,
+                    ),
                 )
             ]
         return []

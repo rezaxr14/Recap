@@ -483,27 +483,36 @@ class SqlMemoryRepository:
         tool_names: list[str],
         failure_code: str,
         content_hash: str,
+        environment_id: str = "",
     ) -> ExperienceMemory | None:
         """Find the operational memory a new version would replace.
 
-        A logical memory is identified by workspace, failure code, and the
-        task-family/tool scope it applies to. Content is deliberately excluded:
-        a new content hash is what makes it a *new version* rather than a
-        duplicate (duplicates are rejected earlier by the content-hash gate).
+        A logical memory is identified by workspace, environment identity,
+        failure code, and the task-family/tool scope it applies to. Content is
+        deliberately excluded: a new content hash is what makes it a *new
+        version* rather than a duplicate (duplicates are rejected earlier by
+        the content-hash gate).
+
+        The environment filter is important for multi-version benchmarks and
+        for operational drift: a validated repair for environment v2 must not
+        retire the still-correct v1 memory. Supersession is scoped to the same
+        environment id; a schema change inside that environment still produces
+        a new memory version.
 
         The task-family and tool overlap is evaluated in Python because those
         fields live inside the JSON content document; workspaces have a small
         number of operational memories, and correctness matters more than
         pushing an array-intersection into dialect-specific SQL.
         """
+        query = select(MemoryRow).where(
+            MemoryRow.workspace_id == workspace_id,
+            MemoryRow.status.in_(["active", "suspect"]),
+            MemoryRow.content_hash != content_hash,
+        )
+        if environment_id:
+            query = query.where(MemoryRow.environment_id == environment_id)
         rows = self.session.scalars(
-            select(MemoryRow)
-            .where(
-                MemoryRow.workspace_id == workspace_id,
-                MemoryRow.status.in_(["active", "suspect"]),
-                MemoryRow.content_hash != content_hash,
-            )
-            .order_by(MemoryRow.activated_at.desc().nullslast(), MemoryRow.created_at.desc())
+            query.order_by(MemoryRow.activated_at.desc().nullslast(), MemoryRow.created_at.desc())
         ).all()
         wanted_families = set(task_families)
         wanted_tools = set(tool_names)

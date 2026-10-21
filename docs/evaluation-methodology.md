@@ -26,6 +26,12 @@ What it *can* show, and does show:
 
 ## 2. Task suite
 
+The original six-task suite remains in `default_tasks()` for the legacy smoke path.
+The current evaluation suite is **benchmark v2**; its design and commands are in
+[`benchmark-v2.md`](benchmark-v2.md).
+
+### Legacy suite
+
 `src/recap/evals/datasets.py`
 
 | task_id | split | env version | failure mode |
@@ -40,15 +46,24 @@ What it *can* show, and does show:
 Each task carries: task family, task version, instruction, environment version, failure
 mode, expected memory signature, relevant memory tags, seed, difficulty, side-effect risk.
 
+### Benchmark v2
+
+`build_benchmark_v2_tasks()` returns 120 hierarchical tasks: ten failure families, two
+environment versions, and six deterministic paraphrases per family/version. Splits are
+family-held-out: five families in `train`, two in `dev`, three in `test`. Every memory is
+created through the real compile -> validate -> promote path. The store also contains stale,
+wrong-family, and bad-track-record hard negatives.
+
 ### Splits and leakage
 
 - **train** — available for developing the policy and weights.
 - **dev** — used for weight tuning and for the demo benchmark.
 - **test** — held out; run explicitly and reported separately.
 
-`check_leakage(tasks)` hashes normalized instructions and flags any instruction appearing in
-more than one split. The suite is grouped by template so a scenario is not duplicated across
-splits.
+`check_leakage(tasks)` normalizes instructions and flags exact duplicates. It also compares
+3-token shingles across splits and, for benchmark v2, enforces family holdout via
+`require_family_holdout=True`. The v2 suite currently reports zero issues. This is
+near-duplicate task detection, not embedding-similarity detection over memories.
 
 **Frozen-memory setting.** Retrieval is read-only during evaluation and no task writes a
 memory. Test episodes therefore cannot leak memories into later test episodes. The protocol
@@ -66,6 +81,7 @@ budget.
 | `bm25` | lexical retrieval, rank by relevance, **no policy** |
 | `vector` | dense-vector retrieval, **no policy** |
 | `hybrid_rrf` | fused lexical + vector, **no policy** |
+| `hybrid_rrf_version_filter` | fused lexical + vector, then keep only the task's declared environment id; no applicability/schema/reliability policy |
 | `outcome_aware` | RECAP's full selection policy |
 | `bm25_chunk` / `vector_chunk` / `hybrid_rrf_chunk` | the same three retrieval baselines run over **event-aware** chunk documents (best-chunk RRF per memory), still **no policy** |
 | `outcome_aware_chunk` | event-aware chunk retrieval fed into RECAP's full selection policy |
@@ -82,11 +98,15 @@ policy. That is the ablation: it isolates what the policy adds. The `_chunk` and
 report separates "does the policy help?" from "does chunking help?". See
 [`retrieval.md` §8](retrieval.md#8-ablation-design-why-the-baselines-are-fair).
 
-**Current limitation:** the dev split seeds one memory per environment version. After
-environment scoping, both chunk strategies see the same single correct candidate and every
-chunk baseline succeeds. The chunk-strategy matrix is wired and reproducible, but it is
-degenerate until the dataset adds same-environment distractor memories and paraphrase
-queries. No "event-aware beats naive" claim is made from the current numbers.
+**Current limitation:** the dev split seeds one correct memory per environment version plus
+stale, wrong-family, and bad-track-record distractors, but no same-environment near-duplicate
+or noise set. Chunk retrieval is environment-scoped, so every chunk baseline still sees the
+same correct candidate and succeeds. The chunk-strategy matrix is wired and reproducible, but
+it is degenerate until the dataset adds same-environment distractors. No "event-aware beats
+naive" claim is made from the current numbers.
+
+`raw_trajectory_rag` is not implemented. The existing `*_chunk` modes index chunks derived
+from memories and run evidence, not raw full trajectories.
 
 ## 4. Metrics
 
@@ -101,6 +121,9 @@ All metrics are computed from recorded outcomes. None are hardcoded.
 | `tool_calls` | tool invocations used by the agent |
 | `harmful_transfer` | a memory was used and the task still failed |
 | `incompatible_selected` | selected memories that fail an independent post-hoc compatibility/applicability/schema check |
+| `hard_negative_selected` | any selected memory that is not relevant to the task |
+| `hard_negative_outranked_correct` | a hard negative ranked above the first relevant memory |
+| `false_abstention` | `outcome_aware` selected nothing even though relevant memory existed |
 
 ### Confidence intervals
 
@@ -123,32 +146,38 @@ tasks. It is implemented and unit-tested; the current report surfaces per-baseli
 The audit never feeds back into selection. A baseline cannot be penalized or rewarded by a
 metric it influenced, which is what makes the comparison meaningful.
 
-## 5. Reported results (dev split)
+## 5. Reported results (benchmark v2 dev)
 
-From a real run (`recap eval run --split dev`):
+From a real run with real nomic embeddings (`recap eval run --suite v2 --split dev`), 24 tasks:
 
-| baseline | success | 95% CI | recall@3 | MRR | nDCG@3 | tool calls | harmful transfer | incompatible selection |
-|---|---|---|---|---|---|---|---|---|
-| no_memory | 0.000 | [0.000, 0.000] | 0.000 | 0.000 | 0.000 | 1.00 | 0.000 | 0.000 |
-| retry_only | 0.000 | [0.000, 0.000] | 0.000 | 0.000 | 0.000 | 1.00 | 0.000 | 0.000 |
-| bm25 | 1.000 | [1.000, 1.000] | 1.000 | 1.000 | 1.000 | 4.00 | 0.000 | 1.000 |
-| vector | 1.000 | [1.000, 1.000] | 1.000 | 1.000 | 1.000 | 4.00 | 0.000 | 1.000 |
-| hybrid_rrf | 1.000 | [1.000, 1.000] | 1.000 | 1.000 | 1.000 | 4.00 | 0.000 | 1.000 |
-| outcome_aware | 1.000 | [1.000, 1.000] | 1.000 | 1.000 | 1.000 | 4.00 | 0.000 | 0.000 |
+| baseline | success | 95% CI | recall@3 | MRR | harmful transfer | incompatible selection |
+|---|---|---|---|---|---|---|
+| `no_memory` | 0.000 | [0.000, 0.000] | 0.000 | 0.000 | 0.000 | 0.000 |
+| `retry_only` | 0.000 | [0.000, 0.000] | 0.000 | 0.000 | 0.000 | 0.000 |
+| `bm25` | 0.500 | [0.292, 0.708] | 1.000 | 0.750 | 0.500 | 1.000 |
+| `vector` | 0.500 | [0.292, 0.708] | 1.000 | 0.750 | 0.500 | 1.000 |
+| `hybrid_rrf` | 0.500 | [0.292, 0.708] | 1.000 | 0.750 | 0.500 | 1.000 |
+| `hybrid_rrf_version_filter` | 1.000 | [1.000, 1.000] | 1.000 | 1.000 | 0.000 | 0.000 |
+| `outcome_aware` | 1.000 | [1.000, 1.000] | 1.000 | 0.750 | 0.000 | 0.000 |
 
 How to read this honestly:
 
-- **Success is not the interesting column here.** The reference agent can recover from the
-  v2 failure even with the wrong (v1) memory, because it eventually hits the right parameter
-  by trying. That is a property of this tiny environment, not evidence that retrieval
-  quality is irrelevant.
-- **Incompatible selection is the interesting column.** Every policy-free baseline selected
-  a memory that its own declared schema says does not apply. `outcome_aware` selected none.
-- **The intervals are degenerate** because n=2. They are reported as computed, not padded.
-- **`no_memory` and `retry_only` at 0.000** confirm the environment genuinely requires the
-  recovery knowledge; the task is not trivially solvable.
+- Policy-free card retrieval applies an incompatible/stale memory in half the tasks and
+  selects one in every task. The version filter and `outcome_aware` both remove that failure.
+- This split does **not** show a success advantage of the full policy over the fair version
+  filter. The policy's MRR is lower (0.750 vs 1.000), so it is not a clean win even on ranking.
+  Harder same-environment noise and subtler drift are needed before the extra policy checks
+  can be distinguished.
+- The chunk rows are all 100% because chunk retrieval is environment-scoped and the split has
+  no same-environment distractor set. That is a degenerate ablation, not evidence that
+  event-aware chunking beats naive chunking.
+- The intervals resample tasks within one run. They are not seed-paired and do not establish
+  statistical significance.
+- `false_abstention` is 0.000 for `outcome_aware`; abstention precision/recall is not reported
+  because there are no negative-control tasks.
 
-The test split shows the same qualitative pattern on held-out tasks.
+The held-out test split is implemented but has not been run. Full provenance and the
+deterministic hashing comparison: [`evidence/phase2-summary.md`](evidence/phase2-summary.md).
 
 ## 6. Protocol metadata
 
@@ -170,12 +199,15 @@ summary. The Markdown report repeats the caveat in its header.
 ## 7. Reproducing
 
 ```bash
-docker compose up -d postgres elasticsearch
+docker compose start postgres elasticsearch
 recap db migrate
 recap search init
-recap eval run --split dev
-recap eval run --split test
+recap eval run --suite v2 --split dev
+recap eval run --suite v2 --split test
 ```
+
+For real nomic embeddings, export the `EMBEDDING_*` variables and `RECAP_VECTOR_DIMENSION=768`
+as shown in [`benchmark-v2.md`](benchmark-v2.md), then initialize a separate index generation.
 
 Outputs:
 
@@ -185,32 +217,40 @@ benchmark/reports/benchmark_<split>_<timestamp>.csv
 benchmark/reports/benchmark_<split>_<timestamp>.md
 ```
 
-Reports are gitignored except for `.gitkeep`; regenerate them rather than trusting a
-committed number.
+Normal reports are gitignored except for `.gitkeep`; regenerate them rather than trusting a
+committed number. The Phase 2 evidence copies under `docs/evidence/phase2-benchmark-v2-dev*`
+are committed deliberately as provenance for this milestone.
 
 ## 8. What would make this a real evaluation
 
 In rough priority order:
 
-1. **More tasks.** Dozens per family, several families, multiple seeds. Confidence intervals
-   only become informative with n >> 2.
+1. **Run the held-out test split and add same-environment noise.** The current v2 dev split
+   has 24 tasks and three hard-negative kinds; it still cannot distinguish the full policy
+   from a fair version filter on success.
 2. **A real agent.** An LLM agent with a fixed model, temperature, and tool budget. The
-   reference agent is a correctness harness, not a capability measurement.
-3. **A real embedding model.** The hashing provider captures token overlap only; the vector
-   baseline understates what a neural embedder does. Configure `EMBEDDING_PROVIDER=openai_compatible`
-   and record the model, dimension, and index generation in the report. A real-model run must
-   never be mixed with a deterministic run in the same comparison.
-4. **Ablations beyond retrieval mode.** Compatibility-only, utility-only, reliability-only,
+   reference agent is a correctness harness, not a capability measurement. Live agent runs
+   exist, but they are not yet part of the benchmark matrix.
+3. **Negative-control tasks and abstention quality.** Precision/recall require tasks where
+   abstaining is correct; the current suite only reports false abstention.
+4. **Repeated seeds and paired CIs.** Run each `(task, baseline, seed)` at least three times
+   and report paired intervals, not only task resampling.
+5. **Ablations beyond retrieval mode.** Compatibility-only, utility-only, reliability-only,
    and reranker-on/off, so the contribution of each policy component is separable.
-5. **Adversarial memories.** Deliberately misleading but highly similar memories, to measure
-   whether the policy resists them rather than only whether it filters stale ones.
-6. **Cost/latency reporting.** Latency is captured per decision
-   (`stage_latency_ms`, `total_latency_ms`) but not yet aggregated into the report.
+6. **Adversarial memories.** Same-environment near-duplicates and noise, not only stale and
+   wrong-family memories.
+7. **`raw_trajectory_rag`.** Standard RAG over full past trajectories, with no repair
+   compilation, as a baseline.
 
 ## 9. Non-claims
 
 - No claim that RECAP improves LLM task success.
 - No claim of statistical significance at the current sample size.
+- No claim that the full policy beats the fair `hybrid_rrf_version_filter` on this dev split;
+  it matches success and safety, with lower MRR.
+- No claim that the test-split result generalizes; the test split has not been run.
 - No claim that the utility weights are optimal; they are interpretable defaults tuned on
   dev.
 - No claim that the mock environment represents production APIs.
+- No claim that the chunk ablation shows event-aware chunking is better; it is degenerate on
+  the current split.

@@ -218,6 +218,24 @@ def test_config_rejects_dimension_mismatch(tmp_path) -> None:
         load_settings(config)
 
 
+def test_elasticsearch_isolation_env_overrides(monkeypatch) -> None:
+    monkeypatch.setenv("ELASTICSEARCH_INDEX_PREFIX", "recap-unit")
+    monkeypatch.setenv("ELASTICSEARCH_MEMORIES_READ_ALIAS", "recap-unit-memories-read")
+    monkeypatch.setenv("ELASTICSEARCH_MEMORIES_WRITE_ALIAS", "recap-unit-memories-write")
+    monkeypatch.setenv("ELASTICSEARCH_CHUNKS_READ_ALIAS", "recap-unit-chunks-read")
+    monkeypatch.setenv("ELASTICSEARCH_CHUNKS_WRITE_ALIAS", "recap-unit-chunks-write")
+    monkeypatch.setenv("RECAP_CHUNKS_INDEX_GENERATION", "7")
+
+    settings = load_settings()
+
+    assert settings.elasticsearch.index_prefix == "recap-unit"
+    assert settings.elasticsearch.memories_read_alias == "recap-unit-memories-read"
+    assert settings.elasticsearch.memories_write_alias == "recap-unit-memories-write"
+    assert settings.elasticsearch.chunks_read_alias == "recap-unit-chunks-read"
+    assert settings.elasticsearch.chunks_write_alias == "recap-unit-chunks-write"
+    assert settings.elasticsearch.chunks_index_generation == 7
+
+
 def test_safe_dump_redacts_credentials(tmp_path) -> None:
     config = tmp_path / "c.yaml"
     config.write_text(

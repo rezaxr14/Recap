@@ -686,6 +686,13 @@ def repair_promote(candidate_id: str) -> None:
 @agent_app.command("run")
 def agent_run(
     environment_version: Annotated[str, typer.Option("--environment-version")] = "1",
+    failure_family: Annotated[
+        str,
+        typer.Option(
+            "--failure-family",
+            help="Benchmark failure family; empty preserves the legacy v1/v2 behaviour",
+        ),
+    ] = "",
     workspace: Annotated[str, typer.Option("--workspace")] = "demo-workspace",
     max_tool_calls: Annotated[int, typer.Option("--max-tool-calls", min=1, max=32)] = 6,
     memory_id: Annotated[
@@ -729,7 +736,13 @@ def agent_run(
             raise ValidationError("--environment-version must be 1 or 2")
         if expire_first_cursor and environment_version != "1":
             raise ValidationError("--expire-first-cursor only applies to --environment-version 1")
-        environment = PaginatedApiEnvironment(version=environment_version)
+        from recap.environments.mock_api import FAILURE_FAMILIES
+
+        if failure_family and failure_family not in FAILURE_FAMILIES:
+            raise ValidationError(f"--failure-family must be one of {', '.join(FAILURE_FAMILIES)}")
+        environment = PaginatedApiEnvironment(
+            version=environment_version, failure_family=failure_family or ""
+        )
         if expire_first_cursor:
             environment.expire_cursor("cur_1_0001")
         advisory = None
@@ -758,6 +771,7 @@ def agent_run(
         "model": container.llm.model,
         "provider": getattr(container.llm, "provider_type", ""),
         "environment_version": environment_version,
+        "failure_family": environment.failure_family,
         "workspace_id": workspace,
         "tool_calls": result.tool_calls,
         "retries": result.retries,
@@ -816,13 +830,21 @@ def demo_run() -> None:
 @eval_app.command("run")
 def eval_run(
     split: Annotated[str, typer.Option("--split")] = "dev",
+    suite: Annotated[str, typer.Option("--suite")] = "legacy",
+    limit: Annotated[int | None, typer.Option("--limit")] = None,
     output: Annotated[Path, typer.Option("--output")] = Path("benchmark/reports"),
 ) -> None:
-    """Run the deterministic benchmark across retrieval baselines."""
+    """Run the deterministic benchmark across retrieval baselines.
+
+    ``--suite v2`` runs the ten-family, 120-task dataset. Use ``--limit`` for a
+    smoke run while developing; full evidence runs must not use it.
+    """
     from recap.evals.runner import run_benchmark
 
     try:
-        result = run_benchmark(_container(), split=split, output_dir=output)
+        result = run_benchmark(
+            _container(), split=split, suite=suite, limit=limit, output_dir=output
+        )
     except Exception as exc:
         _fail(exc)
         return

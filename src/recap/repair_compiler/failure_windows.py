@@ -104,8 +104,20 @@ def _categorize(*, error_code: str, error_type: str, message: str) -> str:
         return "transient_rate_limit"
     if "unknown_parameter" in combined or "unexpected" in combined and "param" in combined:
         return "tool_parameter_mismatch"
-    if "timeout" in combined:
+    if "timeout" in combined or "timed out" in combined:
         return "transient_timeout"
+    if "token_expired" in combined or "token expired" in combined:
+        return "authentication_expired"
+    if "idempotency" in combined or "request_id is required" in combined:
+        return "missing_idempotency_key"
+    if "missing_response_field" in combined or "returned under 'data'" in combined:
+        return "response_shape_changed"
+    if "missing_required_parameter" in combined or "required for this api version" in combined:
+        return "missing_required_parameter"
+    if "invalid_enum" in combined or "sort must be one of" in combined:
+        return "enum_value_mismatch"
+    if "invalid_date_format" in combined or "iso-8601" in combined or "yyyy/mm/dd" in combined:
+        return "timestamp_format_mismatch"
     if "permission" in combined or "forbidden" in combined or "403" in combined:
         return "authorization_denied"
     if "not_found" in combined or "404" in combined:

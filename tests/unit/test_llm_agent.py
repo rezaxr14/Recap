@@ -118,6 +118,30 @@ def test_invalid_arguments_are_not_executed() -> None:
     assert environment.access_log() == []
 
 
+def test_response_field_rename_still_counts_real_records() -> None:
+    def script(messages: list) -> ChatResult:  # type: ignore[type-arg]
+        if not any(message.role == "tool" for message in messages):
+            return ChatResult(
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="call-1",
+                        name="list_records",
+                        arguments={"tenant": "acme", "limit": 10},
+                    )
+                ],
+            )
+        return ChatResult(content="all records collected")
+
+    environment = PaginatedApiEnvironment(version="2", failure_family="response_field")
+    result = LlmAgent(ScriptedChatProvider(script)).run(environment, max_tool_calls=2)
+
+    assert result.success is True
+    assert result.steps[0].ok is True
+    assert result.steps[0].result["data"]
+    assert result.final_error == ""
+
+
 def test_max_tool_calls_is_a_hard_bound() -> None:
     def script(messages: list) -> ChatResult:  # type: ignore[type-arg]
         return ChatResult(

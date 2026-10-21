@@ -54,7 +54,8 @@ Elasticsearch 8.19.3 node. There are no stub endpoints in the implemented paths.
 | Static + executing mock-sandbox validators | Working | `tests/unit/test_repair_compiler.py` |
 | Promotion gate (no bypass path) | Working | `tests/unit/test_repair_compiler.py`, `tests/integration/test_api.py` |
 | MemoryShift drift detection + revalidation queue | Working | `tests/integration/test_postgres.py`, demo step 8 |
-| Benchmark with card + chunk ablations and safety audit | Working (degenerate chunk ablation on current data) | `recap eval run`, `docs/results/2026-10-20-dev.md` |
+| Benchmark v2 (10 failure families, 120 tasks, family-held-out splits) | Implemented; dev split run with real nomic embeddings; test split not yet run | `tests/unit/test_benchmark_v2.py`, `tests/integration/test_benchmark_v2.py`, `docs/benchmark-v2.md`, `docs/evidence/phase2-summary.md` |
+| Benchmark with card + chunk ablations and safety audit | Working (chunk ablation still degenerate on current data) | `recap eval run --suite v2`, `docs/results/2026-10-20-dev.md` |
 | Transactional outbox + retry worker | Working | `tests/unit/test_outbox_worker.py`, `recap search drain` |
 | Explicit memory versions + supersession | Working | `tests/unit/test_memory_versions.py`, `tests/e2e/test_lifecycle.py` |
 | Run-level memory snapshot pinning | Working | `tests/integration/test_memory_snapshots.py` |
@@ -75,12 +76,18 @@ the evidence under [`docs/evidence/`](docs/evidence/), and the limitations below
 public record. A local implementation log is intentionally not published.
 
 - The default embedding provider is a deterministic **hashing lexical embedder**, not a
-  neural model. The numbers below do not measure semantic embedding quality.
+  neural model. The benchmark v2 dev split was also run with real
+  `text-embedding-nomic-embed-text-v1.5` (768-d) through LM Studio; those results are labelled
+  separately and are still not LLM-agent results.
 - The demo and benchmark use a **scripted reference agent** for reproducibility. The
   configured-LLM tool-using agent (`recap agent run`) completed live v1/v2 runs with
-  `gemma-4-e4b-uncensored-hauhaucs-aggressive`; the opt-in live suite passes locally
+  `gemma-4-e4b-uncensored-hauhaucs-aggressive`, including the new `response_field` and
+  `idempotency_key` families; the opt-in live suite passes locally
   (`docs/evidence/phase1-live-provider-tests-gemma.txt`), but still skips in CI. The benchmark
   numbers below were not produced by an LLM agent.
+- Benchmark v2 is implemented but only the **dev** split has been measured. The held-out test
+  families have not been run yet. `raw_trajectory_rag`, abstention precision/recall, and
+  paired CIs across >= 3 seeds are not implemented; do not infer them from the report.
 - **Live LLM repair generation is not working with the selected gemma model.** The acceptance
   harness produced 0 schema-valid candidates: `json_schema` calls timed out and `json_object`
   calls were rejected by the provider. The deterministic repair generator remains the default.
@@ -95,33 +102,34 @@ public record. A local implementation log is intentionally not published.
   automatic eviction yet; `last_accessed_at`/`hit_count` support manual pruning, and
   `recap embedding-cache --clear` is always safe.
 - The chunk token counter is a download-free approximation, not a model tokenizer.
-- The current dev split has one memory per environment version, so the `naive_fixed` vs
-  `event_aware` chunk ablation is **degenerate**. It needs same-environment distractor
-  memories and paraphrase queries before it can support a claim.
+- The current dev split has no same-environment distractor set, so the `naive_fixed` vs
+  `event_aware` chunk ablation is **degenerate**. It needs same-environment noise and
+  near-duplicate memories before it can support a claim.
 - The stack is single-node and local-first. Elasticsearch security is disabled in the local
   Compose file, and there is no multi-tenant auth or RBAC layer.
 - Benchmark numbers measure **pipeline and safety behaviour**, not LLM capability. Reports
   and `recap providers` state which mode produced a result.
 
-## Results snapshot (dev split, deterministic)
+## Results snapshot (benchmark v2 dev, real nomic embeddings)
 
-These are real measured numbers from `recap eval run --split dev`, not projections. They are
-a pipeline/safety check: two tasks, a scripted reference agent, and the local 256-dimensional
-hashing embedder. The raw retrieval baselines rank a version-incompatible memory on every
-task; `outcome_aware` rejects it.
+These are measured numbers from `recap eval run --suite v2 --split dev`, not projections.
+They use 24 tasks, the scripted reference agent, and real
+`text-embedding-nomic-embed-text-v1.5` 768-d embeddings through LM Studio.
 
-| Baseline | recall@3 | MRR | task success | incompatible selection |
-|---|---:|---:|---:|---:|
-| `no_memory` / `retry_only` | 0.000 | 0.000 | 0.000 | 0.000 |
-| `bm25` / `vector` / `hybrid_rrf` | 1.000 | 1.000 | 1.000 | 1.000 |
-| `outcome_aware` | 1.000 | 1.000 | 1.000 | **0.000** |
-| `*_naive_chunk` / `*_chunk` | 1.000 | 1.000 | 1.000 | 0.000 |
+| Baseline | recall@3 | MRR | task success | harmful transfer | incompatible selection |
+|---|---:|---:|---:|---:|---:|
+| `no_memory` / `retry_only` | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 |
+| `bm25` / `vector` / `hybrid_rrf` | 1.000 | 0.750 | 0.500 | 0.500 | 1.000 |
+| `hybrid_rrf_version_filter` | 1.000 | 1.000 | 1.000 | 0.000 | 0.000 |
+| `outcome_aware` | 1.000 | 0.750 | 1.000 | **0.000** | **0.000** |
+| `*_naive_chunk` / `*_chunk` | 1.000 | 1.000 | 1.000 | 0.000 | 0.000 |
 
-Full matrix and caveats: [`docs/results/2026-10-20-dev.md`](docs/results/2026-10-20-dev.md).
-The chunk-strategy comparison is **degenerate on this dataset** (one memory per environment
-version), so it does not support a claim that event-aware chunking beats naive chunking. The
-chunk rows' `0.000` incompatible selection is environment scoping, not policy; the policy
-effect is the card-level `outcome_aware` row.
+On this split the fair version filter also fixes stale-version selection, so the full policy
+does **not** show a success advantage over it. The policy matches its success while rejecting
+wrong-family and bad-track-record distractors; its MRR is lower (0.750 vs 1.000). The chunk
+comparison is **degenerate** because there is no same-environment distractor set. Full matrix,
+CIs, and caveats: [`docs/evidence/phase2-summary.md`](docs/evidence/phase2-summary.md) and
+[`docs/benchmark-v2.md`](docs/benchmark-v2.md).
 
 ## Documentation
 
@@ -130,7 +138,7 @@ effect is the card-level `outcome_aware` row.
 | Understand the system | [`docs/architecture.md`](docs/architecture.md), [`docs/data-model.md`](docs/data-model.md), [`docs/retrieval.md`](docs/retrieval.md) |
 | Run and operate it | [`docs/operations.md`](docs/operations.md), [Quickstart](#quickstart) |
 | Understand repair and safety | [`docs/repair-validation.md`](docs/repair-validation.md), [`docs/threat-model.md`](docs/threat-model.md) |
-| Evaluate it | [`docs/evaluation-methodology.md`](docs/evaluation-methodology.md), [`docs/results/2026-10-20-dev.md`](docs/results/2026-10-20-dev.md), [`docs/evidence/phase1-summary.md`](docs/evidence/phase1-summary.md) |
+| Evaluate it | [`docs/evaluation-methodology.md`](docs/evaluation-methodology.md), [`docs/benchmark-v2.md`](docs/benchmark-v2.md), [`docs/results.md`](docs/results.md), [`docs/evidence/phase2-summary.md`](docs/evidence/phase2-summary.md) |
 | Connect a model | [`docs/providers.md`](docs/providers.md) |
 | Contribute | [`CONTRIBUTING.md`](CONTRIBUTING.md), [`SECURITY.md`](SECURITY.md), [`CHANGELOG.md`](CHANGELOG.md) |
 | Repository metadata | [`docs/github-repository.md`](docs/github-repository.md) |

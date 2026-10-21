@@ -22,16 +22,23 @@ from typing import Any
 
 from recap.config import ChunkingSettings
 from recap.container import Container
-from recap.domain.enums import EventType, MemoryStatus, RetrievalMode, RunStatus
+from recap.domain.enums import EventType, MemoryStatus, OutcomeStatus, RetrievalMode, RunStatus
+from recap.domain.memories import ExperienceMemory
 from recap.domain.retrieval import RetrievalContext, RetrievalRequest
-from recap.environments.mock_api import PaginatedApiEnvironment
+from recap.environments.mock_api import PaginatedApiEnvironment, family_error
 from recap.environments.reference_agent import ReferenceAgent
 from recap.environments.run_recording import (
     AgentRunMetadata,
     complete_recorded_run,
     start_recorded_run,
 )
-from recap.evals.datasets import BenchmarkTask, default_tasks, split_hash
+from recap.evals.datasets import (
+    FAMILY_SPLITS,
+    BenchmarkTask,
+    build_benchmark_v2_tasks,
+    default_tasks,
+    split_hash,
+)
 from recap.evals.metrics import (
     bootstrap_ci,
     mean,
@@ -50,6 +57,11 @@ BASELINES: list[tuple[str, RetrievalMode | None, str]] = [
     ("bm25", RetrievalMode.BM25, ""),
     ("vector", RetrievalMode.VECTOR, ""),
     ("hybrid_rrf", RetrievalMode.HYBRID_RRF, ""),
+    # A fair, deliberately weak version-aware baseline: run ordinary hybrid
+    # retrieval, then discard candidates whose declared environment id differs
+    # from the task. It gets the same information as outcome-aware selection
+    # but none of the compatibility, applicability, or utility policy.
+    ("hybrid_rrf_version_filter", RetrievalMode.HYBRID_RRF, ""),
     ("hybrid_rerank", RetrievalMode.HYBRID_RERANK, ""),
     ("outcome_aware", RetrievalMode.OUTCOME_AWARE, ""),
     # Chunk-granule ablations on the same tasks. Both chunk strategies are
@@ -70,6 +82,9 @@ def run_benchmark(
     container: Container,
     *,
     split: str = "dev",
+    suite: str = "legacy",
+    tasks: list[BenchmarkTask] | None = None,
+    limit: int | None = None,
     output_dir: Path | str = Path("benchmark/reports"),
     workspace_id: str | None = None,
     cleanup: bool = True,
@@ -80,9 +95,20 @@ def run_benchmark(
     # The dimension probe above is not part of benchmark cost. Reset after it
     # so the report covers only seeding and retrieval in this run.
     _reset_embedding_stats(container.embeddings)
-    tasks = [task for task in default_tasks() if task.split == split]
+    if suite not in {"legacy", "v2"}:
+        raise ValueError("suite must be legacy or v2")
+    available = (
+        tasks
+        if tasks is not None
+        else (default_tasks() if suite == "legacy" else build_benchmark_v2_tasks())
+    )
+    tasks = [task for task in available if task.split == split]
+    if limit is not None:
+        if limit < 1:
+            raise ValueError("limit must be positive")
+        tasks = tasks[:limit]
     if not tasks:
-        raise ValueError(f"no tasks for split {split}")
+        raise ValueError(f"no tasks for split {split} in suite {suite}")
 
     dataset_hash = split_hash(tasks)
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
@@ -126,6 +152,7 @@ def run_benchmark(
         payload = {
             "generated_at": datetime.now(UTC).isoformat(),
             "split": split,
+            "suite": suite,
             "dataset_hash": dataset_hash,
             "workspace_id": workspace,
             "tasks": [task.to_dict() for task in tasks],
@@ -143,7 +170,9 @@ def run_benchmark(
                 "retrieval_scope": "run",
                 "agent": "deterministic-reference-agent-v1",
                 "provider": "deterministic",
-                "environment": "mock-api",
+                "environment": "mock-api-failure-families",
+                "suite": suite,
+                "failure_families": sorted({task.failure_mode for task in tasks}),
                 "metrics_source": "persisted_run_records",
                 "workspace_isolation": "unique workspace per run, reset before and after",
                 "note": ("Deterministic mock pipeline test. Not evidence of real LLM performance."),
@@ -166,12 +195,28 @@ def run_benchmark(
 
 
 def _seed_memories(container: Container, workspace_id: str, tasks: list[BenchmarkTask]) -> None:
-    """Create one validated memory per environment version present in the split.
+    """Create validated memories and an explicit bad-track-record distractor.
 
     Memories are generated through the real compile -> validate -> promote path,
-    so the benchmark exercises the production promotion gate.
+    so the benchmark exercises the production promotion gate. The family is part
+    of the environment fingerprint, which keeps wrong-family memories available
+    as hard negatives without making them applicable to the task.
+
+    One extra family from a different split is seeded and then given two
+    verified failures. It remains active (below the degradation thresholds), so
+    it is a tempting, compatible-looking distractor with a worse track record.
+    This is a benchmark fixture, not a claim that the synthetic failures came
+    from production traffic; the report labels it accordingly.
     """
-    versions = sorted({task.environment_version for task in tasks})
+    expected: dict[str, tuple[str, str]] = {}
+    for task in tasks:
+        environment = PaginatedApiEnvironment(
+            version=task.environment_version, failure_family=task.failure_mode
+        )
+        expected[environment.fingerprint().environment_id] = (
+            task.failure_mode,
+            task.environment_version,
+        )
     with container.services() as services:
         from recap.infrastructure.db.repositories import ensure_workspace
 
@@ -179,45 +224,67 @@ def _seed_memories(container: Container, workspace_id: str, tasks: list[Benchmar
         existing = services.memories.list_memories(
             workspace_id, status=MemoryStatus.ACTIVE, limit=100
         )
-    # Seed per environment version so adding a new version to a split does not
-    # silently reuse an incomplete memory set.
-    seeded_versions = {
-        memory.environment_id.rsplit("-v", 1)[-1] for memory in existing if memory.environment_id
-    }
-    versions_to_seed = [version for version in versions if version not in seeded_versions]
+    seeded = {memory.environment_id for memory in existing if memory.environment_id}
 
-    for version in versions_to_seed:
-        environment = PaginatedApiEnvironment(version=version)
-        fingerprint = environment.fingerprint()
-        from recap.environments.run_recording import record_reference_run
+    for environment_id, (family, version) in sorted(expected.items()):
+        if environment_id in seeded:
+            continue
+        _promote_seed_memory(container, workspace_id, family=family, version=version)
 
-        run_id, _ = record_reference_run(
-            container, environment, workspace_id=workspace_id, task_id=f"seed-{version}"
+    # A bad-track-record hard negative. Use a family held out of this split so
+    # lowering its reliability cannot damage any task that is actually scored.
+    split = tasks[0].split
+    distractor_family = next(
+        (family for family, family_split in FAMILY_SPLITS.items() if family_split != split),
+        "",
+    )
+    distractor_environment: PaginatedApiEnvironment | None = None
+    if distractor_family:
+        distractor_environment = PaginatedApiEnvironment(
+            version="2", failure_family=distractor_family
         )
+        distractor_fingerprint = distractor_environment.fingerprint()
+        if distractor_fingerprint.environment_id not in seeded:
+            _promote_seed_memory(container, workspace_id, family=distractor_family, version="2")
         with container.services() as services:
-            services.environments.upsert(workspace_id, fingerprint)
-            candidates = services.repair_compiler.compile(run_id, environment=fingerprint)
-            if not candidates:
-                continue
-            candidate_id = candidates[0].id
-            result = services.repair_compiler.validate(
-                candidate_id, environment=fingerprint, validator_name="mock_sandbox"
+            memory = next(
+                (
+                    item
+                    for item in services.memories.list_memories(
+                        workspace_id, status=MemoryStatus.ACTIVE, limit=100
+                    )
+                    if item.environment_id == distractor_fingerprint.environment_id
+                ),
+                None,
             )
-            if result.status.value != "passed":
-                logger.warning("benchmark seed validation failed for v%s", version)
-                continue
-            refreshed = services.repairs.get(candidate_id)
-            assert refreshed is not None
-            services.promotion.promote(refreshed)
+            if memory is not None and memory.stats.verified_failures < 2:
+                for _ in range(2 - memory.stats.verified_failures):
+                    services.memory_shift.record_outcome(
+                        memory,
+                        outcome=OutcomeStatus.VERIFIED_FAILURE,
+                        applied=True,
+                        environment_id=distractor_fingerprint.environment_id,
+                        environment_fingerprint=distractor_fingerprint.fingerprint,
+                        task_family=distractor_family,
+                        notes="benchmark bad-track-record fixture",
+                        evidence={"source": "benchmark_v2_fixture"},
+                    )
+                    refreshed = services.memories.get_memory(memory.id, workspace_id)
+                    if refreshed is None:
+                        break
+                    memory = refreshed
 
     # Chunks are derived state: rebuild them for every active memory so an
     # already-seeded benchmark workspace is brought up to date idempotently.
+    seed_env_ids = set(expected)
+    if distractor_environment is not None:
+        seed_env_ids.add(distractor_environment.fingerprint().environment_id)
     with container.services() as services:
         memories = services.memories.list_memories(
             workspace_id, status=MemoryStatus.ACTIVE, limit=100
         )
         for memory in memories:
-            if memory.environment_id.rsplit("-v", 1)[-1] not in versions:
+            if memory.environment_id not in seed_env_ids:
                 continue
             # Build both ablation sets into the same workspace/index. Chunk
             # ids include the strategy, so neither rebuild deletes the other.
@@ -234,6 +301,39 @@ def _seed_memories(container: Container, workspace_id: str, tasks: list[Benchmar
                     )
 
 
+def _promote_seed_memory(
+    container: Container, workspace_id: str, *, family: str, version: str
+) -> ExperienceMemory | None:
+    """Run one real failure, compile a candidate, validate it, and promote it."""
+    from recap.environments.run_recording import record_reference_run
+
+    environment = PaginatedApiEnvironment(version=version, failure_family=family)
+    fingerprint = environment.fingerprint()
+    run_id, _ = record_reference_run(
+        container,
+        environment,
+        workspace_id=workspace_id,
+        task_id=f"seed-{family}-v{version}",
+        failure_family=family,
+    )
+    with container.services() as services:
+        services.environments.upsert(workspace_id, fingerprint)
+        candidates = services.repair_compiler.compile(run_id, environment=fingerprint)
+        if not candidates:
+            logger.warning("benchmark seed produced no candidate for %s v%s", family, version)
+            return None
+        candidate_id = candidates[0].id
+        result = services.repair_compiler.validate(
+            candidate_id, environment=fingerprint, validator_name="mock_sandbox"
+        )
+        if result.status.value != "passed":
+            logger.warning("benchmark seed validation failed for %s v%s", family, version)
+            return None
+        refreshed = services.repairs.get(candidate_id)
+        assert refreshed is not None
+        return services.promotion.promote(refreshed)
+
+
 def _run_task(
     container: Container,
     workspace_id: str,
@@ -243,9 +343,12 @@ def _run_task(
     mode: RetrievalMode | None,
     chunk_strategy: str = "",
 ) -> dict[str, Any]:
-    environment = PaginatedApiEnvironment(version=task.environment_version)
+    environment = PaginatedApiEnvironment(
+        version=task.environment_version, failure_family=task.failure_mode
+    )
     fingerprint = environment.fingerprint()
     agent = ReferenceAgent()
+    failure = family_error(task.failure_mode)
 
     metadata = AgentRunMetadata(
         agent_id="benchmark-reference-agent",
@@ -277,14 +380,9 @@ def _run_task(
     selected_ids: list[str] = []
     status = "not_retrieved"
     ranked_ids: list[str] = []
-    error_code = (
-        "UNKNOWN_PARAMETER" if task.failure_mode == "renamed_parameter" else "INVALID_CURSOR"
-    )
-    error_message = (
-        "unknown parameter 'cursor'; this API version requires 'page_token'"
-        if task.failure_mode == "renamed_parameter"
-        else "cursor is invalid or expired"
-    )
+    error_code = failure["error_code"]
+    error_message = failure["error_message"]
+    error_type = failure["error_type"]
     request: RetrievalRequest | None = None
     decision = None
     if mode is not None:
@@ -293,7 +391,7 @@ def _run_task(
                 context=RetrievalContext(
                     workspace_id=workspace_id,
                     query=task.instruction,
-                    task_family=task.task_family,
+                    task_family=task.failure_mode,
                     environment_id=fingerprint.environment_id,
                     environment_fingerprint=fingerprint.fingerprint,
                     environment_version=fingerprint.environment_version,
@@ -301,7 +399,7 @@ def _run_task(
                     tool_names=["list_records"],
                     tool_versions=fingerprint.tool_versions,
                     tool_schema_fingerprints=fingerprint.tool_schema_hashes,
-                    error_type="ValidationError",
+                    error_type=error_type,
                     error_code=error_code,
                     error_message=error_message,
                     state={"tool_schema_fingerprints": fingerprint.tool_schema_hashes},
@@ -315,10 +413,21 @@ def _run_task(
             status = decision.status.value
             ranked_ids = [candidate.memory_id for candidate in decision.candidates]
             selected_ids = [memory.memory_id for memory in decision.selected_memories]
+            if baseline == "hybrid_rrf_version_filter":
+                allowed = {
+                    memory.id
+                    for memory in services.memories.list_memories(
+                        workspace_id, status=MemoryStatus.ACTIVE, limit=100
+                    )
+                    if memory.environment_id == fingerprint.environment_id
+                }
+                ranked_ids = [memory_id for memory_id in ranked_ids if memory_id in allowed]
+                selected_ids = [memory_id for memory_id in selected_ids if memory_id in allowed]
+                status = "selected" if selected_ids else "no_safe_memory"
 
     memory = None
     if baseline == "retry_only":
-        # A naive retry with the same invalid cursor cannot succeed.
+        # A naive retry with the same pre-memory request cannot succeed.
         result = agent.run(environment, memory=None)
     elif selected_ids:
         with container.services() as services:
@@ -355,6 +464,17 @@ def _run_task(
     incompatible_selected = _count_incompatible_selected(
         container, workspace_id, selected_ids, task, error_code=error_code
     )
+    wrong_selected = [memory_id for memory_id in selected_ids if memory_id not in relevant]
+    first_relevant_index = next(
+        (index for index, memory_id in enumerate(selected_ids) if memory_id in relevant), None
+    )
+    first_wrong_index = next(
+        (index for index, memory_id in enumerate(selected_ids) if memory_id not in relevant), None
+    )
+    hard_negative_outranked_correct = first_wrong_index is not None and (
+        first_relevant_index is None or first_wrong_index < first_relevant_index
+    )
+    false_abstention = mode is RetrievalMode.OUTCOME_AWARE and bool(relevant) and not selected_ids
     with container.services() as services:
         recorded = services.recorder.get_run(run_id)
         events = services.runs.list_events(run_id)
@@ -376,6 +496,7 @@ def _run_task(
     return {
         "task_id": task.task_id,
         "task_family": task.task_family,
+        "failure_family": task.failure_mode,
         "baseline": baseline,
         "split": task.split,
         "environment_version": task.environment_version,
@@ -393,6 +514,9 @@ def _run_task(
         "used_memory_id": used_memory_id,
         "harmful_transfer": bool(used_memory_id and not success),
         "incompatible_selected": incompatible_selected,
+        "hard_negative_selected": bool(wrong_selected),
+        "hard_negative_outranked_correct": hard_negative_outranked_correct,
+        "false_abstention": false_abstention,
         "retrieval_latency_ms": (
             round(decision.total_latency_ms, 3) if decision is not None else None
         ),
@@ -425,12 +549,14 @@ def _count_incompatible_selected(
         return 0
     from recap.recall.applicability import combine_compatibility, evaluate_applicability
 
-    environment = PaginatedApiEnvironment(version=task.environment_version)
+    environment = PaginatedApiEnvironment(
+        version=task.environment_version, failure_family=task.failure_mode
+    )
     fingerprint = environment.fingerprint()
     context = RetrievalContext(
         workspace_id=workspace_id,
         query=task.instruction,
-        task_family=task.task_family,
+        task_family=task.failure_mode,
         environment_id=fingerprint.environment_id,
         environment_fingerprint=fingerprint.fingerprint,
         environment_version=fingerprint.environment_version,
@@ -438,7 +564,7 @@ def _count_incompatible_selected(
         tool_names=["list_records"],
         tool_versions=fingerprint.tool_versions,
         tool_schema_fingerprints=fingerprint.tool_schema_hashes,
-        error_type="ValidationError",
+        error_type=family_error(task.failure_mode)["error_type"],
         error_code=error_code,
         state={"tool_schema_fingerprints": fingerprint.tool_schema_hashes},
     )
@@ -465,18 +591,15 @@ def _count_incompatible_selected(
 
 
 def _relevant_ids(container: Container, workspace_id: str, task: BenchmarkTask) -> set[str]:
+    environment = PaginatedApiEnvironment(
+        version=task.environment_version, failure_family=task.failure_mode
+    )
+    expected_environment = environment.fingerprint().environment_id
     with container.services() as services:
         memories = services.memories.list_memories(
             workspace_id, status=MemoryStatus.ACTIVE, limit=100
         )
-    relevant = set()
-    for memory in memories:
-        if (
-            memory.environment_fingerprint
-            and task.environment_version == memory.environment_id.rsplit("-v", 1)[-1]
-        ):
-            relevant.add(memory.id)
-    return relevant
+    return {memory.id for memory in memories if memory.environment_id == expected_environment}
 
 
 def _reset_embedding_stats(provider: Any) -> None:
@@ -525,6 +648,13 @@ def _summarize_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "incompatible_selection_rate": mean(
             [1.0 if row["incompatible_selected"] else 0.0 for row in rows]
         ),
+        "hard_negative_selection_rate": mean(
+            [1.0 if row["hard_negative_selected"] else 0.0 for row in rows]
+        ),
+        "hard_negative_outrank_rate": mean(
+            [1.0 if row["hard_negative_outranked_correct"] else 0.0 for row in rows]
+        ),
+        "false_abstention_rate": mean([1.0 if row["false_abstention"] else 0.0 for row in rows]),
         "total_incompatible_selected": sum(row["incompatible_selected"] for row in rows),
     }
 
@@ -608,7 +738,7 @@ def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
 
 def _render_markdown(payload: dict[str, Any]) -> str:
     lines = [
-        f"# RECAP benchmark — split `{payload['split']}`",
+        f"# RECAP benchmark - suite `{payload.get('suite', 'legacy')}` split `{payload['split']}`",
         "",
         f"Generated: {payload['generated_at']}",
         f"Dataset hash: `{payload['dataset_hash']}`",
@@ -618,8 +748,8 @@ def _render_markdown(payload: dict[str, Any]) -> str:
         "",
         "## Summary",
         "",
-        "| baseline | success | 95% CI | recall@3 | MRR | nDCG@3 | tool calls | harmful transfer | incompatible selection |",
-        "|---|---|---|---|---|---|---|---|---|",
+        "| baseline | success | 95% CI | recall@3 | MRR | nDCG@3 | tool calls | harmful transfer | incompatible selection | hard-neg selected | hard-neg outrank | false abstention |",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for baseline, stats in payload["summary"].items():
         lines.append(
@@ -627,7 +757,10 @@ def _render_markdown(payload: dict[str, Any]) -> str:
             f"[{stats['task_success_ci95'][0]:.3f}, {stats['task_success_ci95'][1]:.3f}] | "
             f"{stats['recall_at_3']:.3f} | {stats['mrr']:.3f} | {stats['ndcg_at_3']:.3f} | "
             f"{stats['mean_tool_calls']:.2f} | {stats['harmful_transfer_rate']:.3f} | "
-            f"{stats['incompatible_selection_rate']:.3f} |"
+            f"{stats['incompatible_selection_rate']:.3f} | "
+            f"{stats['hard_negative_selection_rate']:.3f} | "
+            f"{stats['hard_negative_outrank_rate']:.3f} | "
+            f"{stats['false_abstention_rate']:.3f} |"
         )
     lines.extend(
         [
@@ -644,8 +777,8 @@ def _render_markdown(payload: dict[str, Any]) -> str:
                 "",
                 "## Per-family metrics",
                 "",
-                "| family | baseline | success | recall@3 | MRR | harmful transfer | incompatible selection |",
-                "|---|---|---|---|---|---|---|",
+                "| family | baseline | success | recall@3 | MRR | harmful transfer | incompatible selection | hard-neg outrank | false abstention |",
+                "|---|---|---|---|---|---|---|---|---|",
             ]
         )
         for family, baselines in by_family.items():
@@ -654,7 +787,9 @@ def _render_markdown(payload: dict[str, Any]) -> str:
                     f"| {family} | {baseline} | {stats['task_success_rate']:.3f} | "
                     f"{stats['recall_at_3']:.3f} | {stats['mrr']:.3f} | "
                     f"{stats['harmful_transfer_rate']:.3f} | "
-                    f"{stats['incompatible_selection_rate']:.3f} |"
+                    f"{stats['incompatible_selection_rate']:.3f} | "
+                    f"{stats['hard_negative_outrank_rate']:.3f} | "
+                    f"{stats['false_abstention_rate']:.3f} |"
                 )
     lines.extend(
         [
@@ -739,7 +874,7 @@ def _render_markdown(payload: dict[str, Any]) -> str:
             "## Reproduction",
             "",
             "```bash",
-            f"recap eval run --split {payload['split']}",
+            f"recap eval run --suite {payload.get('suite', 'legacy')} --split {payload['split']}",
             "```",
         ]
     )

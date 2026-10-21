@@ -1,0 +1,265 @@
+{
+  "run_id": "run_6652d48712834e9ab2da30575b1f53b4",
+  "success": true,
+  "agent": "llm-tool-agent-v1",
+  "model": "gemma-4-e4b-uncensored-hauhaucs-aggressive",
+  "provider": "openai_compatible",
+  "environment_version": "2",
+  "failure_family": "idempotency_key",
+  "workspace_id": "phase2-live",
+  "tool_calls": 1,
+  "retries": 0,
+  "model_turns": 2,
+  "input_tokens": 781,
+  "output_tokens": 51,
+  "duration_ms": 6076,
+  "used_memory_id": null,
+  "final_error": "",
+  "steps": [
+    {
+      "action": "list_records",
+      "request": {
+        "limit": 10,
+        "request_id": "initial_fetch",
+        "tenant": "acme"
+      },
+      "result": {
+        "items": [
+          {
+            "id": "rec-001",
+            "tenant": "acme",
+            "value": 10
+          },
+          {
+            "id": "rec-002",
+            "tenant": "acme",
+            "value": 20
+          },
+          {
+            "id": "rec-003",
+            "tenant": "acme",
+            "value": 30
+          },
+          {
+            "id": "rec-004",
+            "tenant": "acme",
+            "value": 40
+          },
+          {
+            "id": "rec-005",
+            "tenant": "acme",
+            "value": 50
+          },
+          {
+            "id": "rec-006",
+            "tenant": "acme",
+            "value": 60
+          },
+          {
+            "id": "rec-007",
+            "tenant": "acme",
+            "value": 70
+          }
+        ],
+        "count": 7,
+        "total": 7,
+        "has_more": false
+      },
+      "ok": true,
+      "error": null
+    }
+  ],
+  "run": {
+    "id": "run_6652d48712834e9ab2da30575b1f53b4",
+    "workspace_id": "phase2-live",
+    "agent_id": "llm-tool-agent-v1",
+    "task_id": "phase2-live-idempotency-key-v2",
+    "task_family": "idempotency_key",
+    "environment_id": "mock-api-idempotency_key-v2",
+    "environment_fingerprint": "sha256:727f60e61020a7fa68015513be0f55b086862b7b2dfbc3b004e47b4e1f49756e",
+    "toolset_fingerprint": "sha256:727f60e61020a7fa68015513be0f55b086862b7b2dfbc3b004e47b4e1f49756e",
+    "model_provider": "openai_compatible",
+    "model_name": "gemma-4-e4b-uncensored-hauhaucs-aggressive",
+    "model_config_fingerprint": "sha256:53bf86bf9b8e818389d78c29f4d7693bf8d23b6d5bde0597b6a7e82266bbcecd",
+    "status": "succeeded",
+    "failure_type": null,
+    "success_criteria": "all records collected",
+    "tool_calls_count": 1,
+    "retry_count": 0,
+    "input_tokens": 781,
+    "output_tokens": 51,
+    "estimated_cost": 0.0,
+    "duration_ms": 6076,
+    "memory_snapshot_id": "snap_b2c5e7161a2e41d1a7dea04a3f448ec0",
+    "config_snapshot": {
+      "prompt_version": "llm-tool-agent-v1",
+      "max_tool_calls": 6,
+      "temperature": 0.0,
+      "tools": [
+        "list_records"
+      ],
+      "memory_id": null
+    },
+    "started_at": "2026-10-21T08:55:32.348581Z",
+    "finished_at": "2026-10-21T08:55:38.534819Z",
+    "created_at": "2026-10-21T08:55:32.348581Z",
+    "updated_at": "2026-10-21T08:55:38.534819Z"
+  },
+  "events": [
+    {
+      "id": "evt_eff83c48071a4d4489178e18a12d2937",
+      "run_id": "run_6652d48712834e9ab2da30575b1f53b4",
+      "sequence_number": 1,
+      "event_type": "run_started",
+      "timestamp": "2026-10-21T08:55:32.375900Z",
+      "payload_schema_version": "event-v1",
+      "tool_name": null,
+      "tool_version": null,
+      "correlation_id": null,
+      "payload_redacted": {
+        "task": "collect all records",
+        "environment_version": "2",
+        "agent_id": "llm-tool-agent-v1",
+        "memory_snapshot_id": "snap_b2c5e7161a2e41d1a7dea04a3f448ec0"
+      },
+      "payload_hash": "sha256:09ca3fd267970e2b23dcb0dd74e6de3e3d19ce6093d40254d2a7e9b0d972f397",
+      "redaction_applied": false,
+      "redaction_rule_version": "redaction-v1"
+    },
+    {
+      "id": "evt_804a33206e6c4a7c9481a6389d2be0a5",
+      "run_id": "run_6652d48712834e9ab2da30575b1f53b4",
+      "sequence_number": 2,
+      "event_type": "task_observation",
+      "timestamp": "2026-10-21T08:55:38.484502Z",
+      "payload_schema_version": "event-v1",
+      "tool_name": null,
+      "tool_version": null,
+      "correlation_id": null,
+      "payload_redacted": {
+        "observation": "tenant=acme total=7",
+        "model_turns": 2,
+        "input_tokens": "[REDACTED]",
+        "output_tokens": "[REDACTED]"
+      },
+      "payload_hash": "sha256:a3b790ea09873711cdb6d9bf690c1430aebc45f4146af89808a2a4d2dfabe45e",
+      "redaction_applied": true,
+      "redaction_rule_version": "redaction-v1"
+    },
+    {
+      "id": "evt_a848a7ac908a493b8db2fbf48e8a9488",
+      "run_id": "run_6652d48712834e9ab2da30575b1f53b4",
+      "sequence_number": 3,
+      "event_type": "tool_call_requested",
+      "timestamp": "2026-10-21T08:55:38.494282Z",
+      "payload_schema_version": "event-v1",
+      "tool_name": "list_records",
+      "tool_version": "2",
+      "correlation_id": null,
+      "payload_redacted": {
+        "arguments": {
+          "limit": 10,
+          "request_id": "initial_fetch",
+          "tenant": "acme"
+        }
+      },
+      "payload_hash": "sha256:2fb03e352453bb84713472b9eddf7f35c8ccc523996600a25351a56c8548009d",
+      "redaction_applied": false,
+      "redaction_rule_version": "redaction-v1"
+    },
+    {
+      "id": "evt_e1261b2275e04eeb8eaf68f21a4aa504",
+      "run_id": "run_6652d48712834e9ab2da30575b1f53b4",
+      "sequence_number": 4,
+      "event_type": "tool_call_succeeded",
+      "timestamp": "2026-10-21T08:55:38.504611Z",
+      "payload_schema_version": "event-v1",
+      "tool_name": "list_records",
+      "tool_version": "2",
+      "correlation_id": null,
+      "payload_redacted": {
+        "result": {
+          "items": [
+            {
+              "id": "rec-001",
+              "tenant": "acme",
+              "value": 10
+            },
+            {
+              "id": "rec-002",
+              "tenant": "acme",
+              "value": 20
+            },
+            {
+              "id": "rec-003",
+              "tenant": "acme",
+              "value": 30
+            },
+            {
+              "id": "rec-004",
+              "tenant": "acme",
+              "value": 40
+            },
+            {
+              "id": "rec-005",
+              "tenant": "acme",
+              "value": 50
+            },
+            {
+              "id": "rec-006",
+              "tenant": "acme",
+              "value": 60
+            },
+            {
+              "id": "rec-007",
+              "tenant": "acme",
+              "value": 70
+            }
+          ],
+          "count": 7,
+          "total": 7,
+          "has_more": false
+        }
+      },
+      "payload_hash": "sha256:bb5a174359f0e789cd945757f294f1e105f9dbe52e6497115c0172ad82f82779",
+      "redaction_applied": false,
+      "redaction_rule_version": "redaction-v1"
+    },
+    {
+      "id": "evt_1d9a7b97d4634bba8fbd96533fa2784f",
+      "run_id": "run_6652d48712834e9ab2da30575b1f53b4",
+      "sequence_number": 5,
+      "event_type": "postcondition_checked",
+      "timestamp": "2026-10-21T08:55:38.515416Z",
+      "payload_schema_version": "event-v1",
+      "tool_name": null,
+      "tool_version": null,
+      "correlation_id": null,
+      "payload_redacted": {
+        "passed": true,
+        "detail": null
+      },
+      "payload_hash": "sha256:0233106c027ea1ffd32c93cae5c7d13da907ec919d9832cbd3cad8ca2f8a507c",
+      "redaction_applied": false,
+      "redaction_rule_version": "redaction-v1"
+    },
+    {
+      "id": "evt_cca247200cb2444b9649ec4f5b18b566",
+      "run_id": "run_6652d48712834e9ab2da30575b1f53b4",
+      "sequence_number": 6,
+      "event_type": "run_finished",
+      "timestamp": "2026-10-21T08:55:38.524067Z",
+      "payload_schema_version": "event-v1",
+      "tool_name": null,
+      "tool_version": null,
+      "correlation_id": null,
+      "payload_redacted": {
+        "success": true,
+        "error": null
+      },
+      "payload_hash": "sha256:7077c5c64b380293a892ebcac84300fc25ad8226cb41c7a0ce993f3a6b14e7cc",
+      "redaction_applied": false,
+      "redaction_rule_version": "redaction-v1"
+    }
+  ]
+}

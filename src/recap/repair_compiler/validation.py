@@ -117,10 +117,10 @@ class MockSandboxValidator:
     def __init__(
         self,
         *,
-        environment_factory: Callable[[str], PaginatedApiEnvironment] | None = None,
+        environment_factory: Callable[[str, str], PaginatedApiEnvironment] | None = None,
     ) -> None:
         self.environment_factory = environment_factory or (
-            lambda version: PaginatedApiEnvironment(version=version)
+            lambda version, family: PaginatedApiEnvironment(version=version, failure_family=family)
         )
 
     def validate(
@@ -133,18 +133,14 @@ class MockSandboxValidator:
         started = datetime.now(UTC)
         checks: list[dict[str, Any]] = []
         version = environment.environment_version or "1"
-        sandbox = self.environment_factory(version)
+        family = str(environment.feature_flags.get("failure_family", "invalid_cursor"))
+        sandbox = self.environment_factory(version, family)
 
         # --- 1. Reproduce the failure deterministically ---------------------
         reproduction_ok = False
         expected_code = candidate.failure_window.error_code or "INVALID_CURSOR"
         try:
-            if version == "1":
-                sandbox.expire_cursor("start")
-                first = sandbox.list_records(tenant=sandbox.tenant, cursor="start")
-            else:
-                # v2 renamed the parameter; replay the legacy call shape.
-                first = sandbox.list_records(tenant=sandbox.tenant, cursor="start")
+            first = sandbox.provoke_failure()
             reproduction_ok = (
                 not first.ok and (first.error or {}).get("error_code") == expected_code
             )
@@ -193,7 +189,7 @@ class MockSandboxValidator:
 
         # --- 3. Negative guard: preconditions reject mismatched schema ------
         other_version = "2" if version == "1" else "1"
-        other = self.environment_factory(other_version)
+        other = self.environment_factory(other_version, family)
         other_state = dict(state)
         other_state["tool_schema_fingerprints"] = other.fingerprint().tool_schema_hashes
         other_results = [evaluate_predicate(p, other_state) for p in candidate.preconditions]
@@ -207,13 +203,13 @@ class MockSandboxValidator:
         )
 
         # --- 4. Apply the typed strategy in the sandbox ---------------------
-        applied, apply_detail = self._apply(candidate, sandbox)
+        applied, apply_detail, collected = self._apply(candidate, sandbox)
         checks.append({"check": "strategy_executed", "passed": applied, "detail": apply_detail})
 
         # --- 5. Postconditions ---------------------------------------------
         post_state = {
             **sandbox.snapshot(),
-            "records_collected": len(sandbox.records),
+            "records_collected": collected,
             "tool_call_succeeded": applied,
         }
         post_results = [evaluate_predicate(p, post_state) for p in candidate.postconditions]
@@ -245,72 +241,90 @@ class MockSandboxValidator:
 
     def _apply(
         self, candidate: RepairCandidate, sandbox: PaginatedApiEnvironment
-    ) -> tuple[bool, str]:
+    ) -> tuple[bool, str, int]:
         """Interpret allowlisted actions against the sandbox tool only."""
+        base = sandbox.naive_parameters()
         token: str | None = None
         collected = 0
+        response_field = sandbox.naive_response_field()
         for action in candidate.strategy.actions:
-            if action.action_type is ActionType.RETRY_WITH_BACKOFF:
-                sandbox.fail_next_calls(1)
-                result = sandbox.list_records(tenant=sandbox.tenant)
-                if not result.ok:
-                    # one bounded retry
-                    result = sandbox.list_records(tenant=sandbox.tenant)
-                if not result.ok:
-                    return False, "retry action exhausted"
-                collected += len(result.payload.get("items", []))
-                token = result.payload.get("cursor") or result.payload.get("page_token")
-            elif action.action_type is ActionType.REFRESH_PAGINATION_CURSOR:
-                first = sandbox.list_records(tenant=sandbox.tenant)
-                if not first.ok:
-                    return False, "fresh cursor request failed"
-                collected += len(first.payload.get("items", []))
-                token = first.payload.get("cursor") or first.payload.get("page_token")
+            parameters = action.parameters or {}
+            if action.action_type in {
+                ActionType.RETRY_WITH_BACKOFF,
+                ActionType.REFRESH_PAGINATION_CURSOR,
+            }:
+                base.pop("cursor", None)
+                base.pop("page_token", None)
             elif action.action_type is ActionType.MAP_PARAMETER:
-                mapping = action.parameters or {}
-                old = mapping.get("from", "cursor")
-                new = mapping.get("to", "page_token")
-                mapped_parameters: dict[str, Any] = {"tenant": sandbox.tenant, new: "start"}
-                if sandbox.version == "2" and old == "cursor":
-                    # Mapped parameter name is valid in v2; the value must be refreshed.
-                    first = sandbox.list_records(tenant=sandbox.tenant)
-                    if not first.ok:
-                        return False, "mapped parameter call failed"
-                    collected += len(first.payload.get("items", []))
-                    token = first.payload.get("page_token")
-                else:
-                    result = sandbox.list_records(**mapped_parameters)
-                    if not result.ok:
-                        return False, "mapped parameter call failed"
-                    collected += len(result.payload.get("items", []))
-                    token = result.payload.get("page_token") or result.payload.get("cursor")
+                old = parameters.get("from")
+                new = parameters.get("to")
+                if old:
+                    base.pop(str(old), None)
+                if new and old in parameters:
+                    base.pop(str(new), None)
+            elif action.action_type is ActionType.REFRESH_AUTH_TOKEN:
+                base["auth_token"] = str(parameters.get("token", "fresh-token"))
+            elif action.action_type is ActionType.SUPPLY_REQUIRED_PARAMETER:
+                for key, value in parameters.items():
+                    if isinstance(key, str) and isinstance(value, (str, int, float, bool)):
+                        base[key] = value
+            elif action.action_type is ActionType.MAP_PARAMETER_VALUE:
+                field = parameters.get("field")
+                target = parameters.get("to")
+                if isinstance(field, str) and target is not None:
+                    base[field] = target
+            elif action.action_type is ActionType.NORMALIZE_TIMESTAMP:
+                field = str(parameters.get("field", "since"))
+                base[field] = parameters.get("value", "2026-01-01T00:00:00Z")
+            elif action.action_type is ActionType.MAP_RESPONSE_FIELD:
+                response_field = str(parameters.get("field", "data"))
             elif action.action_type is ActionType.VERIFY_RESOURCE_EXISTS:
                 result = sandbox.list_records(tenant=sandbox.tenant, limit=1)
                 if not result.ok:
-                    return False, "resource verification failed"
+                    return False, "resource verification failed", 0
             elif action.action_type in {ActionType.HALT, ActionType.REQUEST_MISSING_FIELD}:
-                return False, "strategy intentionally halts"
+                return False, "strategy intentionally halts", 0
 
-        if token is None:
-            return collected > 0, "no pagination token produced"
-        # Complete pagination to prove the repair works end to end.
+        parameter_name = (
+            "page_token"
+            if sandbox.failure_family == "renamed_parameter" and sandbox.version == "2"
+            else "cursor"
+        )
+        request = dict(base)
+        if token is not None:
+            request[parameter_name] = token
+        first = sandbox.list_records(**request)
+        if not first.ok:
+            return (
+                False,
+                f"repair call failed: {(first.error or {}).get('error_code')}",
+                0,
+            )
+        items = first.payload.get(response_field)
+        if items is None:
+            return False, f"response field {response_field!r} is absent", 0
+        collected += len(items)
+        token = first.payload.get(parameter_name)
         while token is not None:
-            continuation: dict[str, Any] = {"tenant": sandbox.tenant}
-            if sandbox.version == "1":
-                continuation["cursor"] = token
-            else:
-                continuation["page_token"] = token
+            continuation = dict(base)
+            continuation[parameter_name] = token
             page = sandbox.list_records(**continuation)
             if not page.ok:
                 return (
                     False,
                     f"pagination continuation failed: {(page.error or {}).get('error_code')}",
+                    collected,
                 )
-            collected += len(page.payload.get("items", []))
-            token = page.payload.get("cursor") or page.payload.get("page_token")
-        return collected == len(
-            sandbox.records
-        ), f"collected {collected}/{len(sandbox.records)} records"
+            items = page.payload.get(response_field)
+            if items is None:
+                return False, f"response field {response_field!r} is absent", collected
+            collected += len(items)
+            token = page.payload.get(parameter_name)
+        return (
+            collected == len(sandbox.records),
+            f"collected {collected}/{len(sandbox.records)} records",
+            collected,
+        )
 
 
 class ValidatorRegistry:

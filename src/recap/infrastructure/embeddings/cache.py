@@ -142,7 +142,9 @@ class SqlEmbeddingCache:
     def clear(self) -> int:
         with self.database.session() as session:
             result = session.execute(delete(EmbeddingCacheRow))
-            return int(result.rowcount or 0)
+            # SQLAlchemy types ``Session.execute`` as Result[Any]; DELETE returns
+            # a CursorResult with rowcount at runtime.
+            return int(getattr(result, "rowcount", 0) or 0)
 
 
 class CachedEmbeddingProvider:

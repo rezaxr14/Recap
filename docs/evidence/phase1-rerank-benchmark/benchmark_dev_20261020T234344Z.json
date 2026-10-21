@@ -1,0 +1,1857 @@
+{
+  "generated_at": "2026-10-20T23:44:43.551919+00:00",
+  "split": "dev",
+  "dataset_hash": "sha256:5ede1cf20476c8fc20f9e0b8bf5a5a21e7e000bb70e0a0b50c5d9ea6d0959382",
+  "workspace_id": "bench-sha256:5-20261020t234344z",
+  "tasks": [
+    {
+      "task_id": "paginate-dev-01",
+      "task_family": "api_pagination",
+      "task_version": "1",
+      "instruction": "Fetch all records for the tenant despite cursor expiry.",
+      "environment_version": "1",
+      "split": "dev",
+      "failure_mode": "invalid_cursor",
+      "expected_memory_signature": "ValidationError|INVALID_CURSOR|list_records",
+      "relevant_memory_tags": [
+        "pagination",
+        "invalid_cursor"
+      ],
+      "seed": 13,
+      "difficulty": "easy",
+      "side_effect_risk": "read_only"
+    },
+    {
+      "task_id": "paginate-dev-02",
+      "task_family": "api_pagination",
+      "task_version": "2",
+      "instruction": "Collect all records after the API renamed the pagination parameter.",
+      "environment_version": "2",
+      "split": "dev",
+      "failure_mode": "renamed_parameter",
+      "expected_memory_signature": "ValidationError|UNKNOWN_PARAMETER|list_records",
+      "relevant_memory_tags": [
+        "pagination",
+        "page_token"
+      ],
+      "seed": 23,
+      "difficulty": "medium",
+      "side_effect_risk": "read_only"
+    }
+  ],
+  "baselines": [
+    "no_memory",
+    "retry_only",
+    "bm25",
+    "vector",
+    "hybrid_rrf",
+    "hybrid_rerank",
+    "outcome_aware",
+    "bm25_naive_chunk",
+    "vector_naive_chunk",
+    "hybrid_rrf_naive_chunk",
+    "outcome_aware_naive_chunk",
+    "bm25_chunk",
+    "vector_chunk",
+    "hybrid_rrf_chunk",
+    "outcome_aware_chunk"
+  ],
+  "per_task": [
+    {
+      "task_id": "paginate-dev-01",
+      "task_family": "api_pagination",
+      "baseline": "no_memory",
+      "split": "dev",
+      "environment_version": "1",
+      "run_id": "run_8fdf9157b3dd4ec7b53e0e70995b1f91",
+      "memory_snapshot_id": "snap_63042e3024a5409b969a1f22264c493e",
+      "retrieval_status": "not_retrieved",
+      "selected_memory_ids": [],
+      "relevant_memory_ids": [
+        "mem_b1a464f0a5e74c20967ce524abfdff3a"
+      ],
+      "recall_at_3": 0.0,
+      "mrr": 0.0,
+      "ndcg_at_3": 0.0,
+      "task_success": false,
+      "tool_calls": 1,
+      "retries": 0,
+      "used_memory_id": null,
+      "harmful_transfer": false,
+      "incompatible_selected": 0,
+      "retrieval_latency_ms": null,
+      "retrieval_stage_latency_ms": {},
+      "error": "cursor 'start' is invalid or expired"
+    },
+    {
+      "task_id": "paginate-dev-02",
+      "task_family": "api_pagination",
+      "baseline": "no_memory",
+      "split": "dev",
+      "environment_version": "2",
+      "run_id": "run_f346f301bdf042e3992f1f764b9d29f2",
+      "memory_snapshot_id": "snap_c12f3a047d0c4dc198e580e5ad741a30",
+      "retrieval_status": "not_retrieved",
+      "selected_memory_ids": [],
+      "relevant_memory_ids": [
+        "mem_431928501fed45b58e0162c0610dbfc1"
+      ],
+      "recall_at_3": 0.0,
+      "mrr": 0.0,
+      "ndcg_at_3": 0.0,
+      "task_success": false,
+      "tool_calls": 1,
+      "retries": 0,
+      "used_memory_id": null,
+      "harmful_transfer": false,
+      "incompatible_selected": 0,
+      "retrieval_latency_ms": null,
+      "retrieval_stage_latency_ms": {},
+      "error": "unknown parameter 'cursor'; this API version requires 'page_token'"
+    },
+    {
+      "task_id": "paginate-dev-01",
+      "task_family": "api_pagination",
+      "baseline": "retry_only",
+      "split": "dev",
+      "environment_version": "1",
+      "run_id": "run_1def582af6c24f199c48599892d13a41",
+      "memory_snapshot_id": "snap_b752c8e852d0487fa463662338fb3193",
+      "retrieval_status": "not_retrieved",
+      "selected_memory_ids": [],
+      "relevant_memory_ids": [
+        "mem_b1a464f0a5e74c20967ce524abfdff3a"
+      ],
+      "recall_at_3": 0.0,
+      "mrr": 0.0,
+      "ndcg_at_3": 0.0,
+      "task_success": false,
+      "tool_calls": 1,
+      "retries": 0,
+      "used_memory_id": null,
+      "harmful_transfer": false,
+      "incompatible_selected": 0,
+      "retrieval_latency_ms": null,
+      "retrieval_stage_latency_ms": {},
+      "error": "cursor 'start' is invalid or expired"
+    },
+    {
+      "task_id": "paginate-dev-02",
+      "task_family": "api_pagination",
+      "baseline": "retry_only",
+      "split": "dev",
+      "environment_version": "2",
+      "run_id": "run_a885f27ad0044e35a06ad394b30bbe05",
+      "memory_snapshot_id": "snap_a9122f9c5d1e448cb4c17d90b7a4b3c3",
+      "retrieval_status": "not_retrieved",
+      "selected_memory_ids": [],
+      "relevant_memory_ids": [
+        "mem_431928501fed45b58e0162c0610dbfc1"
+      ],
+      "recall_at_3": 0.0,
+      "mrr": 0.0,
+      "ndcg_at_3": 0.0,
+      "task_success": false,
+      "tool_calls": 1,
+      "retries": 0,
+      "used_memory_id": null,
+      "harmful_transfer": false,
+      "incompatible_selected": 0,
+      "retrieval_latency_ms": null,
+      "retrieval_stage_latency_ms": {},
+      "error": "unknown parameter 'cursor'; this API version requires 'page_token'"
+    },
+    {
+      "task_id": "paginate-dev-01",
+      "task_family": "api_pagination",
+      "baseline": "bm25",
+      "split": "dev",
+      "environment_version": "1",
+      "run_id": "run_3f54bbc328ef4697af9ca3e0f34a7c3c",
+      "memory_snapshot_id": "snap_aa068fbd7e44436694b184bdfecc97a9",
+      "retrieval_status": "selected",
+      "selected_memory_ids": [
+        "mem_b1a464f0a5e74c20967ce524abfdff3a",
+        "mem_431928501fed45b58e0162c0610dbfc1"
+      ],
+      "relevant_memory_ids": [
+        "mem_b1a464f0a5e74c20967ce524abfdff3a"
+      ],
+      "recall_at_3": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_3": 1.0,
+      "task_success": true,
+      "tool_calls": 4,
+      "retries": 1,
+      "used_memory_id": "mem_b1a464f0a5e74c20967ce524abfdff3a",
+      "harmful_transfer": false,
+      "incompatible_selected": 1,
+      "retrieval_latency_ms": 64.851,
+      "retrieval_stage_latency_ms": {
+        "query_build": 0.014,
+        "search": 31.534,
+        "fuse": 0.019,
+        "evaluate": 12.982,
+        "total": 64.851
+      },
+      "error": null
+    },
+    {
+      "task_id": "paginate-dev-02",
+      "task_family": "api_pagination",
+      "baseline": "bm25",
+      "split": "dev",
+      "environment_version": "2",
+      "run_id": "run_352a7116d286408090907ca69bc50ef9",
+      "memory_snapshot_id": "snap_3a9bdd4250704d689bba4a4fe3e883f3",
+      "retrieval_status": "selected",
+      "selected_memory_ids": [
+        "mem_431928501fed45b58e0162c0610dbfc1",
+        "mem_b1a464f0a5e74c20967ce524abfdff3a"
+      ],
+      "relevant_memory_ids": [
+        "mem_431928501fed45b58e0162c0610dbfc1"
+      ],
+      "recall_at_3": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_3": 1.0,
+      "task_success": true,
+      "tool_calls": 4,
+      "retries": 1,
+      "used_memory_id": "mem_431928501fed45b58e0162c0610dbfc1",
+      "harmful_transfer": false,
+      "incompatible_selected": 1,
+      "retrieval_latency_ms": 94.62,
+      "retrieval_stage_latency_ms": {
+        "query_build": 0.016,
+        "search": 66.991,
+        "fuse": 0.017,
+        "evaluate": 12.082,
+        "total": 94.62
+      },
+      "error": null
+    },
+    {
+      "task_id": "paginate-dev-01",
+      "task_family": "api_pagination",
+      "baseline": "vector",
+      "split": "dev",
+      "environment_version": "1",
+      "run_id": "run_5465db41c07044b7aa8977a33a6064fe",
+      "memory_snapshot_id": "snap_cfdfe09459834106b462dcff65707db6",
+      "retrieval_status": "selected",
+      "selected_memory_ids": [
+        "mem_b1a464f0a5e74c20967ce524abfdff3a",
+        "mem_431928501fed45b58e0162c0610dbfc1"
+      ],
+      "relevant_memory_ids": [
+        "mem_b1a464f0a5e74c20967ce524abfdff3a"
+      ],
+      "recall_at_3": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_3": 1.0,
+      "task_success": true,
+      "tool_calls": 4,
+      "retries": 1,
+      "used_memory_id": "mem_b1a464f0a5e74c20967ce524abfdff3a",
+      "harmful_transfer": false,
+      "incompatible_selected": 1,
+      "retrieval_latency_ms": 88.593,
+      "retrieval_stage_latency_ms": {
+        "query_build": 0.009,
+        "search": 65.356,
+        "fuse": 0.013,
+        "evaluate": 10.111,
+        "total": 88.593
+      },
+      "error": null
+    },
+    {
+      "task_id": "paginate-dev-02",
+      "task_family": "api_pagination",
+      "baseline": "vector",
+      "split": "dev",
+      "environment_version": "2",
+      "run_id": "run_aa47e9a26c914ac8998e70d101653407",
+      "memory_snapshot_id": "snap_a1479de5fdb24ee78a0cb3eb5e20d1f9",
+      "retrieval_status": "selected",
+      "selected_memory_ids": [
+        "mem_431928501fed45b58e0162c0610dbfc1",
+        "mem_b1a464f0a5e74c20967ce524abfdff3a"
+      ],
+      "relevant_memory_ids": [
+        "mem_431928501fed45b58e0162c0610dbfc1"
+      ],
+      "recall_at_3": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_3": 1.0,
+      "task_success": true,
+      "tool_calls": 4,
+      "retries": 1,
+      "used_memory_id": "mem_431928501fed45b58e0162c0610dbfc1",
+      "harmful_transfer": false,
+      "incompatible_selected": 1,
+      "retrieval_latency_ms": 84.943,
+      "retrieval_stage_latency_ms": {
+        "query_build": 0.01,
+        "search": 63.311,
+        "fuse": 0.009,
+        "evaluate": 8.427,
+        "total": 84.943
+      },
+      "error": null
+    },
+    {
+      "task_id": "paginate-dev-01",
+      "task_family": "api_pagination",
+      "baseline": "hybrid_rrf",
+      "split": "dev",
+      "environment_version": "1",
+      "run_id": "run_417fc9c12b144c2d84b770f5a992866b",
+      "memory_snapshot_id": "snap_dfe0d80f0e1d460193464f0dd526ac72",
+      "retrieval_status": "selected",
+      "selected_memory_ids": [
+        "mem_b1a464f0a5e74c20967ce524abfdff3a",
+        "mem_431928501fed45b58e0162c0610dbfc1"
+      ],
+      "relevant_memory_ids": [
+        "mem_b1a464f0a5e74c20967ce524abfdff3a"
+      ],
+      "recall_at_3": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_3": 1.0,
+      "task_success": true,
+      "tool_calls": 4,
+      "retries": 1,
+      "used_memory_id": "mem_b1a464f0a5e74c20967ce524abfdff3a",
+      "harmful_transfer": false,
+      "incompatible_selected": 1,
+      "retrieval_latency_ms": 155.581,
+      "retrieval_stage_latency_ms": {
+        "query_build": 0.009,
+        "search": 134.044,
+        "fuse": 0.058,
+        "evaluate": 9.288,
+        "total": 155.581
+      },
+      "error": null
+    },
+    {
+      "task_id": "paginate-dev-02",
+      "task_family": "api_pagination",
+      "baseline": "hybrid_rrf",
+      "split": "dev",
+      "environment_version": "2",
+      "run_id": "run_78c4caf7173747c9a5f8a896e354fd2a",
+      "memory_snapshot_id": "snap_eb53dfc4d2054dd5a5d117790d5481a2",
+      "retrieval_status": "selected",
+      "selected_memory_ids": [
+        "mem_431928501fed45b58e0162c0610dbfc1",
+        "mem_b1a464f0a5e74c20967ce524abfdff3a"
+      ],
+      "relevant_memory_ids": [
+        "mem_431928501fed45b58e0162c0610dbfc1"
+      ],
+      "recall_at_3": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_3": 1.0,
+      "task_success": true,
+      "tool_calls": 4,
+      "retries": 1,
+      "used_memory_id": "mem_431928501fed45b58e0162c0610dbfc1",
+      "harmful_transfer": false,
+      "incompatible_selected": 1,
+      "retrieval_latency_ms": 145.763,
+      "retrieval_stage_latency_ms": {
+        "query_build": 0.012,
+        "search": 122.741,
+        "fuse": 0.047,
+        "evaluate": 8.69,
+        "total": 145.763
+      },
+      "error": null
+    },
+    {
+      "task_id": "paginate-dev-01",
+      "task_family": "api_pagination",
+      "baseline": "hybrid_rerank",
+      "split": "dev",
+      "environment_version": "1",
+      "run_id": "run_d0417444d59a452480fde1ab3d4709d0",
+      "memory_snapshot_id": "snap_0de088c937064e1d8bd0125e8d5fd259",
+      "retrieval_status": "selected",
+      "selected_memory_ids": [
+        "mem_b1a464f0a5e74c20967ce524abfdff3a",
+        "mem_431928501fed45b58e0162c0610dbfc1"
+      ],
+      "relevant_memory_ids": [
+        "mem_b1a464f0a5e74c20967ce524abfdff3a"
+      ],
+      "recall_at_3": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_3": 1.0,
+      "task_success": true,
+      "tool_calls": 4,
+      "retries": 1,
+      "used_memory_id": "mem_b1a464f0a5e74c20967ce524abfdff3a",
+      "harmful_transfer": false,
+      "incompatible_selected": 1,
+      "retrieval_latency_ms": 298.699,
+      "retrieval_stage_latency_ms": {
+        "query_build": 0.009,
+        "search": 148.424,
+        "fuse": 0.041,
+        "rerank": 128.095,
+        "evaluate": 9.11,
+        "total": 298.699
+      },
+      "error": null
+    },
+    {
+      "task_id": "paginate-dev-02",
+      "task_family": "api_pagination",
+      "baseline": "hybrid_rerank",
+      "split": "dev",
+      "environment_version": "2",
+      "run_id": "run_e8e25d50e8a342938a8592d72fda7cf6",
+      "memory_snapshot_id": "snap_c2455f92f1e54e5a97bd0dcd49d8dacd",
+      "retrieval_status": "selected",
+      "selected_memory_ids": [
+        "mem_431928501fed45b58e0162c0610dbfc1",
+        "mem_b1a464f0a5e74c20967ce524abfdff3a"
+      ],
+      "relevant_memory_ids": [
+        "mem_431928501fed45b58e0162c0610dbfc1"
+      ],
+      "recall_at_3": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_3": 1.0,
+      "task_success": true,
+      "tool_calls": 4,
+      "retries": 1,
+      "used_memory_id": "mem_431928501fed45b58e0162c0610dbfc1",
+      "harmful_transfer": false,
+      "incompatible_selected": 1,
+      "retrieval_latency_ms": 258.063,
+      "retrieval_stage_latency_ms": {
+        "query_build": 0.013,
+        "search": 124.435,
+        "fuse": 0.032,
+        "rerank": 110.786,
+        "evaluate": 8.64,
+        "total": 258.063
+      },
+      "error": null
+    },
+    {
+      "task_id": "paginate-dev-01",
+      "task_family": "api_pagination",
+      "baseline": "outcome_aware",
+      "split": "dev",
+      "environment_version": "1",
+      "run_id": "run_d7ab6aa7485a4d8f89d254d4569f4b30",
+      "memory_snapshot_id": "snap_7a5af8446fe54c4ca084a05182aed9d9",
+      "retrieval_status": "selected",
+      "selected_memory_ids": [
+        "mem_b1a464f0a5e74c20967ce524abfdff3a"
+      ],
+      "relevant_memory_ids": [
+        "mem_b1a464f0a5e74c20967ce524abfdff3a"
+      ],
+      "recall_at_3": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_3": 1.0,
+      "task_success": true,
+      "tool_calls": 4,
+      "retries": 1,
+      "used_memory_id": "mem_b1a464f0a5e74c20967ce524abfdff3a",
+      "harmful_transfer": false,
+      "incompatible_selected": 0,
+      "retrieval_latency_ms": 146.952,
+      "retrieval_stage_latency_ms": {
+        "query_build": 0.014,
+        "search": 127.771,
+        "fuse": 0.049,
+        "evaluate": 8.216,
+        "total": 146.952
+      },
+      "error": null
+    },
+    {
+      "task_id": "paginate-dev-02",
+      "task_family": "api_pagination",
+      "baseline": "outcome_aware",
+      "split": "dev",
+      "environment_version": "2",
+      "run_id": "run_a66f64e150bd46b1bb962b9ddb6710d6",
+      "memory_snapshot_id": "snap_c91f4ad58bc14758a874df4bde46da61",
+      "retrieval_status": "selected",
+      "selected_memory_ids": [
+        "mem_431928501fed45b58e0162c0610dbfc1"
+      ],
+      "relevant_memory_ids": [
+        "mem_431928501fed45b58e0162c0610dbfc1"
+      ],
+      "recall_at_3": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_3": 1.0,
+      "task_success": true,
+      "tool_calls": 4,
+      "retries": 1,
+      "used_memory_id": "mem_431928501fed45b58e0162c0610dbfc1",
+      "harmful_transfer": false,
+      "incompatible_selected": 0,
+      "retrieval_latency_ms": 152.046,
+      "retrieval_stage_latency_ms": {
+        "query_build": 0.012,
+        "search": 132.684,
+        "fuse": 0.033,
+        "evaluate": 7.866,
+        "total": 152.046
+      },
+      "error": null
+    },
+    {
+      "task_id": "paginate-dev-01",
+      "task_family": "api_pagination",
+      "baseline": "bm25_naive_chunk",
+      "split": "dev",
+      "environment_version": "1",
+      "run_id": "run_fa4b8c6d6048488297863a4ae78e3a3f",
+      "memory_snapshot_id": "snap_38948525d6a6430a8417d058c7b82cd9",
+      "retrieval_status": "selected",
+      "selected_memory_ids": [
+        "mem_b1a464f0a5e74c20967ce524abfdff3a"
+      ],
+      "relevant_memory_ids": [
+        "mem_b1a464f0a5e74c20967ce524abfdff3a"
+      ],
+      "recall_at_3": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_3": 1.0,
+      "task_success": true,
+      "tool_calls": 4,
+      "retries": 1,
+      "used_memory_id": "mem_b1a464f0a5e74c20967ce524abfdff3a",
+      "harmful_transfer": false,
+      "incompatible_selected": 0,
+      "retrieval_latency_ms": 73.608,
+      "retrieval_stage_latency_ms": {
+        "query_build": 0.01,
+        "search": 53.522,
+        "fuse": 0.008,
+        "evaluate": 4.031,
+        "total": 73.608
+      },
+      "error": null
+    },
+    {
+      "task_id": "paginate-dev-02",
+      "task_family": "api_pagination",
+      "baseline": "bm25_naive_chunk",
+      "split": "dev",
+      "environment_version": "2",
+      "run_id": "run_aa4ecc4715164f13a9536f32334cba3f",
+      "memory_snapshot_id": "snap_cfedc74539ed4cf4b1e5d04b4f9b9730",
+      "retrieval_status": "selected",
+      "selected_memory_ids": [
+        "mem_431928501fed45b58e0162c0610dbfc1"
+      ],
+      "relevant_memory_ids": [
+        "mem_431928501fed45b58e0162c0610dbfc1"
+      ],
+      "recall_at_3": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_3": 1.0,
+      "task_success": true,
+      "tool_calls": 4,
+      "retries": 1,
+      "used_memory_id": "mem_431928501fed45b58e0162c0610dbfc1",
+      "harmful_transfer": false,
+      "incompatible_selected": 0,
+      "retrieval_latency_ms": 74.912,
+      "retrieval_stage_latency_ms": {
+        "query_build": 0.013,
+        "search": 55.807,
+        "fuse": 0.012,
+        "evaluate": 3.533,
+        "total": 74.912
+      },
+      "error": null
+    },
+    {
+      "task_id": "paginate-dev-01",
+      "task_family": "api_pagination",
+      "baseline": "vector_naive_chunk",
+      "split": "dev",
+      "environment_version": "1",
+      "run_id": "run_1c4bf7dc7b2247b8a17f472ad1101cb7",
+      "memory_snapshot_id": "snap_1d4d62b681eb46a38ca18b02387d037d",
+      "retrieval_status": "selected",
+      "selected_memory_ids": [
+        "mem_b1a464f0a5e74c20967ce524abfdff3a"
+      ],
+      "relevant_memory_ids": [
+        "mem_b1a464f0a5e74c20967ce524abfdff3a"
+      ],
+      "recall_at_3": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_3": 1.0,
+      "task_success": true,
+      "tool_calls": 4,
+      "retries": 1,
+      "used_memory_id": "mem_b1a464f0a5e74c20967ce524abfdff3a",
+      "harmful_transfer": false,
+      "incompatible_selected": 0,
+      "retrieval_latency_ms": 79.209,
+      "retrieval_stage_latency_ms": {
+        "query_build": 0.011,
+        "search": 62.068,
+        "fuse": 0.009,
+        "evaluate": 3.371,
+        "total": 79.209
+      },
+      "error": null
+    },
+    {
+      "task_id": "paginate-dev-02",
+      "task_family": "api_pagination",
+      "baseline": "vector_naive_chunk",
+      "split": "dev",
+      "environment_version": "2",
+      "run_id": "run_c817055ede2349119adc9536a7f7ca83",
+      "memory_snapshot_id": "snap_b0627a5162274e8c984d5354bc58822e",
+      "retrieval_status": "selected",
+      "selected_memory_ids": [
+        "mem_431928501fed45b58e0162c0610dbfc1"
+      ],
+      "relevant_memory_ids": [
+        "mem_431928501fed45b58e0162c0610dbfc1"
+      ],
+      "recall_at_3": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_3": 1.0,
+      "task_success": true,
+      "tool_calls": 4,
+      "retries": 1,
+      "used_memory_id": "mem_431928501fed45b58e0162c0610dbfc1",
+      "harmful_transfer": false,
+      "incompatible_selected": 0,
+      "retrieval_latency_ms": 73.81,
+      "retrieval_stage_latency_ms": {
+        "query_build": 0.009,
+        "search": 55.607,
+        "fuse": 0.012,
+        "evaluate": 3.651,
+        "total": 73.81
+      },
+      "error": null
+    },
+    {
+      "task_id": "paginate-dev-01",
+      "task_family": "api_pagination",
+      "baseline": "hybrid_rrf_naive_chunk",
+      "split": "dev",
+      "environment_version": "1",
+      "run_id": "run_eba8ada9d510483086af9faea3542e68",
+      "memory_snapshot_id": "snap_a7944c52face4c7e8de2750f165e0934",
+      "retrieval_status": "selected",
+      "selected_memory_ids": [
+        "mem_b1a464f0a5e74c20967ce524abfdff3a"
+      ],
+      "relevant_memory_ids": [
+        "mem_b1a464f0a5e74c20967ce524abfdff3a"
+      ],
+      "recall_at_3": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_3": 1.0,
+      "task_success": true,
+      "tool_calls": 4,
+      "retries": 1,
+      "used_memory_id": "mem_b1a464f0a5e74c20967ce524abfdff3a",
+      "harmful_transfer": false,
+      "incompatible_selected": 0,
+      "retrieval_latency_ms": 133.625,
+      "retrieval_stage_latency_ms": {
+        "query_build": 0.009,
+        "search": 116.288,
+        "fuse": 0.038,
+        "evaluate": 3.477,
+        "total": 133.625
+      },
+      "error": null
+    },
+    {
+      "task_id": "paginate-dev-02",
+      "task_family": "api_pagination",
+      "baseline": "hybrid_rrf_naive_chunk",
+      "split": "dev",
+      "environment_version": "2",
+      "run_id": "run_c921d049837942d0879706c0ebf5adb1",
+      "memory_snapshot_id": "snap_6c757ec2b21b472d8719b5e3c80f0fb1",
+      "retrieval_status": "selected",
+      "selected_memory_ids": [
+        "mem_431928501fed45b58e0162c0610dbfc1"
+      ],
+      "relevant_memory_ids": [
+        "mem_431928501fed45b58e0162c0610dbfc1"
+      ],
+      "recall_at_3": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_3": 1.0,
+      "task_success": true,
+      "tool_calls": 4,
+      "retries": 1,
+      "used_memory_id": "mem_431928501fed45b58e0162c0610dbfc1",
+      "harmful_transfer": false,
+      "incompatible_selected": 0,
+      "retrieval_latency_ms": 144.347,
+      "retrieval_stage_latency_ms": {
+        "query_build": 0.012,
+        "search": 127.335,
+        "fuse": 0.046,
+        "evaluate": 3.493,
+        "total": 144.347
+      },
+      "error": null
+    },
+    {
+      "task_id": "paginate-dev-01",
+      "task_family": "api_pagination",
+      "baseline": "outcome_aware_naive_chunk",
+      "split": "dev",
+      "environment_version": "1",
+      "run_id": "run_e8eabdc744c441528ceafe772a1485c9",
+      "memory_snapshot_id": "snap_3c622ac8bd0f46e4bc7b3e3b0160deea",
+      "retrieval_status": "selected",
+      "selected_memory_ids": [
+        "mem_b1a464f0a5e74c20967ce524abfdff3a"
+      ],
+      "relevant_memory_ids": [
+        "mem_b1a464f0a5e74c20967ce524abfdff3a"
+      ],
+      "recall_at_3": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_3": 1.0,
+      "task_success": true,
+      "tool_calls": 4,
+      "retries": 1,
+      "used_memory_id": "mem_b1a464f0a5e74c20967ce524abfdff3a",
+      "harmful_transfer": false,
+      "incompatible_selected": 0,
+      "retrieval_latency_ms": 144.761,
+      "retrieval_stage_latency_ms": {
+        "query_build": 0.009,
+        "search": 125.372,
+        "fuse": 0.091,
+        "evaluate": 4.409,
+        "total": 144.761
+      },
+      "error": null
+    },
+    {
+      "task_id": "paginate-dev-02",
+      "task_family": "api_pagination",
+      "baseline": "outcome_aware_naive_chunk",
+      "split": "dev",
+      "environment_version": "2",
+      "run_id": "run_44b602f08a094f0bbf75adf57fbe9498",
+      "memory_snapshot_id": "snap_27dbd27a4ea24284943ec7ffb8b94b54",
+      "retrieval_status": "selected",
+      "selected_memory_ids": [
+        "mem_431928501fed45b58e0162c0610dbfc1"
+      ],
+      "relevant_memory_ids": [
+        "mem_431928501fed45b58e0162c0610dbfc1"
+      ],
+      "recall_at_3": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_3": 1.0,
+      "task_success": true,
+      "tool_calls": 4,
+      "retries": 1,
+      "used_memory_id": "mem_431928501fed45b58e0162c0610dbfc1",
+      "harmful_transfer": false,
+      "incompatible_selected": 0,
+      "retrieval_latency_ms": 130.838,
+      "retrieval_stage_latency_ms": {
+        "query_build": 0.014,
+        "search": 114.555,
+        "fuse": 0.035,
+        "evaluate": 3.714,
+        "total": 130.838
+      },
+      "error": null
+    },
+    {
+      "task_id": "paginate-dev-01",
+      "task_family": "api_pagination",
+      "baseline": "bm25_chunk",
+      "split": "dev",
+      "environment_version": "1",
+      "run_id": "run_253661024149495c9a279dc8c41bcf07",
+      "memory_snapshot_id": "snap_634ce59cce304d9aa419e8f408b1b500",
+      "retrieval_status": "selected",
+      "selected_memory_ids": [
+        "mem_b1a464f0a5e74c20967ce524abfdff3a"
+      ],
+      "relevant_memory_ids": [
+        "mem_b1a464f0a5e74c20967ce524abfdff3a"
+      ],
+      "recall_at_3": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_3": 1.0,
+      "task_success": true,
+      "tool_calls": 4,
+      "retries": 1,
+      "used_memory_id": "mem_b1a464f0a5e74c20967ce524abfdff3a",
+      "harmful_transfer": false,
+      "incompatible_selected": 0,
+      "retrieval_latency_ms": 70.432,
+      "retrieval_stage_latency_ms": {
+        "query_build": 0.008,
+        "search": 54.732,
+        "fuse": 0.011,
+        "evaluate": 3.457,
+        "total": 70.432
+      },
+      "error": null
+    },
+    {
+      "task_id": "paginate-dev-02",
+      "task_family": "api_pagination",
+      "baseline": "bm25_chunk",
+      "split": "dev",
+      "environment_version": "2",
+      "run_id": "run_86b102cbdd0c404eae739b6ef87c7888",
+      "memory_snapshot_id": "snap_0d85de502edb415388036087601d9a4c",
+      "retrieval_status": "selected",
+      "selected_memory_ids": [
+        "mem_431928501fed45b58e0162c0610dbfc1"
+      ],
+      "relevant_memory_ids": [
+        "mem_431928501fed45b58e0162c0610dbfc1"
+      ],
+      "recall_at_3": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_3": 1.0,
+      "task_success": true,
+      "tool_calls": 4,
+      "retries": 1,
+      "used_memory_id": "mem_431928501fed45b58e0162c0610dbfc1",
+      "harmful_transfer": false,
+      "incompatible_selected": 0,
+      "retrieval_latency_ms": 68.772,
+      "retrieval_stage_latency_ms": {
+        "query_build": 0.009,
+        "search": 52.147,
+        "fuse": 0.009,
+        "evaluate": 3.717,
+        "total": 68.772
+      },
+      "error": null
+    },
+    {
+      "task_id": "paginate-dev-01",
+      "task_family": "api_pagination",
+      "baseline": "vector_chunk",
+      "split": "dev",
+      "environment_version": "1",
+      "run_id": "run_94d3ed4ed70b4d1cbc09b15d67e740f1",
+      "memory_snapshot_id": "snap_1bfb2e381c064bf38d17108e6cf0efd6",
+      "retrieval_status": "selected",
+      "selected_memory_ids": [
+        "mem_b1a464f0a5e74c20967ce524abfdff3a"
+      ],
+      "relevant_memory_ids": [
+        "mem_b1a464f0a5e74c20967ce524abfdff3a"
+      ],
+      "recall_at_3": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_3": 1.0,
+      "task_success": true,
+      "tool_calls": 4,
+      "retries": 1,
+      "used_memory_id": "mem_b1a464f0a5e74c20967ce524abfdff3a",
+      "harmful_transfer": false,
+      "incompatible_selected": 0,
+      "retrieval_latency_ms": 73.062,
+      "retrieval_stage_latency_ms": {
+        "query_build": 0.011,
+        "search": 57.296,
+        "fuse": 0.01,
+        "evaluate": 3.639,
+        "total": 73.062
+      },
+      "error": null
+    },
+    {
+      "task_id": "paginate-dev-02",
+      "task_family": "api_pagination",
+      "baseline": "vector_chunk",
+      "split": "dev",
+      "environment_version": "2",
+      "run_id": "run_35fc7604a1d642519d7a5bd4240763e5",
+      "memory_snapshot_id": "snap_332064caaf0a4bbda3fc24fba0f10886",
+      "retrieval_status": "selected",
+      "selected_memory_ids": [
+        "mem_431928501fed45b58e0162c0610dbfc1"
+      ],
+      "relevant_memory_ids": [
+        "mem_431928501fed45b58e0162c0610dbfc1"
+      ],
+      "recall_at_3": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_3": 1.0,
+      "task_success": true,
+      "tool_calls": 4,
+      "retries": 1,
+      "used_memory_id": "mem_431928501fed45b58e0162c0610dbfc1",
+      "harmful_transfer": false,
+      "incompatible_selected": 0,
+      "retrieval_latency_ms": 76.763,
+      "retrieval_stage_latency_ms": {
+        "query_build": 0.009,
+        "search": 60.554,
+        "fuse": 0.009,
+        "evaluate": 3.517,
+        "total": 76.763
+      },
+      "error": null
+    },
+    {
+      "task_id": "paginate-dev-01",
+      "task_family": "api_pagination",
+      "baseline": "hybrid_rrf_chunk",
+      "split": "dev",
+      "environment_version": "1",
+      "run_id": "run_ed407d1362224c50ab10db17dd4968ec",
+      "memory_snapshot_id": "snap_19f5c7d595b249dba69fc4d2135f87e7",
+      "retrieval_status": "selected",
+      "selected_memory_ids": [
+        "mem_b1a464f0a5e74c20967ce524abfdff3a"
+      ],
+      "relevant_memory_ids": [
+        "mem_b1a464f0a5e74c20967ce524abfdff3a"
+      ],
+      "recall_at_3": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_3": 1.0,
+      "task_success": true,
+      "tool_calls": 4,
+      "retries": 1,
+      "used_memory_id": "mem_b1a464f0a5e74c20967ce524abfdff3a",
+      "harmful_transfer": false,
+      "incompatible_selected": 0,
+      "retrieval_latency_ms": 134.185,
+      "retrieval_stage_latency_ms": {
+        "query_build": 0.01,
+        "search": 116.854,
+        "fuse": 0.04,
+        "evaluate": 3.652,
+        "total": 134.185
+      },
+      "error": null
+    },
+    {
+      "task_id": "paginate-dev-02",
+      "task_family": "api_pagination",
+      "baseline": "hybrid_rrf_chunk",
+      "split": "dev",
+      "environment_version": "2",
+      "run_id": "run_34ea9cc8a5c14bc196514825897fbb54",
+      "memory_snapshot_id": "snap_ab126d238614483fac47d069ce9c98b3",
+      "retrieval_status": "selected",
+      "selected_memory_ids": [
+        "mem_431928501fed45b58e0162c0610dbfc1"
+      ],
+      "relevant_memory_ids": [
+        "mem_431928501fed45b58e0162c0610dbfc1"
+      ],
+      "recall_at_3": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_3": 1.0,
+      "task_success": true,
+      "tool_calls": 4,
+      "retries": 1,
+      "used_memory_id": "mem_431928501fed45b58e0162c0610dbfc1",
+      "harmful_transfer": false,
+      "incompatible_selected": 0,
+      "retrieval_latency_ms": 125.358,
+      "retrieval_stage_latency_ms": {
+        "query_build": 0.009,
+        "search": 109.282,
+        "fuse": 0.04,
+        "evaluate": 3.294,
+        "total": 125.358
+      },
+      "error": null
+    },
+    {
+      "task_id": "paginate-dev-01",
+      "task_family": "api_pagination",
+      "baseline": "outcome_aware_chunk",
+      "split": "dev",
+      "environment_version": "1",
+      "run_id": "run_a3da72c514944c1a8a51a5e182397d3e",
+      "memory_snapshot_id": "snap_bbe199ff71474437a702ddcfe9e1df30",
+      "retrieval_status": "selected",
+      "selected_memory_ids": [
+        "mem_b1a464f0a5e74c20967ce524abfdff3a"
+      ],
+      "relevant_memory_ids": [
+        "mem_b1a464f0a5e74c20967ce524abfdff3a"
+      ],
+      "recall_at_3": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_3": 1.0,
+      "task_success": true,
+      "tool_calls": 4,
+      "retries": 1,
+      "used_memory_id": "mem_b1a464f0a5e74c20967ce524abfdff3a",
+      "harmful_transfer": false,
+      "incompatible_selected": 0,
+      "retrieval_latency_ms": 129.135,
+      "retrieval_stage_latency_ms": {
+        "query_build": 0.011,
+        "search": 111.073,
+        "fuse": 0.038,
+        "evaluate": 4.778,
+        "total": 129.135
+      },
+      "error": null
+    },
+    {
+      "task_id": "paginate-dev-02",
+      "task_family": "api_pagination",
+      "baseline": "outcome_aware_chunk",
+      "split": "dev",
+      "environment_version": "2",
+      "run_id": "run_ac21f07af5c94dcfb4a2680135029bdc",
+      "memory_snapshot_id": "snap_87af3341b391468491a0cecb10a5a4bb",
+      "retrieval_status": "selected",
+      "selected_memory_ids": [
+        "mem_431928501fed45b58e0162c0610dbfc1"
+      ],
+      "relevant_memory_ids": [
+        "mem_431928501fed45b58e0162c0610dbfc1"
+      ],
+      "recall_at_3": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_3": 1.0,
+      "task_success": true,
+      "tool_calls": 4,
+      "retries": 1,
+      "used_memory_id": "mem_431928501fed45b58e0162c0610dbfc1",
+      "harmful_transfer": false,
+      "incompatible_selected": 0,
+      "retrieval_latency_ms": 145.27,
+      "retrieval_stage_latency_ms": {
+        "query_build": 0.011,
+        "search": 128.823,
+        "fuse": 0.052,
+        "evaluate": 4.232,
+        "total": 145.27
+      },
+      "error": null
+    }
+  ],
+  "summary": {
+    "bm25": {
+      "tasks": 2,
+      "task_success_rate": 1.0,
+      "task_success_ci95": [
+        1.0,
+        1.0
+      ],
+      "mean_tool_calls": 4.0,
+      "mean_retries": 1.0,
+      "recall_at_3": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_3": 1.0,
+      "harmful_transfer_rate": 0.0,
+      "incompatible_selection_rate": 1.0,
+      "total_incompatible_selected": 2
+    },
+    "bm25_chunk": {
+      "tasks": 2,
+      "task_success_rate": 1.0,
+      "task_success_ci95": [
+        1.0,
+        1.0
+      ],
+      "mean_tool_calls": 4.0,
+      "mean_retries": 1.0,
+      "recall_at_3": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_3": 1.0,
+      "harmful_transfer_rate": 0.0,
+      "incompatible_selection_rate": 0.0,
+      "total_incompatible_selected": 0
+    },
+    "bm25_naive_chunk": {
+      "tasks": 2,
+      "task_success_rate": 1.0,
+      "task_success_ci95": [
+        1.0,
+        1.0
+      ],
+      "mean_tool_calls": 4.0,
+      "mean_retries": 1.0,
+      "recall_at_3": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_3": 1.0,
+      "harmful_transfer_rate": 0.0,
+      "incompatible_selection_rate": 0.0,
+      "total_incompatible_selected": 0
+    },
+    "hybrid_rerank": {
+      "tasks": 2,
+      "task_success_rate": 1.0,
+      "task_success_ci95": [
+        1.0,
+        1.0
+      ],
+      "mean_tool_calls": 4.0,
+      "mean_retries": 1.0,
+      "recall_at_3": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_3": 1.0,
+      "harmful_transfer_rate": 0.0,
+      "incompatible_selection_rate": 1.0,
+      "total_incompatible_selected": 2
+    },
+    "hybrid_rrf": {
+      "tasks": 2,
+      "task_success_rate": 1.0,
+      "task_success_ci95": [
+        1.0,
+        1.0
+      ],
+      "mean_tool_calls": 4.0,
+      "mean_retries": 1.0,
+      "recall_at_3": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_3": 1.0,
+      "harmful_transfer_rate": 0.0,
+      "incompatible_selection_rate": 1.0,
+      "total_incompatible_selected": 2
+    },
+    "hybrid_rrf_chunk": {
+      "tasks": 2,
+      "task_success_rate": 1.0,
+      "task_success_ci95": [
+        1.0,
+        1.0
+      ],
+      "mean_tool_calls": 4.0,
+      "mean_retries": 1.0,
+      "recall_at_3": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_3": 1.0,
+      "harmful_transfer_rate": 0.0,
+      "incompatible_selection_rate": 0.0,
+      "total_incompatible_selected": 0
+    },
+    "hybrid_rrf_naive_chunk": {
+      "tasks": 2,
+      "task_success_rate": 1.0,
+      "task_success_ci95": [
+        1.0,
+        1.0
+      ],
+      "mean_tool_calls": 4.0,
+      "mean_retries": 1.0,
+      "recall_at_3": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_3": 1.0,
+      "harmful_transfer_rate": 0.0,
+      "incompatible_selection_rate": 0.0,
+      "total_incompatible_selected": 0
+    },
+    "no_memory": {
+      "tasks": 2,
+      "task_success_rate": 0.0,
+      "task_success_ci95": [
+        0.0,
+        0.0
+      ],
+      "mean_tool_calls": 1.0,
+      "mean_retries": 0.0,
+      "recall_at_3": 0.0,
+      "mrr": 0.0,
+      "ndcg_at_3": 0.0,
+      "harmful_transfer_rate": 0.0,
+      "incompatible_selection_rate": 0.0,
+      "total_incompatible_selected": 0
+    },
+    "outcome_aware": {
+      "tasks": 2,
+      "task_success_rate": 1.0,
+      "task_success_ci95": [
+        1.0,
+        1.0
+      ],
+      "mean_tool_calls": 4.0,
+      "mean_retries": 1.0,
+      "recall_at_3": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_3": 1.0,
+      "harmful_transfer_rate": 0.0,
+      "incompatible_selection_rate": 0.0,
+      "total_incompatible_selected": 0
+    },
+    "outcome_aware_chunk": {
+      "tasks": 2,
+      "task_success_rate": 1.0,
+      "task_success_ci95": [
+        1.0,
+        1.0
+      ],
+      "mean_tool_calls": 4.0,
+      "mean_retries": 1.0,
+      "recall_at_3": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_3": 1.0,
+      "harmful_transfer_rate": 0.0,
+      "incompatible_selection_rate": 0.0,
+      "total_incompatible_selected": 0
+    },
+    "outcome_aware_naive_chunk": {
+      "tasks": 2,
+      "task_success_rate": 1.0,
+      "task_success_ci95": [
+        1.0,
+        1.0
+      ],
+      "mean_tool_calls": 4.0,
+      "mean_retries": 1.0,
+      "recall_at_3": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_3": 1.0,
+      "harmful_transfer_rate": 0.0,
+      "incompatible_selection_rate": 0.0,
+      "total_incompatible_selected": 0
+    },
+    "retry_only": {
+      "tasks": 2,
+      "task_success_rate": 0.0,
+      "task_success_ci95": [
+        0.0,
+        0.0
+      ],
+      "mean_tool_calls": 1.0,
+      "mean_retries": 0.0,
+      "recall_at_3": 0.0,
+      "mrr": 0.0,
+      "ndcg_at_3": 0.0,
+      "harmful_transfer_rate": 0.0,
+      "incompatible_selection_rate": 0.0,
+      "total_incompatible_selected": 0
+    },
+    "vector": {
+      "tasks": 2,
+      "task_success_rate": 1.0,
+      "task_success_ci95": [
+        1.0,
+        1.0
+      ],
+      "mean_tool_calls": 4.0,
+      "mean_retries": 1.0,
+      "recall_at_3": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_3": 1.0,
+      "harmful_transfer_rate": 0.0,
+      "incompatible_selection_rate": 1.0,
+      "total_incompatible_selected": 2
+    },
+    "vector_chunk": {
+      "tasks": 2,
+      "task_success_rate": 1.0,
+      "task_success_ci95": [
+        1.0,
+        1.0
+      ],
+      "mean_tool_calls": 4.0,
+      "mean_retries": 1.0,
+      "recall_at_3": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_3": 1.0,
+      "harmful_transfer_rate": 0.0,
+      "incompatible_selection_rate": 0.0,
+      "total_incompatible_selected": 0
+    },
+    "vector_naive_chunk": {
+      "tasks": 2,
+      "task_success_rate": 1.0,
+      "task_success_ci95": [
+        1.0,
+        1.0
+      ],
+      "mean_tool_calls": 4.0,
+      "mean_retries": 1.0,
+      "recall_at_3": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_3": 1.0,
+      "harmful_transfer_rate": 0.0,
+      "incompatible_selection_rate": 0.0,
+      "total_incompatible_selected": 0
+    }
+  },
+  "by_task_family": {
+    "api_pagination": {
+      "bm25": {
+        "tasks": 2,
+        "task_success_rate": 1.0,
+        "task_success_ci95": [
+          1.0,
+          1.0
+        ],
+        "mean_tool_calls": 4.0,
+        "mean_retries": 1.0,
+        "recall_at_3": 1.0,
+        "mrr": 1.0,
+        "ndcg_at_3": 1.0,
+        "harmful_transfer_rate": 0.0,
+        "incompatible_selection_rate": 1.0,
+        "total_incompatible_selected": 2
+      },
+      "bm25_chunk": {
+        "tasks": 2,
+        "task_success_rate": 1.0,
+        "task_success_ci95": [
+          1.0,
+          1.0
+        ],
+        "mean_tool_calls": 4.0,
+        "mean_retries": 1.0,
+        "recall_at_3": 1.0,
+        "mrr": 1.0,
+        "ndcg_at_3": 1.0,
+        "harmful_transfer_rate": 0.0,
+        "incompatible_selection_rate": 0.0,
+        "total_incompatible_selected": 0
+      },
+      "bm25_naive_chunk": {
+        "tasks": 2,
+        "task_success_rate": 1.0,
+        "task_success_ci95": [
+          1.0,
+          1.0
+        ],
+        "mean_tool_calls": 4.0,
+        "mean_retries": 1.0,
+        "recall_at_3": 1.0,
+        "mrr": 1.0,
+        "ndcg_at_3": 1.0,
+        "harmful_transfer_rate": 0.0,
+        "incompatible_selection_rate": 0.0,
+        "total_incompatible_selected": 0
+      },
+      "hybrid_rerank": {
+        "tasks": 2,
+        "task_success_rate": 1.0,
+        "task_success_ci95": [
+          1.0,
+          1.0
+        ],
+        "mean_tool_calls": 4.0,
+        "mean_retries": 1.0,
+        "recall_at_3": 1.0,
+        "mrr": 1.0,
+        "ndcg_at_3": 1.0,
+        "harmful_transfer_rate": 0.0,
+        "incompatible_selection_rate": 1.0,
+        "total_incompatible_selected": 2
+      },
+      "hybrid_rrf": {
+        "tasks": 2,
+        "task_success_rate": 1.0,
+        "task_success_ci95": [
+          1.0,
+          1.0
+        ],
+        "mean_tool_calls": 4.0,
+        "mean_retries": 1.0,
+        "recall_at_3": 1.0,
+        "mrr": 1.0,
+        "ndcg_at_3": 1.0,
+        "harmful_transfer_rate": 0.0,
+        "incompatible_selection_rate": 1.0,
+        "total_incompatible_selected": 2
+      },
+      "hybrid_rrf_chunk": {
+        "tasks": 2,
+        "task_success_rate": 1.0,
+        "task_success_ci95": [
+          1.0,
+          1.0
+        ],
+        "mean_tool_calls": 4.0,
+        "mean_retries": 1.0,
+        "recall_at_3": 1.0,
+        "mrr": 1.0,
+        "ndcg_at_3": 1.0,
+        "harmful_transfer_rate": 0.0,
+        "incompatible_selection_rate": 0.0,
+        "total_incompatible_selected": 0
+      },
+      "hybrid_rrf_naive_chunk": {
+        "tasks": 2,
+        "task_success_rate": 1.0,
+        "task_success_ci95": [
+          1.0,
+          1.0
+        ],
+        "mean_tool_calls": 4.0,
+        "mean_retries": 1.0,
+        "recall_at_3": 1.0,
+        "mrr": 1.0,
+        "ndcg_at_3": 1.0,
+        "harmful_transfer_rate": 0.0,
+        "incompatible_selection_rate": 0.0,
+        "total_incompatible_selected": 0
+      },
+      "no_memory": {
+        "tasks": 2,
+        "task_success_rate": 0.0,
+        "task_success_ci95": [
+          0.0,
+          0.0
+        ],
+        "mean_tool_calls": 1.0,
+        "mean_retries": 0.0,
+        "recall_at_3": 0.0,
+        "mrr": 0.0,
+        "ndcg_at_3": 0.0,
+        "harmful_transfer_rate": 0.0,
+        "incompatible_selection_rate": 0.0,
+        "total_incompatible_selected": 0
+      },
+      "outcome_aware": {
+        "tasks": 2,
+        "task_success_rate": 1.0,
+        "task_success_ci95": [
+          1.0,
+          1.0
+        ],
+        "mean_tool_calls": 4.0,
+        "mean_retries": 1.0,
+        "recall_at_3": 1.0,
+        "mrr": 1.0,
+        "ndcg_at_3": 1.0,
+        "harmful_transfer_rate": 0.0,
+        "incompatible_selection_rate": 0.0,
+        "total_incompatible_selected": 0
+      },
+      "outcome_aware_chunk": {
+        "tasks": 2,
+        "task_success_rate": 1.0,
+        "task_success_ci95": [
+          1.0,
+          1.0
+        ],
+        "mean_tool_calls": 4.0,
+        "mean_retries": 1.0,
+        "recall_at_3": 1.0,
+        "mrr": 1.0,
+        "ndcg_at_3": 1.0,
+        "harmful_transfer_rate": 0.0,
+        "incompatible_selection_rate": 0.0,
+        "total_incompatible_selected": 0
+      },
+      "outcome_aware_naive_chunk": {
+        "tasks": 2,
+        "task_success_rate": 1.0,
+        "task_success_ci95": [
+          1.0,
+          1.0
+        ],
+        "mean_tool_calls": 4.0,
+        "mean_retries": 1.0,
+        "recall_at_3": 1.0,
+        "mrr": 1.0,
+        "ndcg_at_3": 1.0,
+        "harmful_transfer_rate": 0.0,
+        "incompatible_selection_rate": 0.0,
+        "total_incompatible_selected": 0
+      },
+      "retry_only": {
+        "tasks": 2,
+        "task_success_rate": 0.0,
+        "task_success_ci95": [
+          0.0,
+          0.0
+        ],
+        "mean_tool_calls": 1.0,
+        "mean_retries": 0.0,
+        "recall_at_3": 0.0,
+        "mrr": 0.0,
+        "ndcg_at_3": 0.0,
+        "harmful_transfer_rate": 0.0,
+        "incompatible_selection_rate": 0.0,
+        "total_incompatible_selected": 0
+      },
+      "vector": {
+        "tasks": 2,
+        "task_success_rate": 1.0,
+        "task_success_ci95": [
+          1.0,
+          1.0
+        ],
+        "mean_tool_calls": 4.0,
+        "mean_retries": 1.0,
+        "recall_at_3": 1.0,
+        "mrr": 1.0,
+        "ndcg_at_3": 1.0,
+        "harmful_transfer_rate": 0.0,
+        "incompatible_selection_rate": 1.0,
+        "total_incompatible_selected": 2
+      },
+      "vector_chunk": {
+        "tasks": 2,
+        "task_success_rate": 1.0,
+        "task_success_ci95": [
+          1.0,
+          1.0
+        ],
+        "mean_tool_calls": 4.0,
+        "mean_retries": 1.0,
+        "recall_at_3": 1.0,
+        "mrr": 1.0,
+        "ndcg_at_3": 1.0,
+        "harmful_transfer_rate": 0.0,
+        "incompatible_selection_rate": 0.0,
+        "total_incompatible_selected": 0
+      },
+      "vector_naive_chunk": {
+        "tasks": 2,
+        "task_success_rate": 1.0,
+        "task_success_ci95": [
+          1.0,
+          1.0
+        ],
+        "mean_tool_calls": 4.0,
+        "mean_retries": 1.0,
+        "recall_at_3": 1.0,
+        "mrr": 1.0,
+        "ndcg_at_3": 1.0,
+        "harmful_transfer_rate": 0.0,
+        "incompatible_selection_rate": 0.0,
+        "total_incompatible_selected": 0
+      }
+    }
+  },
+  "performance": {
+    "bm25": {
+      "retrieval_tasks": 2,
+      "retrieval_latency_p50_ms": 79.736,
+      "retrieval_latency_p95_ms": 93.132,
+      "stage_latency_p50_ms": {
+        "evaluate": 12.532,
+        "fuse": 0.018,
+        "query_build": 0.015,
+        "search": 49.263,
+        "total": 79.736
+      },
+      "stage_latency_p95_ms": {
+        "evaluate": 12.937,
+        "fuse": 0.019,
+        "query_build": 0.016,
+        "search": 65.218,
+        "total": 93.132
+      }
+    },
+    "bm25_chunk": {
+      "retrieval_tasks": 2,
+      "retrieval_latency_p50_ms": 69.602,
+      "retrieval_latency_p95_ms": 70.349,
+      "stage_latency_p50_ms": {
+        "evaluate": 3.587,
+        "fuse": 0.01,
+        "query_build": 0.009,
+        "search": 53.439,
+        "total": 69.602
+      },
+      "stage_latency_p95_ms": {
+        "evaluate": 3.704,
+        "fuse": 0.011,
+        "query_build": 0.009,
+        "search": 54.603,
+        "total": 70.349
+      }
+    },
+    "bm25_naive_chunk": {
+      "retrieval_tasks": 2,
+      "retrieval_latency_p50_ms": 74.26,
+      "retrieval_latency_p95_ms": 74.847,
+      "stage_latency_p50_ms": {
+        "evaluate": 3.782,
+        "fuse": 0.01,
+        "query_build": 0.011,
+        "search": 54.665,
+        "total": 74.26
+      },
+      "stage_latency_p95_ms": {
+        "evaluate": 4.006,
+        "fuse": 0.012,
+        "query_build": 0.013,
+        "search": 55.693,
+        "total": 74.847
+      }
+    },
+    "hybrid_rerank": {
+      "retrieval_tasks": 2,
+      "retrieval_latency_p50_ms": 278.381,
+      "retrieval_latency_p95_ms": 296.667,
+      "stage_latency_p50_ms": {
+        "evaluate": 8.875,
+        "fuse": 0.037,
+        "query_build": 0.011,
+        "rerank": 119.441,
+        "search": 136.43,
+        "total": 278.381
+      },
+      "stage_latency_p95_ms": {
+        "evaluate": 9.086,
+        "fuse": 0.041,
+        "query_build": 0.013,
+        "rerank": 127.23,
+        "search": 147.225,
+        "total": 296.667
+      }
+    },
+    "hybrid_rrf": {
+      "retrieval_tasks": 2,
+      "retrieval_latency_p50_ms": 150.672,
+      "retrieval_latency_p95_ms": 155.09,
+      "stage_latency_p50_ms": {
+        "evaluate": 8.989,
+        "fuse": 0.053,
+        "query_build": 0.01,
+        "search": 128.393,
+        "total": 150.672
+      },
+      "stage_latency_p95_ms": {
+        "evaluate": 9.258,
+        "fuse": 0.057,
+        "query_build": 0.012,
+        "search": 133.479,
+        "total": 155.09
+      }
+    },
+    "hybrid_rrf_chunk": {
+      "retrieval_tasks": 2,
+      "retrieval_latency_p50_ms": 129.772,
+      "retrieval_latency_p95_ms": 133.744,
+      "stage_latency_p50_ms": {
+        "evaluate": 3.473,
+        "fuse": 0.04,
+        "query_build": 0.009,
+        "search": 113.068,
+        "total": 129.772
+      },
+      "stage_latency_p95_ms": {
+        "evaluate": 3.634,
+        "fuse": 0.04,
+        "query_build": 0.01,
+        "search": 116.475,
+        "total": 133.744
+      }
+    },
+    "hybrid_rrf_naive_chunk": {
+      "retrieval_tasks": 2,
+      "retrieval_latency_p50_ms": 138.986,
+      "retrieval_latency_p95_ms": 143.811,
+      "stage_latency_p50_ms": {
+        "evaluate": 3.485,
+        "fuse": 0.042,
+        "query_build": 0.01,
+        "search": 121.811,
+        "total": 138.986
+      },
+      "stage_latency_p95_ms": {
+        "evaluate": 3.492,
+        "fuse": 0.046,
+        "query_build": 0.012,
+        "search": 126.783,
+        "total": 143.811
+      }
+    },
+    "no_memory": {
+      "retrieval_tasks": 0,
+      "retrieval_latency_p50_ms": null,
+      "retrieval_latency_p95_ms": null,
+      "stage_latency_p50_ms": {},
+      "stage_latency_p95_ms": {}
+    },
+    "outcome_aware": {
+      "retrieval_tasks": 2,
+      "retrieval_latency_p50_ms": 149.499,
+      "retrieval_latency_p95_ms": 151.791,
+      "stage_latency_p50_ms": {
+        "evaluate": 8.041,
+        "fuse": 0.041,
+        "query_build": 0.013,
+        "search": 130.227,
+        "total": 149.499
+      },
+      "stage_latency_p95_ms": {
+        "evaluate": 8.198,
+        "fuse": 0.048,
+        "query_build": 0.014,
+        "search": 132.438,
+        "total": 151.791
+      }
+    },
+    "outcome_aware_chunk": {
+      "retrieval_tasks": 2,
+      "retrieval_latency_p50_ms": 137.202,
+      "retrieval_latency_p95_ms": 144.463,
+      "stage_latency_p50_ms": {
+        "evaluate": 4.505,
+        "fuse": 0.045,
+        "query_build": 0.011,
+        "search": 119.948,
+        "total": 137.202
+      },
+      "stage_latency_p95_ms": {
+        "evaluate": 4.751,
+        "fuse": 0.051,
+        "query_build": 0.011,
+        "search": 127.936,
+        "total": 144.463
+      }
+    },
+    "outcome_aware_naive_chunk": {
+      "retrieval_tasks": 2,
+      "retrieval_latency_p50_ms": 137.799,
+      "retrieval_latency_p95_ms": 144.065,
+      "stage_latency_p50_ms": {
+        "evaluate": 4.061,
+        "fuse": 0.063,
+        "query_build": 0.011,
+        "search": 119.964,
+        "total": 137.799
+      },
+      "stage_latency_p95_ms": {
+        "evaluate": 4.374,
+        "fuse": 0.088,
+        "query_build": 0.014,
+        "search": 124.831,
+        "total": 144.065
+      }
+    },
+    "retry_only": {
+      "retrieval_tasks": 0,
+      "retrieval_latency_p50_ms": null,
+      "retrieval_latency_p95_ms": null,
+      "stage_latency_p50_ms": {},
+      "stage_latency_p95_ms": {}
+    },
+    "vector": {
+      "retrieval_tasks": 2,
+      "retrieval_latency_p50_ms": 86.768,
+      "retrieval_latency_p95_ms": 88.41,
+      "stage_latency_p50_ms": {
+        "evaluate": 9.269,
+        "fuse": 0.011,
+        "query_build": 0.009,
+        "search": 64.334,
+        "total": 86.768
+      },
+      "stage_latency_p95_ms": {
+        "evaluate": 10.027,
+        "fuse": 0.013,
+        "query_build": 0.01,
+        "search": 65.254,
+        "total": 88.41
+      }
+    },
+    "vector_chunk": {
+      "retrieval_tasks": 2,
+      "retrieval_latency_p50_ms": 74.912,
+      "retrieval_latency_p95_ms": 76.578,
+      "stage_latency_p50_ms": {
+        "evaluate": 3.578,
+        "fuse": 0.009,
+        "query_build": 0.01,
+        "search": 58.925,
+        "total": 74.912
+      },
+      "stage_latency_p95_ms": {
+        "evaluate": 3.633,
+        "fuse": 0.01,
+        "query_build": 0.011,
+        "search": 60.391,
+        "total": 76.578
+      }
+    },
+    "vector_naive_chunk": {
+      "retrieval_tasks": 2,
+      "retrieval_latency_p50_ms": 76.51,
+      "retrieval_latency_p95_ms": 78.939,
+      "stage_latency_p50_ms": {
+        "evaluate": 3.511,
+        "fuse": 0.01,
+        "query_build": 0.01,
+        "search": 58.837,
+        "total": 76.51
+      },
+      "stage_latency_p95_ms": {
+        "evaluate": 3.637,
+        "fuse": 0.012,
+        "query_build": 0.011,
+        "search": 61.745,
+        "total": 78.939
+      }
+    }
+  },
+  "retrieval": {
+    "default_mode": "outcome_aware",
+    "configured_reranker": "cross_encoder",
+    "reranker": "cross-encoder:ms-marco-MiniLM-L-6-v2",
+    "reranker_model_path": "models/ms-marco-MiniLM-L-6-v2",
+    "rerank_max_length": 512,
+    "rerank_batch_size": 16,
+    "embedding_model": "recap-hashing-embedding-v1",
+    "embedding_fingerprint": "sha256:b3df564b0ae9e0a324fca6a5626a80b39617b6f000a092c603ab1592e30c7815",
+    "vector_dimension": 256,
+    "configured_index_generation": 1,
+    "active_index": "recap-memories-v1"
+  },
+  "embedding": {
+    "enabled": true,
+    "hits": 34,
+    "misses": 0,
+    "writes": 0,
+    "errors": 0,
+    "embedded_texts": 0,
+    "embedded_batches": 0,
+    "hit_rate": 1.0,
+    "provider": "hashing",
+    "model": "recap-hashing-embedding-v1",
+    "dimension": 256,
+    "fingerprint": "sha256:b3df564b0ae9e0a324fca6a5626a80b39617b6f000a092c603ab1592e30c7815",
+    "provider_requests": 0,
+    "provider_latency_ms": 0.0,
+    "prompt_tokens": null,
+    "usage_complete": true
+  },
+  "embedding_cache_table": {
+    "entries": 18,
+    "recorded_hits": 198,
+    "last_accessed_at": "2026-10-20T23:44:42.500644+00:00"
+  },
+  "protocol": {
+    "memory_setting": "frozen_memory",
+    "memory_snapshot": "one per run, created before retrieval",
+    "retrieval_scope": "run",
+    "agent": "deterministic-reference-agent-v1",
+    "provider": "deterministic",
+    "environment": "mock-api",
+    "metrics_source": "persisted_run_records",
+    "workspace_isolation": "unique workspace per run, reset before and after",
+    "note": "Deterministic mock pipeline test. Not evidence of real LLM performance."
+  }
+}

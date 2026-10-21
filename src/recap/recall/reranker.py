@@ -84,9 +84,28 @@ class LexicalReranker:
         return scored[:top_k]
 
 
-def build_reranker(name: str) -> LexicalReranker | None:
+def build_reranker(
+    name: str,
+    *,
+    model_path: str = "",
+    max_length: int = 512,
+    batch_size: int = 16,
+) -> LexicalReranker | object | None:
+    """Build a configured reranker.
+
+    ``cross_encoder`` is imported lazily so the default path and the unit test
+    suite do not require the optional sentence-transformers dependency.
+    """
     if name == "none":
         return None
     if name == "lexical":
         return LexicalReranker()
+    if name in {"cross_encoder", "cross-encoder"}:
+        from recap.recall.cross_encoder import CrossEncoderReranker
+
+        return CrossEncoderReranker(
+            model_path,
+            max_length=max_length,
+            batch_size=batch_size,
+        )
     raise ValueError(f"unknown reranker: {name}")

@@ -6,6 +6,7 @@ Baselines compared (all deterministic, same tool budget):
   - bm25
   - vector
   - hybrid_rrf
+  - hybrid_rerank (configured reranker; lexical by default)
   - outcome_aware (RECAP selection policy)
 
 Frozen-memory setting: retrieval is read-only and tasks never write memories
@@ -49,6 +50,7 @@ BASELINES: list[tuple[str, RetrievalMode | None, str]] = [
     ("bm25", RetrievalMode.BM25, ""),
     ("vector", RetrievalMode.VECTOR, ""),
     ("hybrid_rrf", RetrievalMode.HYBRID_RRF, ""),
+    ("hybrid_rerank", RetrievalMode.HYBRID_RERANK, ""),
     ("outcome_aware", RetrievalMode.OUTCOME_AWARE, ""),
     # Chunk-granule ablations on the same tasks. Both chunk strategies are
     # indexed side by side, so "naive vs event-aware" differs only in the
@@ -132,6 +134,7 @@ def run_benchmark(
             "summary": summary,
             "by_task_family": by_family,
             "performance": performance,
+            "retrieval": _retrieval_provenance(container),
             "embedding": embedding_usage,
             "embedding_cache_table": cache_table,
             "protocol": {
@@ -526,6 +529,31 @@ def _summarize_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _retrieval_provenance(container: Container) -> dict[str, Any]:
+    """Configuration that changes retrieval results, recorded beside the report.
+
+    The benchmark report already records the embedding provider. This adds the
+    reranker identity so two runs with the same metrics can still be told apart
+    (for example lexical vs. a local CrossEncoder).
+    """
+    recall = container.settings.recall
+    with container.services() as services:
+        reranker = getattr(services.recall, "reranker", None)
+    return {
+        "default_mode": recall.default_mode,
+        "configured_reranker": recall.reranker,
+        "reranker": getattr(reranker, "name", "none"),
+        "reranker_model_path": recall.rerank_model_path,
+        "rerank_max_length": recall.rerank_max_length,
+        "rerank_batch_size": recall.rerank_batch_size,
+        "embedding_model": getattr(container.embeddings, "model_id", ""),
+        "embedding_fingerprint": getattr(container.embeddings, "embedding_fingerprint", ""),
+        "vector_dimension": container.settings.elasticsearch.vector_dimension,
+        "configured_index_generation": container.settings.elasticsearch.index_generation,
+        "active_index": container.index_manager.active_index_name(),
+    }
+
+
 def _summarize_performance(per_task: list[dict[str, Any]]) -> dict[str, Any]:
     """Latency is reported separately because it is not reproducible.
 
@@ -535,11 +563,16 @@ def _summarize_performance(per_task: list[dict[str, Any]]) -> dict[str, Any]:
     baselines = sorted({row["baseline"] for row in per_task})
     result: dict[str, Any] = {}
     for baseline in baselines:
+        rows = [row for row in per_task if row["baseline"] == baseline]
         latencies = [
             float(row["retrieval_latency_ms"])
-            for row in per_task
-            if row["baseline"] == baseline and row.get("retrieval_latency_ms") is not None
+            for row in rows
+            if row.get("retrieval_latency_ms") is not None
         ]
+        stages: dict[str, list[float]] = {}
+        for row in rows:
+            for stage, value in (row.get("retrieval_stage_latency_ms") or {}).items():
+                stages.setdefault(stage, []).append(float(value))
         result[baseline] = {
             "retrieval_tasks": len(latencies),
             "retrieval_latency_p50_ms": (
@@ -548,6 +581,14 @@ def _summarize_performance(per_task: list[dict[str, Any]]) -> dict[str, Any]:
             "retrieval_latency_p95_ms": (
                 round(percentile(latencies, 95.0), 3) if latencies else None
             ),
+            "stage_latency_p50_ms": {
+                stage: round(percentile(values, 50.0), 3)
+                for stage, values in sorted(stages.items())
+            },
+            "stage_latency_p95_ms": {
+                stage: round(percentile(values, 95.0), 3)
+                for stage, values in sorted(stages.items())
+            },
         }
     return result
 
@@ -637,18 +678,40 @@ def _render_markdown(payload: dict[str, Any]) -> str:
                 "",
                 "## Retrieval latency (non-reproducible)",
                 "",
-                "| baseline | measured tasks | p50 ms | p95 ms |",
-                "|---|---|---|---|",
+                "| baseline | measured tasks | total p50 ms | total p95 ms | rerank p50 ms | rerank p95 ms |",
+                "|---|---|---|---|---|---|",
             ]
         )
         for baseline, stats in performance.items():
             p50 = stats.get("retrieval_latency_p50_ms")
             p95 = stats.get("retrieval_latency_p95_ms")
+            rerank_p50 = (stats.get("stage_latency_p50_ms") or {}).get("rerank")
+            rerank_p95 = (stats.get("stage_latency_p95_ms") or {}).get("rerank")
             p50_text = "n/a" if p50 is None else f"{p50:.3f}"
             p95_text = "n/a" if p95 is None else f"{p95:.3f}"
+            rerank_p50_text = "n/a" if rerank_p50 is None else f"{rerank_p50:.3f}"
+            rerank_p95_text = "n/a" if rerank_p95 is None else f"{rerank_p95:.3f}"
             lines.append(
-                f"| {baseline} | {stats.get('retrieval_tasks', 0)} | {p50_text} | {p95_text} |"
+                f"| {baseline} | {stats.get('retrieval_tasks', 0)} | {p50_text} | "
+                f"{p95_text} | {rerank_p50_text} | {rerank_p95_text} |"
             )
+
+    retrieval = payload.get("retrieval")
+    if isinstance(retrieval, dict):
+        lines.extend(
+            [
+                "",
+                "## Retrieval configuration",
+                "",
+                f"- default mode: `{retrieval.get('default_mode', '')}`",
+                f"- configured reranker: `{retrieval.get('configured_reranker', '')}`",
+                f"- active reranker: `{retrieval.get('reranker', '')}`",
+                f"- reranker model path: `{retrieval.get('reranker_model_path', '')}`",
+                f"- embedding model: `{retrieval.get('embedding_model', '')}`",
+                f"- vector dimension: {retrieval.get('vector_dimension', 0)}",
+                f"- active index: `{retrieval.get('active_index', '')}`",
+            ]
+        )
 
     embedding = payload.get("embedding")
     if isinstance(embedding, dict):

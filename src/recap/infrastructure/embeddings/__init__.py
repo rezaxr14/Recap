@@ -81,7 +81,10 @@ class SentenceTransformerEmbeddingProvider:
                     "the installed sentence-transformers version cannot enforce local-only "
                     "loading; upgrade it or configure an API embedding provider"
                 ) from None
-            actual = int(self._model.get_sentence_embedding_dimension())
+            dimension = self._model.get_sentence_embedding_dimension()
+            if dimension is None:
+                raise ConfigurationError("local embedding model did not report a dimension")
+            actual = int(dimension)
             if actual != self.dimension:
                 raise ConfigurationError(
                     "configured embedding dimension does not match the local model",

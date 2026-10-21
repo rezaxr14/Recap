@@ -7,8 +7,10 @@ validated identically: schema, allowlist, evidence references, and size limits.
 
 from __future__ import annotations
 
+import copy
 import json
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Any, Protocol
 
 from pydantic import BaseModel, Field
@@ -270,20 +272,92 @@ def build_candidate(
     return candidate
 
 
+def provider_compatible_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    """Return a JSON Schema accepted by strict OpenAI-compatible servers.
+
+    Pydantic emits an untyped property for ``Any`` fields (``Predicate.value``):
+    only ``default`` and ``title`` are present. LM Studio rejects that as an
+    unrecognized schema even though it is valid JSON Schema. Fill in the full
+    JSON type set without weakening Pydantic validation afterwards.
+    """
+
+    compatible = copy.deepcopy(schema)
+    any_json_type = [
+        "string",
+        "number",
+        "integer",
+        "boolean",
+        "array",
+        "object",
+        "null",
+    ]
+
+    def visit(node: Any) -> None:
+        if isinstance(node, dict):
+            properties = node.get("properties")
+            if isinstance(properties, dict):
+                for value in properties.values():
+                    if isinstance(value, dict) and not {
+                        "type",
+                        "$ref",
+                        "anyOf",
+                        "oneOf",
+                        "allOf",
+                        "enum",
+                        "const",
+                    } & set(value):
+                        value["type"] = list(any_json_type)
+            for value in node.values():
+                visit(value)
+        elif isinstance(node, list):
+            for value in node:
+                visit(value)
+
+    visit(compatible)
+    return compatible
+
+
+@dataclass
+class GenerationStats:
+    """Counters for format acceptance and bounded retries.
+
+    The acceptance script aggregates these values across runs. They are plain
+    counters, not a claim that a candidate passed independent validation.
+    """
+
+    calls: int = 0
+    attempts: int = 0
+    format_failures: int = 0
+    successes: int = 0
+    last_error: str = ""
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "calls": self.calls,
+            "attempts": self.attempts,
+            "format_failures": self.format_failures,
+            "successes": self.successes,
+            "last_error": self.last_error,
+        }
+
+
 class LLMCandidateGenerator:
     """Adapter that turns structured LLM output into drafts.
 
     Model output is validated with the same strict schema and evidence checks as
-    deterministic drafts. Malformed output raises; it is never silently promoted.
-    The prompt contains only redacted, bounded event evidence from the failure
-    window, and the model is told that its proposal is a hypothesis.
+    deterministic drafts. Malformed output is retried a bounded number of times
+    and then raises; it is never silently promoted. The prompt contains only
+    redacted, bounded event evidence from the failure window, and the model is
+    told that its proposal is a hypothesis.
     """
 
     name = "llm-generator-v1"
     MAX_EVENT_CHARS = 800
 
-    def __init__(self, provider: Any) -> None:
+    def __init__(self, provider: Any, *, max_attempts: int = 1) -> None:
         self.provider = provider
+        self.max_attempts = max(1, max_attempts)
+        self.stats = GenerationStats()
 
     def generate(
         self,
@@ -292,9 +366,9 @@ class LLMCandidateGenerator:
         environment: dict[str, Any],
         events: Sequence[RunEvent] | None = None,
     ) -> list[CandidateDraft]:
-        schema = CandidateDraft.model_json_schema()
+        schema = provider_compatible_schema(CandidateDraft.model_json_schema())
         evidence = _bounded_evidence(window, events)
-        user_prompt = (
+        base_prompt = (
             "Propose one minimal, typed recovery strategy for the failure below.\n"
             "Return only a JSON object matching the provided schema.\n"
             "Cite only event ids that appear in the evidence. Do not invent observations, "
@@ -305,22 +379,40 @@ class LLMCandidateGenerator:
             f"{json.dumps(evidence, default=str, indent=2)}\n\n"
             f"JSON schema:\n{json.dumps(schema, indent=2)}"
         )
-        raw = self.provider.generate_structured(
-            system_prompt=(
-                "You are RepairCompiler. You propose a single recovery hypothesis from "
-                "execution evidence. The proposal is untrusted until it is independently "
-                "validated by running it in an approved environment. Use only allowlisted "
-                "typed actions and cite real evidence event ids. Return only JSON that "
-                "matches the supplied schema."
-            ),
-            user_prompt=user_prompt,
-            schema=schema,
+        self.stats.calls += 1
+        last_error = ""
+        for _attempt in range(1, self.max_attempts + 1):
+            self.stats.attempts += 1
+            user_prompt = base_prompt
+            if last_error:
+                user_prompt += (
+                    "\n\nYour previous response did not match the schema. Return only a "
+                    "single JSON object that matches it exactly. Validation error summary:\n"
+                    f"{last_error[:1000]}"
+                )
+            raw = self.provider.generate_structured(
+                system_prompt=(
+                    "You are RepairCompiler. You propose a single recovery hypothesis from "
+                    "execution evidence. The proposal is untrusted until it is independently "
+                    "validated by running it in an approved environment. Use only allowlisted "
+                    "typed actions and cite real evidence event ids. Return only JSON that "
+                    "matches the supplied schema."
+                ),
+                user_prompt=user_prompt,
+                schema=schema,
+            )
+            try:
+                draft = CandidateDraft.model_validate(raw)
+            except PydanticValidationError as exc:
+                last_error = str(exc)
+                self.stats.format_failures += 1
+                self.stats.last_error = last_error
+                continue
+            self.stats.successes += 1
+            return [draft]
+        raise ValidationError(
+            f"invalid candidate schema after {self.max_attempts} attempt(s): {last_error}"
         )
-        try:
-            draft = CandidateDraft.model_validate(raw)
-        except PydanticValidationError as exc:
-            raise ValidationError(f"invalid candidate schema: {exc}") from exc
-        return [draft]
 
 
 def _bounded_evidence(

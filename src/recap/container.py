@@ -315,7 +315,12 @@ class Services:
             compatibility_repository=self.compatibility,
             decision_repository=self.decisions,
             embedding_provider=container.embeddings,
-            reranker=build_reranker(self.settings.recall.reranker),
+            reranker=build_reranker(
+                self.settings.recall.reranker,
+                model_path=self.settings.recall.rerank_model_path,
+                max_length=self.settings.recall.rerank_max_length,
+                batch_size=self.settings.recall.rerank_batch_size,
+            ),
             run_repository=self.runs,
             snapshot_repository=self.snapshots,
             chunk_search_repository=container.chunk_search_repository,
@@ -337,7 +342,10 @@ class Services:
                 raise ConfigurationError(
                     "repair_compiler.generator=llm requires a configured repair_llm provider"
                 )
-            generator = LLMCandidateGenerator(container.repair_llm)
+            generator = LLMCandidateGenerator(
+                container.repair_llm,
+                max_attempts=self.settings.repair_compiler.max_candidate_generation_attempts,
+            )
         self.repair_compiler = RepairCompiler(
             settings=self.settings,
             run_repository=self.runs,

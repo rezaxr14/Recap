@@ -34,7 +34,7 @@ safety behaviour, not LLM capability. See [Known limits](#known-limits) for the 
 | **Search** | Elasticsearch 8.19: BM25, dense vectors, hybrid RRF, card and chunk indices |
 | **Interfaces** | `recap` CLI, FastAPI HTTP API, Python package |
 | **Stack** | Python 3.12, FastAPI, SQLAlchemy 2, Alembic, Pydantic 2, Docker Compose |
-| **Verification** | `245 passed, 1 skipped`; real-service integration tests; benchmark reproducibility gate |
+| **Verification** | `254 passed, 1 skipped`; real-service integration tests; benchmark reproducibility gate |
 
 ---
 
@@ -48,7 +48,7 @@ Elasticsearch 8.19.3 node. There are no stub endpoints in the implemented paths.
 | Run recording with idempotent events + redaction | Working | `tests/unit/test_run_recorder.py`, `tests/integration/test_security.py` |
 | PostgreSQL source of truth (Postgres 17, Alembic) | Working | `migrations/versions/`, `tests/integration/test_postgres.py` |
 | Elasticsearch BM25 + dense vector + hybrid RRF | Working | `tests/integration/test_elasticsearch.py` |
-| Deterministic lexical reranker (`hybrid_rerank`) | Working | `tests/unit/test_reranker.py`, integration |
+| Lexical reranker + opt-in local CrossEncoder (`hybrid_rerank`) | Working; cross-encoder latency measured, quality comparison not yet meaningful | `tests/unit/test_reranker.py`, `tests/integration/test_cross_encoder_live.py`, `docs/evidence/phase1-rerank-benchmark/` |
 | Outcome-aware selection with rejection reasons | Working | `tests/unit/test_recall_policy.py` |
 | RepairCompiler (failure window -> typed candidate) | Working | `tests/unit/test_repair_compiler.py` |
 | Static + executing mock-sandbox validators | Working | `tests/unit/test_repair_compiler.py` |
@@ -62,9 +62,10 @@ Elasticsearch 8.19.3 node. There are no stub endpoints in the implemented paths.
 | Chunk persistence, indexing, lifecycle, `reconcile --chunks` | Working | `tests/integration/test_chunks.py`, `migrations/versions/0004`-`0008` |
 | Chunk-level retrieval (`*_chunk` modes) with supporting evidence | Working | `tests/integration/test_chunks.py`, `recap eval run` |
 | Content-addressed Postgres embedding cache + usage reporting | Working | `tests/unit/test_embedding_cache.py`, `recap embedding-cache`, `recap eval run` |
-| API-first chat/embedding providers (OpenAI-compatible) | Implemented; live-tested locally against LM Studio (`llama-3.2-3b-instruct` + `nomic-embed-text-v1.5`), not in CI | `tests/unit/test_providers.py`, opt-in `tests/integration/test_live_providers.py`, `docs/evidence/phase0-live-provider-tests.txt` |
-| LLM repair-candidate generation with typed validation | Implemented and unit-tested; live acceptance pending | `tests/unit/test_llm_generator.py` |
-| Real LLM tool-using agent (`recap agent run`) | Implemented; live tool/structured tests pass locally, not in CI | `tests/unit/test_llm_agent.py`, `tests/integration/test_llm_agent_recording.py`, live suite |
+| Versioned index rebuild + atomic alias swap (`search reindex`) | Working | `tests/integration/test_reindex.py`, `recap search reindex` |
+| API-first chat/embedding providers (OpenAI-compatible) | Implemented; live-tested locally against LM Studio (`gemma-4-e4b-uncensored-hauhaucs-aggressive` + `nomic-embed-text-v1.5`), not in CI | `tests/unit/test_providers.py`, opt-in `tests/integration/test_live_providers.py`, `docs/evidence/phase1-live-provider-tests-gemma.txt` |
+| LLM repair-candidate generation with typed validation | Implemented and unit-tested; **live acceptance failed** with gemma (0 schema-valid candidates) | `tests/unit/test_llm_generator.py`, `docs/evidence/phase1-summary.md` |
+| Real LLM tool-using agent (`recap agent run`) | Implemented; live v1/v2 runs pass locally with gemma, not in CI | `tests/unit/test_llm_agent.py`, `tests/integration/test_llm_agent_recording.py`, `docs/evidence/live-runs/` |
 | End-to-end demo (10 steps) | Working | `recap demo run` |
 
 ## Known limits
@@ -74,11 +75,18 @@ The project is deliberately explicit about what is not built. The full list live
 
 - The default embedding provider is a deterministic **hashing lexical embedder**, not a
   neural model. The numbers below do not measure semantic embedding quality.
-- The demo and benchmark use a **scripted reference agent** for reproducibility. A
-  configured-LLM tool-using agent exists (`recap agent run`) and passed the opt-in live suite
-  locally against LM Studio with `llama-3.2-3b-instruct` and `nomic-embed-text-v1.5`
-  (`docs/evidence/phase0-live-provider-tests.txt`). Live-provider tests still skip in CI, and
-  the benchmark numbers below were not produced by an LLM agent.
+- The demo and benchmark use a **scripted reference agent** for reproducibility. The
+  configured-LLM tool-using agent (`recap agent run`) completed live v1/v2 runs with
+  `gemma-4-e4b-uncensored-hauhaucs-aggressive`; the opt-in live suite passes locally
+  (`docs/evidence/phase1-live-provider-tests-gemma.txt`), but still skips in CI. The benchmark
+  numbers below were not produced by an LLM agent.
+- **Live LLM repair generation is not working with the selected gemma model.** The acceptance
+  harness produced 0 schema-valid candidates: `json_schema` calls timed out and `json_object`
+  calls were rejected by the provider. The deterministic repair generator remains the default.
+  See `docs/evidence/phase1-summary.md`.
+- The **CrossEncoder reranker** is local-only and opt-in. Its real benchmark run records
+  latency and provenance, but the two-task dev split cannot show a quality improvement over
+  lexical or bi-encoder retrieval.
 - The Postgres **embedding cache** is implemented and keyed by the exact fingerprint; it
   caches vectors, not query results, so a hit does not bypass retrieval or policy checks.
   Cache hits, misses, provider batches, latency, and provider-reported prompt tokens appear in
@@ -121,7 +129,7 @@ effect is the card-level `outcome_aware` row.
 | Understand the system | [`docs/architecture.md`](docs/architecture.md), [`docs/data-model.md`](docs/data-model.md), [`docs/retrieval.md`](docs/retrieval.md) |
 | Run and operate it | [`docs/operations.md`](docs/operations.md), [Quickstart](#quickstart) |
 | Understand repair and safety | [`docs/repair-validation.md`](docs/repair-validation.md), [`docs/threat-model.md`](docs/threat-model.md) |
-| Evaluate it | [`docs/evaluation-methodology.md`](docs/evaluation-methodology.md), [`docs/results/2026-10-20-dev.md`](docs/results/2026-10-20-dev.md) |
+| Evaluate it | [`docs/evaluation-methodology.md`](docs/evaluation-methodology.md), [`docs/results/2026-10-20-dev.md`](docs/results/2026-10-20-dev.md), [`docs/evidence/phase1-summary.md`](docs/evidence/phase1-summary.md) |
 | Connect a model | [`docs/providers.md`](docs/providers.md) |
 | Contribute | [`CONTRIBUTING.md`](CONTRIBUTING.md), [`SECURITY.md`](SECURITY.md), [`CHANGELOG.md`](CHANGELOG.md) |
 | Repository metadata | [`docs/github-repository.md`](docs/github-repository.md) |
@@ -144,6 +152,14 @@ docker compose up -d postgres elasticsearch
 If another RECAP checkout is already running on this machine, stop that stack first
 (`docker compose down` in the other checkout). The Compose file uses fixed container names
 and host ports, so two checkouts cannot run simultaneously without overriding them.
+
+The local services use `restart: "no"` and are not started by Docker/Windows at login. Start
+them explicitly for integration tests, then stop them to release RAM:
+
+```bash
+docker compose up -d postgres elasticsearch
+docker compose stop postgres elasticsearch
+```
 
 ### 2. Install
 
@@ -216,7 +232,39 @@ against the mock API. The model selects `list_records` arguments; RECAP validate
 name and arguments, executes only that local tool, and computes success from the records
 actually collected. It refuses to run when no `llm` role is configured and never falls back
 to the deterministic agent. The recorded run includes provider, model, prompt version, token
-usage, and every tool call/failure.
+usage, and every tool call/failure. Add `--transcript path.json` to write a redacted
+run/event transcript.
+
+### 5. Elasticsearch index generations and reranking
+
+Changing an embedding model or vector dimension requires a new index generation. Do not
+edit the old mapping in place:
+
+```bash
+recap search reindex --to-generation v2
+# inspect v2, then optionally remove the old concrete index
+recap search reindex --to-generation v3 --delete-old
+```
+
+The reindex command re-embeds active memories from Postgres into a fresh concrete index,
+verifies its document count, swaps the read and write aliases in one atomic request, and
+updates the Postgres generation provenance. The old index stays behind the read alias until
+the swap, is retained by default for rollback, and is deleted only with `--delete-old` after
+the swap and database update succeed. See
+[`docs/operations.md`](docs/operations.md#rebuild-a-memory-index-generation-without-downtime).
+
+The optional local CrossEncoder reranker is also opt-in and never downloads weights:
+
+```bash
+pip install -e ".[rerank]"
+$env:RERANK_PROVIDER = "cross_encoder"
+$env:RERANK_MODEL_PATH = "models/ms-marco-MiniLM-L-6-v2"
+recap memory search "cursor expired" --mode hybrid_rerank
+```
+
+`recall.reranker=lexical` remains the default. The cross-encoder path requires an existing
+local model directory and `local_files_only=True`; every decision records the reranker name,
+model path, and per-stage rerank latency.
 
 `hashing`/`fake` embeddings remain available for offline development and unit tests, but they
 are reported as non-semantic. Production rejects them unless `EMBEDDING_ALLOW_DEGRADED=true`

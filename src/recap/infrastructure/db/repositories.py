@@ -426,6 +426,29 @@ class SqlMemoryRepository:
         stmt = stmt.order_by(MemoryRow.created_at.desc()).limit(limit)
         return [_memory_to_domain(row) for row in self.session.scalars(stmt).all()]
 
+    def list_for_reindex(
+        self,
+        *,
+        workspace_id: str | None = None,
+        include_suspect: bool = True,
+        limit: int = 1_000_000,
+    ) -> list[ExperienceMemory]:
+        """Return memories that may appear in the search index.
+
+        ``active`` is the normal set. ``suspect`` is included because the read
+        policy can explicitly allow suspect operational memories; they remain
+        filtered by status at query time. Retired/quarantined/incompatible rows
+        are not indexed by a generation rebuild.
+        """
+        statuses = [str(MemoryStatus.ACTIVE)]
+        if include_suspect:
+            statuses.append(str(MemoryStatus.SUSPECT))
+        stmt = select(MemoryRow).where(MemoryRow.status.in_(statuses))
+        if workspace_id is not None:
+            stmt = stmt.where(MemoryRow.workspace_id == workspace_id)
+        stmt = stmt.order_by(MemoryRow.workspace_id, MemoryRow.id).limit(limit)
+        return [_memory_to_domain(row) for row in self.session.scalars(stmt).all()]
+
     def list_versions(self, family_id: str, workspace_id: str) -> list[ExperienceMemory]:
         rows = self.session.scalars(
             select(MemoryRow)

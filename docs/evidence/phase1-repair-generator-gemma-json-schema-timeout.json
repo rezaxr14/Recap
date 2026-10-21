@@ -1,0 +1,100 @@
+{
+  "generated_at": "2026-10-20T11:40:35.093691+00:00",
+  "kind": "live_repair_generator_acceptance",
+  "model": {
+    "provider": "openai_compatible",
+    "model_id": "gemma-4-e4b-uncensored-hauhaucs-aggressive",
+    "base_url": "http://localhost:1234/v1",
+    "generator": "llm",
+    "max_attempts": 2
+  },
+  "runs": 4,
+  "generation": {
+    "schema_successes": 0,
+    "attempts": 4,
+    "retries": 0,
+    "format_failures": 0,
+    "schema_success_rate": 0.0,
+    "format_failure_rate": 0.0
+  },
+  "candidates": {
+    "count": 0,
+    "candidate_rate": 0.0,
+    "static_passed": 0,
+    "static_pass_rate": 0.0,
+    "sandbox_passed": 0,
+    "sandbox_pass_rate": 0.0,
+    "end_to_end_pass_rate": 0.0
+  },
+  "elapsed_ms": 751248,
+  "results": [
+    {
+      "workspace_id": "repair-acceptance-06fdb4d8c2",
+      "environment_version": "1",
+      "run_id": "run_c7a3a14726f9487a81cd38447b46a2aa",
+      "generation_error": "ProviderUnavailable: provider is unreachable or kept failing",
+      "candidates": 0,
+      "static_passed": 0,
+      "sandbox_passed": 0,
+      "validation_checks": [],
+      "generation": {
+        "calls": 1,
+        "attempts": 1,
+        "format_failures": 0,
+        "successes": 0,
+        "last_error": ""
+      }
+    },
+    {
+      "workspace_id": "repair-acceptance-6615d91561",
+      "environment_version": "2",
+      "run_id": "run_9d0198b8b8b842499fe12ecad7eb27a1",
+      "generation_error": "ProviderUnavailable: provider is unreachable or kept failing",
+      "candidates": 0,
+      "static_passed": 0,
+      "sandbox_passed": 0,
+      "validation_checks": [],
+      "generation": {
+        "calls": 1,
+        "attempts": 1,
+        "format_failures": 0,
+        "successes": 0,
+        "last_error": ""
+      }
+    },
+    {
+      "workspace_id": "repair-acceptance-06127932d6",
+      "environment_version": "1",
+      "run_id": "run_1495636c0f8345f0977168ef92c0ab43",
+      "generation_error": "ProviderUnavailable: provider is unreachable or kept failing",
+      "candidates": 0,
+      "static_passed": 0,
+      "sandbox_passed": 0,
+      "validation_checks": [],
+      "generation": {
+        "calls": 1,
+        "attempts": 1,
+        "format_failures": 0,
+        "successes": 0,
+        "last_error": ""
+      }
+    },
+    {
+      "workspace_id": "repair-acceptance-b1d9fc4f55",
+      "environment_version": "2",
+      "run_id": "run_c980ef8e112247b684f9259178961dec",
+      "generation_error": "ProviderUnavailable: provider is unreachable or kept failing",
+      "candidates": 0,
+      "static_passed": 0,
+      "sandbox_passed": 0,
+      "validation_checks": [],
+      "generation": {
+        "calls": 1,
+        "attempts": 1,
+        "format_failures": 0,
+        "successes": 0,
+        "last_error": ""
+      }
+    }
+  ]
+}

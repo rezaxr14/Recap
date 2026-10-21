@@ -68,7 +68,12 @@ LEXICAL_FIELDS: dict[str, float] = {
 }
 
 
-def memory_index_body(*, dimension: int, number_of_shards: int = 1) -> dict[str, Any]:
+def memory_index_body(
+    *,
+    dimension: int,
+    number_of_shards: int = 1,
+    meta: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     properties = dict(MEMORY_PROPERTIES)
     properties["content_embedding"] = {
         "type": "dense_vector",
@@ -77,16 +82,19 @@ def memory_index_body(*, dimension: int, number_of_shards: int = 1) -> dict[str,
         "similarity": "cosine",
         "index_options": {"type": "hnsw", "m": 16, "ef_construction": 100},
     }
+    mappings: dict[str, Any] = {
+        "dynamic": "strict",
+        "properties": properties,
+    }
+    if meta:
+        mappings["_meta"] = dict(meta)
     return {
         "settings": {
             "number_of_shards": number_of_shards,
             "number_of_replicas": 0,
             "refresh_interval": "1s",
         },
-        "mappings": {
-            "dynamic": "strict",
-            "properties": properties,
-        },
+        "mappings": mappings,
     }
 
 

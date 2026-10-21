@@ -99,7 +99,13 @@ recall:
   require_tool_match: false
   no_safe_memory_threshold: 0.35
   max_per_strategy: 2
+  # none | lexical | cross_encoder
+  # cross_encoder loads an existing local sentence-transformers CrossEncoder
+  # directory (RERANK_MODEL_PATH) with downloads disabled.
   reranker: lexical
+  rerank_model_path: ""
+  rerank_max_length: 512
+  rerank_batch_size: 16
 
 chunking:
   # Deterministic event-aware chunks. No model or tokenizer download.

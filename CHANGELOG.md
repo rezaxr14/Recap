@@ -31,6 +31,18 @@ All notable changes to this project are documented here. The format follows
   pull-request template, package metadata, GitHub About/topics, and a social-preview image.
 - Phase 0 audit evidence: fresh-clone quickstart, live LM Studio doctor output, and the
   opt-in live-provider test result under `docs/evidence/`.
+- Versioned memory-index rebuild (`recap search reindex --to-generation vN`) with dimension
+  and fingerprint validation, Postgres re-embedding, atomic read/write alias swap, DB
+  provenance, pre-swap rollback, and optional old-index deletion.
+- Alias-authoritative index initialization: a process with a stale configured generation
+  discovers the active write alias instead of creating and re-pointing a second index.
+- Reranker provider port with deterministic lexical, disabled, and opt-in local
+  CrossEncoder implementations; the CrossEncoder loads with `local_files_only=True`.
+- Benchmark retrieval provenance (active reranker, model path, index) and per-stage p50/p95
+  latency, including the rerank stage.
+- Live gemma v1/v2 agent transcripts and a live repair-generator acceptance harness that
+  reports schema success, retries, candidates, static validation, and sandbox validation.
+- Phase 1 evidence summary distinguishing live model runs from CI and unit coverage.
 
 ### Changed
 
@@ -47,6 +59,8 @@ All notable changes to this project are documented here. The format follows
   names/ports prevent two checkouts from running simultaneously.
 - Stale embedding-cache and test-count claims were corrected; live chat/embedding/tool
   evidence is now distinguished from CI coverage.
+- Local Compose services now use `restart: "no"` so they do not return at Docker/Windows
+  startup; integration runs start them explicitly and stop them afterward.
 
 ### Fixed
 
@@ -78,6 +92,10 @@ All notable changes to this project are documented here. The format follows
 - The default embedder is a deterministic hashing lexical embedder, not a semantic model.
 - The dev split is intentionally small; the `naive_fixed` vs `event_aware` chunk ablation is
   degenerate until same-environment distractors and paraphrase queries are added.
-- The full PostgreSQL embedding-cache table and cache-hit metric are not implemented.
 - Live model-endpoint tests are opt-in and are not run in CI.
+- Live repair-candidate generation with `gemma-4-e4b-uncensored-hauhaucs-aggressive` produced
+  no schema-valid candidates (provider timeouts/rejections); the deterministic generator is
+  still the default.
+- The CrossEncoder reranker is measured for latency, but the current two-task dev split cannot
+  support a quality comparison.
 - There is no multi-tenant authentication/RBAC layer; deploy behind your own gateway.

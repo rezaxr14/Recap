@@ -55,6 +55,7 @@ class ElasticsearchMemoryRepository:
         embedding: Sequence[float],
         *,
         refresh: bool = True,
+        index: str | None = None,
     ) -> None:
         if len(embedding) != self.settings.vector_dimension:
             raise SearchUnavailable(
@@ -68,7 +69,7 @@ class ElasticsearchMemoryRepository:
         document["content_embedding"] = list(embedding)
         try:
             self.client.index(
-                index=self.index_manager.write_index,
+                index=index or self.index_manager.write_target,
                 id=f"{memory.id}:v{memory.memory_version}",
                 document=document,
                 refresh="wait_for" if refresh else False,
@@ -81,17 +82,31 @@ class ElasticsearchMemoryRepository:
                 details={"error": str(exc.info) if hasattr(exc, "info") else str(exc)},
             ) from exc
 
-    def bulk_index(self, memories: Sequence[tuple[ExperienceMemory, Sequence[float]]]) -> None:
+    def bulk_index(
+        self,
+        memories: Sequence[tuple[ExperienceMemory, Sequence[float]]],
+        *,
+        index: str | None = None,
+    ) -> None:
         if not memories:
             return
+        target = index or self.index_manager.write_target
         operations: list[dict[str, Any]] = []
         for memory, embedding in memories:
+            if len(embedding) != self.settings.vector_dimension:
+                raise SearchUnavailable(
+                    "embedding dimension does not match index mapping",
+                    details={
+                        "embedding": len(embedding),
+                        "mapping": self.settings.vector_dimension,
+                    },
+                )
             document = build_search_document(memory)
             document["content_embedding"] = list(embedding)
             operations.append(
                 {
                     "index": {
-                        "_index": self.index_manager.write_index,
+                        "_index": target,
                         "_id": f"{memory.id}:v{memory.memory_version}",
                     }
                 }
@@ -111,10 +126,17 @@ class ElasticsearchMemoryRepository:
                 "bulk indexing reported failures", details={"failures": failures[:5]}
             )
 
-    def delete_memory(self, memory_id: str, memory_version: int, *, refresh: bool = True) -> None:
+    def delete_memory(
+        self,
+        memory_id: str,
+        memory_version: int,
+        *,
+        refresh: bool = True,
+        index: str | None = None,
+    ) -> None:
         try:
             self.client.delete(
-                index=self.index_manager.write_index,
+                index=index or self.index_manager.write_target,
                 id=f"{memory_id}:v{memory_version}",
                 refresh="wait_for" if refresh else False,
             )

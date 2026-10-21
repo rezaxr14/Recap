@@ -347,6 +347,50 @@ def test_embeddings_are_batched_without_reordering() -> None:
     assert len(vectors) == 3
 
 
+def test_embedding_prefixes_are_asymmetric_and_part_of_the_fingerprint() -> None:
+    from recap.infrastructure.embeddings import build_embedding_provider
+    from recap.infrastructure.embeddings.prefix import PrefixedEmbeddingProvider
+
+    class RecordingProvider:
+        model_id = "inner"
+        model_version = "1"
+        dimension = 2
+
+        def __init__(self) -> None:
+            self.documents: list[str] = []
+            self.queries: list[str] = []
+
+        def embed_documents(self, texts: list[str]) -> list[list[float]]:
+            self.documents = list(texts)
+            return [[1.0, 0.0] for _ in texts]
+
+        def embed_query(self, text: str) -> list[float]:
+            self.queries.append(text)
+            return [0.0, 1.0]
+
+    inner = RecordingProvider()
+    wrapped = PrefixedEmbeddingProvider(
+        inner,
+        document_prefix="search_document: ",
+        query_prefix="search_query: ",
+    )
+    wrapped.embed_documents(["cursor expired"])
+    wrapped.embed_query("invalid cursor")
+    assert inner.documents == ["search_document: cursor expired"]
+    assert inner.queries == ["search_query: invalid cursor"]
+
+    base = build_embedding_provider(EmbeddingSettings(provider="hashing", dimension=32))
+    prefixed = build_embedding_provider(
+        EmbeddingSettings(
+            provider="hashing",
+            dimension=32,
+            document_prefix="search_document: ",
+            query_prefix="search_query: ",
+        )
+    )
+    assert prefixed.embedding_fingerprint != base.embedding_fingerprint
+
+
 # --------------------------------------------------------------------- errors
 def test_transient_error_is_retried_then_succeeds() -> None:
     calls = {"count": 0}
@@ -491,9 +535,17 @@ def test_environment_overrides_configure_roles_and_dimension(
     monkeypatch.setenv("REPAIR_LLM_BASE_URL", "http://localhost:1234/v1")
     monkeypatch.setenv("REPAIR_LLM_MODEL", "repair-model")
     monkeypatch.setenv("REPAIR_GENERATOR", "llm")
+    monkeypatch.setenv("RERANK_PROVIDER", "cross_encoder")
+    monkeypatch.setenv("RERANK_MODEL_PATH", "models/reranker")
+    monkeypatch.setenv("RERANK_MAX_LENGTH", "256")
+    monkeypatch.setenv("RERANK_BATCH_SIZE", "8")
 
     settings = load_settings(config)
 
+    assert settings.recall.reranker == "cross_encoder"
+    assert settings.recall.rerank_model_path == "models/reranker"
+    assert settings.recall.rerank_max_length == 256
+    assert settings.recall.rerank_batch_size == 8
     assert settings.embeddings.provider == "openai_compatible"
     assert settings.embeddings.dimension == 768
     assert settings.embeddings.cache_enabled is False

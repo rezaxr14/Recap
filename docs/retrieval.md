@@ -76,18 +76,24 @@ the fused candidates:
 - `recall.reranker=lexical` (default) uses `LexicalReranker`
   (`lexical-overlap-v1`): a deterministic query-coverage/document-precision score
   (`0.7 * coverage + 0.3 * precision`).
+- `recall.reranker=cross_encoder` uses a local `sentence-transformers` CrossEncoder
+  (`RERANK_PROVIDER=cross_encoder`, `RERANK_MODEL_PATH=models/ms-marco-MiniLM-L-6-v2`).
+  The path must already exist; the adapter passes `local_files_only=True` and never downloads
+  weights. Install the optional dependency with `pip install -e ".[rerank]"`.
 - `recall.reranker=none` disables the stage.
 
-The reranker can only change candidate **order**. Eligibility, applicability,
-compatibility, and utility are evaluated afterwards, so reranking cannot make an unsafe
-memory selectable. Its rank is recorded as `branch_ranks["rerank"]`, relevance is taken from
-the rerank score, and `config_snapshot.rerank_applied` records whether the stage ran. If the
-reranker raises, the engine logs a warning, keeps fusion order, and marks the decision
-`degraded`.
+All implementations satisfy the `RerankerProvider` port. The reranker can only change
+candidate **order**. Eligibility, applicability, compatibility, and utility are evaluated
+afterwards, so reranking cannot make an unsafe memory selectable. Its rank is recorded as
+`branch_ranks["rerank"]`, relevance is taken from the rerank score, and
+`config_snapshot.rerank_applied` / `reranker` / `reranker_model_path` record what ran. The
+wall-clock for the stage is stored as `stage_latency_ms["rerank"]` on every decision and is
+aggregated in the benchmark's separate `performance` section. If the reranker raises, the
+engine logs a warning, keeps fusion order, and marks the decision `degraded`.
 
-This is intentionally a lexical reranker rather than a cross-encoder: it is deterministic,
-dependency-free, and makes the mode genuinely distinct from fusion. A cross-encoder can
-implement the same `Reranker` protocol later.
+The lexical reranker remains the default because it is deterministic and dependency-free.
+The cross-encoder is an opt-in quality comparison, not a claim that it improves every
+dataset; it must be measured on the same tasks and reported with its exact model path.
 
 ### 2.5 Chunk-granule retrieval
 

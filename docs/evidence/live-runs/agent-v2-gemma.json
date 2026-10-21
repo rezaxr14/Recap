@@ -1,0 +1,262 @@
+{
+  "run_id": "run_341dfc26291a4217abe36cf863b378b4",
+  "success": true,
+  "agent": "llm-tool-agent-v1",
+  "model": "gemma-4-e4b-uncensored-hauhaucs-aggressive",
+  "provider": "openai_compatible",
+  "environment_version": "2",
+  "workspace_id": "live-agent-gemma-v2",
+  "tool_calls": 1,
+  "retries": 0,
+  "model_turns": 2,
+  "input_tokens": 757,
+  "output_tokens": 41,
+  "duration_ms": 5243,
+  "used_memory_id": null,
+  "final_error": "",
+  "steps": [
+    {
+      "action": "list_records",
+      "request": {
+        "limit": 10,
+        "tenant": "acme"
+      },
+      "result": {
+        "items": [
+          {
+            "id": "rec-001",
+            "tenant": "acme",
+            "value": 10
+          },
+          {
+            "id": "rec-002",
+            "tenant": "acme",
+            "value": 20
+          },
+          {
+            "id": "rec-003",
+            "tenant": "acme",
+            "value": 30
+          },
+          {
+            "id": "rec-004",
+            "tenant": "acme",
+            "value": 40
+          },
+          {
+            "id": "rec-005",
+            "tenant": "acme",
+            "value": 50
+          },
+          {
+            "id": "rec-006",
+            "tenant": "acme",
+            "value": 60
+          },
+          {
+            "id": "rec-007",
+            "tenant": "acme",
+            "value": 70
+          }
+        ],
+        "count": 7,
+        "total": 7,
+        "has_more": false
+      },
+      "ok": true,
+      "error": null
+    }
+  ],
+  "run": {
+    "id": "run_341dfc26291a4217abe36cf863b378b4",
+    "workspace_id": "live-agent-gemma-v2",
+    "agent_id": "llm-tool-agent-v1",
+    "task_id": "phase1-agent-v2",
+    "task_family": "api_pagination",
+    "environment_id": "mock-api-v2",
+    "environment_fingerprint": "sha256:4d7679b9636c8d07199798f33b41fb7927de0cd05e38cf1a6fb007def71c0c53",
+    "toolset_fingerprint": "sha256:4d7679b9636c8d07199798f33b41fb7927de0cd05e38cf1a6fb007def71c0c53",
+    "model_provider": "openai_compatible",
+    "model_name": "gemma-4-e4b-uncensored-hauhaucs-aggressive",
+    "model_config_fingerprint": "sha256:1d300f7fa8d99096d103d9688c7a496c5948c92ec9ec849db32cd82f25037c25",
+    "status": "succeeded",
+    "failure_type": null,
+    "success_criteria": "all records collected",
+    "tool_calls_count": 1,
+    "retry_count": 0,
+    "input_tokens": 757,
+    "output_tokens": 41,
+    "estimated_cost": 0.0,
+    "duration_ms": 5243,
+    "memory_snapshot_id": "snap_6d510934150644579a3e1bd1f4c4d4e4",
+    "config_snapshot": {
+      "prompt_version": "llm-tool-agent-v1",
+      "max_tool_calls": 12,
+      "temperature": 0.0,
+      "tools": [
+        "list_records"
+      ],
+      "memory_id": null
+    },
+    "started_at": "2026-10-20T11:24:06.957853Z",
+    "finished_at": "2026-10-20T11:24:12.316797Z",
+    "created_at": "2026-10-20T11:24:06.957853Z",
+    "updated_at": "2026-10-20T11:24:12.316797Z"
+  },
+  "events": [
+    {
+      "id": "evt_0a2c476479f646c2a045f300fe656992",
+      "run_id": "run_341dfc26291a4217abe36cf863b378b4",
+      "sequence_number": 1,
+      "event_type": "run_started",
+      "timestamp": "2026-10-20T11:24:06.988210Z",
+      "payload_schema_version": "event-v1",
+      "tool_name": null,
+      "tool_version": null,
+      "correlation_id": null,
+      "payload_redacted": {
+        "task": "collect all records",
+        "environment_version": "2",
+        "agent_id": "llm-tool-agent-v1",
+        "memory_snapshot_id": "snap_6d510934150644579a3e1bd1f4c4d4e4"
+      },
+      "payload_hash": "sha256:6537a8d8bfe0d23cc8aae2e2d80c188b09b4c6af037b7553c2f646300c15cb76",
+      "redaction_applied": false,
+      "redaction_rule_version": "redaction-v1"
+    },
+    {
+      "id": "evt_c923079e858f4a4bb05f53e714599ca8",
+      "run_id": "run_341dfc26291a4217abe36cf863b378b4",
+      "sequence_number": 2,
+      "event_type": "task_observation",
+      "timestamp": "2026-10-20T11:24:12.261754Z",
+      "payload_schema_version": "event-v1",
+      "tool_name": null,
+      "tool_version": null,
+      "correlation_id": null,
+      "payload_redacted": {
+        "observation": "tenant=acme total=7",
+        "model_turns": 2,
+        "input_tokens": "[REDACTED]",
+        "output_tokens": "[REDACTED]"
+      },
+      "payload_hash": "sha256:a3b790ea09873711cdb6d9bf690c1430aebc45f4146af89808a2a4d2dfabe45e",
+      "redaction_applied": true,
+      "redaction_rule_version": "redaction-v1"
+    },
+    {
+      "id": "evt_a39860737635486bb42539cf75be1ab7",
+      "run_id": "run_341dfc26291a4217abe36cf863b378b4",
+      "sequence_number": 3,
+      "event_type": "tool_call_requested",
+      "timestamp": "2026-10-20T11:24:12.270035Z",
+      "payload_schema_version": "event-v1",
+      "tool_name": "list_records",
+      "tool_version": "2",
+      "correlation_id": null,
+      "payload_redacted": {
+        "arguments": {
+          "limit": 10,
+          "tenant": "acme"
+        }
+      },
+      "payload_hash": "sha256:24a7e9da71694a72981c797f0018179e6a5caf50f166c270847372179b55a623",
+      "redaction_applied": false,
+      "redaction_rule_version": "redaction-v1"
+    },
+    {
+      "id": "evt_34c92c0f18bb402e9f0a7f341a763ead",
+      "run_id": "run_341dfc26291a4217abe36cf863b378b4",
+      "sequence_number": 4,
+      "event_type": "tool_call_succeeded",
+      "timestamp": "2026-10-20T11:24:12.279263Z",
+      "payload_schema_version": "event-v1",
+      "tool_name": "list_records",
+      "tool_version": "2",
+      "correlation_id": null,
+      "payload_redacted": {
+        "result": {
+          "items": [
+            {
+              "id": "rec-001",
+              "tenant": "acme",
+              "value": 10
+            },
+            {
+              "id": "rec-002",
+              "tenant": "acme",
+              "value": 20
+            },
+            {
+              "id": "rec-003",
+              "tenant": "acme",
+              "value": 30
+            },
+            {
+              "id": "rec-004",
+              "tenant": "acme",
+              "value": 40
+            },
+            {
+              "id": "rec-005",
+              "tenant": "acme",
+              "value": 50
+            },
+            {
+              "id": "rec-006",
+              "tenant": "acme",
+              "value": 60
+            },
+            {
+              "id": "rec-007",
+              "tenant": "acme",
+              "value": 70
+            }
+          ],
+          "count": 7,
+          "total": 7,
+          "has_more": false
+        }
+      },
+      "payload_hash": "sha256:bb5a174359f0e789cd945757f294f1e105f9dbe52e6497115c0172ad82f82779",
+      "redaction_applied": false,
+      "redaction_rule_version": "redaction-v1"
+    },
+    {
+      "id": "evt_a7cf6b786e344ad19a9716f11d3d9976",
+      "run_id": "run_341dfc26291a4217abe36cf863b378b4",
+      "sequence_number": 5,
+      "event_type": "postcondition_checked",
+      "timestamp": "2026-10-20T11:24:12.289860Z",
+      "payload_schema_version": "event-v1",
+      "tool_name": null,
+      "tool_version": null,
+      "correlation_id": null,
+      "payload_redacted": {
+        "passed": true,
+        "detail": null
+      },
+      "payload_hash": "sha256:0233106c027ea1ffd32c93cae5c7d13da907ec919d9832cbd3cad8ca2f8a507c",
+      "redaction_applied": false,
+      "redaction_rule_version": "redaction-v1"
+    },
+    {
+      "id": "evt_41e87fc067a04d13ae3bc3e680e8b587",
+      "run_id": "run_341dfc26291a4217abe36cf863b378b4",
+      "sequence_number": 6,
+      "event_type": "run_finished",
+      "timestamp": "2026-10-20T11:24:12.306947Z",
+      "payload_schema_version": "event-v1",
+      "tool_name": null,
+      "tool_version": null,
+      "correlation_id": null,
+      "payload_redacted": {
+        "success": true,
+        "error": null
+      },
+      "payload_hash": "sha256:7077c5c64b380293a892ebcac84300fc25ad8226cb41c7a0ce993f3a6b14e7cc",
+      "redaction_applied": false,
+      "redaction_rule_version": "redaction-v1"
+    }
+  ]
+}

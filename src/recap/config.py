@@ -151,12 +151,29 @@ class RecallSettings(_SettingsModel):
     no_safe_memory_threshold: float = 0.35
     max_per_strategy: int = 2
     reranker: str = "lexical"
+    rerank_model_path: str = ""
+    rerank_max_length: int = 512
+    rerank_batch_size: int = 16
 
     @field_validator("reranker")
     @classmethod
     def _known_reranker(cls, value: str) -> str:
-        if value not in {"none", "lexical"}:
-            raise ValueError("reranker must be 'none' or 'lexical'")
+        if value not in {"none", "lexical", "cross_encoder"}:
+            raise ValueError("reranker must be 'none', 'lexical', or 'cross_encoder'")
+        return value
+
+    @field_validator("rerank_max_length")
+    @classmethod
+    def _known_rerank_max_length(cls, value: int) -> int:
+        if value < 16 or value > 8192:
+            raise ValueError("rerank_max_length must be within [16, 8192]")
+        return value
+
+    @field_validator("rerank_batch_size")
+    @classmethod
+    def _known_rerank_batch_size(cls, value: int) -> int:
+        if value < 1 or value > 256:
+            raise ValueError("rerank_batch_size must be within [1, 256]")
         return value
 
 
@@ -301,6 +318,11 @@ class Settings(_SettingsModel):
             )
         if not 0.0 <= self.recall.no_safe_memory_threshold <= 1.0:
             raise ConfigurationError("recall.no_safe_memory_threshold must be within [0, 1]")
+        if self.recall.reranker == "cross_encoder" and not self.recall.rerank_model_path.strip():
+            raise ConfigurationError(
+                "recall.reranker=cross_encoder requires recall.rerank_model_path pointing at "
+                "an already-downloaded local CrossEncoder directory; RECAP never downloads weights"
+            )
         if self.chunking.max_tokens > 8191:
             raise ConfigurationError("chunking.max_tokens must be below the embedding input limit")
         self._validate_embedding_role()
@@ -428,6 +450,10 @@ def _apply_env_overrides(raw: dict[str, Any]) -> dict[str, Any]:
         ("REPAIR_GENERATOR", "repair_compiler", "generator", "str"),
         ("RECAP_REPAIR_GENERATOR", "repair_compiler", "generator", "str"),
         ("RECAP_RERANKER", "recall", "reranker", "str"),
+        ("RERANK_PROVIDER", "recall", "reranker", "str"),
+        ("RERANK_MODEL_PATH", "recall", "rerank_model_path", "str"),
+        ("RERANK_MAX_LENGTH", "recall", "rerank_max_length", "int"),
+        ("RERANK_BATCH_SIZE", "recall", "rerank_batch_size", "int"),
         ("RECAP_VECTOR_DIMENSION", "elasticsearch", "vector_dimension", "int"),
         ("ELASTICSEARCH_VECTOR_DIMENSION", "elasticsearch", "vector_dimension", "int"),
         ("RECAP_INDEX_GENERATION", "elasticsearch", "index_generation", "int"),

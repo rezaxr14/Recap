@@ -31,11 +31,14 @@ recap health
 python scripts/run_smoke_test.py
 ```
 
-`recap db migrate` applies Alembic migrations. `recap search init` is idempotent: it creates
-`recap-memories-v1` and `recap-chunks-v2`, then points `recap-memories-read` /
-`recap-memories-write` and `recap-chunks-read` / `recap-chunks-write` at them. The chunk
-generation is a configuration value (`elasticsearch.chunks_index_generation`, default `2`);
-bump it when the chunk mapping changes so a new index can be built beside the old one.
+`recap db migrate` applies Alembic migrations. `recap search init` is idempotent: on a fresh
+stack it creates `recap-memories-v1` and `recap-chunks-v2`, then points
+`recap-memories-read` / `recap-memories-write` and `recap-chunks-read` /
+`recap-chunks-write` at them. After a generation rebuild, the existing write alias is
+authoritative: a process with a stale `index_generation` discovers the active index instead
+of creating and re-pointing a second one. The chunk generation is a configuration value
+(`elasticsearch.chunks_index_generation`, default `2`); bump it when the chunk mapping
+changes so a new index can be built beside the old one.
 
 ## 3. Health
 
@@ -183,18 +186,35 @@ unavailable at write time, the row stays `pending` and is retried with exponenti
 is pull-based, not an always-on thread inside the API: run it from cron, a supervisor, or a
 scheduled job. `dead` rows are visible and must be investigated, not silently dropped.
 
-### Rebuild the index from scratch
+### Rebuild a memory-index generation without downtime
 
 ```bash
-# 1. point at a new generation
-RECAP_INDEX_GENERATION=2 recap search init
-# 2. reindex into the new index (writes go to the new write alias)
-recap search reconcile
-# 3. the read alias has already been cut over atomically by `search init`
+recap search reindex --to-generation v2
+recap search reindex --to-generation v2 --workspace demo-workspace
+recap search reindex --to-generation v2 --delete-old   # after verifying v2
 ```
 
-Changing `index_generation` creates `recap-memories-v2`; `IndexManager.initialize()` moves
-the read alias atomically, so readers never see a partially-populated index.
+`search reindex` is the supported path for an embedding-model or dimension change. It:
+
+1. rejects a target generation that already exists, or a provider dimension that does not
+   match both the configured mapping and the actual vector length;
+2. creates `<prefix>-memories-v2` with a new `dense_vector` mapping and records the embedding
+   fingerprint/model/generation in the mapping `_meta`;
+3. re-embeds every active memory from Postgres (suspect memories are included by default
+   because the read policy may explicitly allow them; use `--active-only` to exclude them);
+4. refreshes the new index and checks that its document count equals the Postgres source
+   count;
+5. swaps the read and write aliases in one atomic `update_aliases` request;
+6. updates each memory's `index_generation`/`index_status` in Postgres.
+
+Readers keep using the old index until step 5. If any step before the swap fails, the aliases
+are untouched and the partial target index is deleted. The old index is retained by default
+as a rollback artifact; `--delete-old` removes it only after the swap and database update
+succeed. Writes go through `recap-memories-write`, so normal processes immediately write to
+the new generation without changing `index_generation`.
+
+`recap search reconcile` remains the per-document repair tool for a corrupt or partially
+missing active index. It is not a generation rebuild.
 
 ### Inspect a memory
 
@@ -343,8 +363,9 @@ curl -s localhost:9200/_cat/aliases/recap-chunks-*
 curl -s localhost:9200/_cat/indices/recap-chunks-*
 ```
 
-Writes go through `recap-memories-write`; reads through `recap-memories-read`. The read alias
-is cut over atomically during `search init`.
+Writes go through `recap-memories-write`; reads through `recap-memories-read`.
+`recap search reindex` swaps both aliases in one atomic request; `search init` only
+bootstraps them on a fresh stack or verifies the existing target.
 
 ### Document identity
 
@@ -406,8 +427,8 @@ service containers, followed by the demo and benchmark.
 
 - ES request timeout defaults to 5 s (`elasticsearch.request_timeout_seconds`).
 - Retrieval candidate cap is 100; per-branch candidate k is 30.
-- Retrieval latency is recorded per stage (`query_build`, `search`, `fuse`, `evaluate`,
-  `total`) in every decision.
+- Retrieval latency is recorded per stage (`query_build`, `search`, `fuse`, `rerank` when
+  applicable, `evaluate`, `total`) in every decision.
 - The outbox has a pull-based worker (`recap search drain`) with retry/backoff and a `dead`
   state after `max_attempts`. It is not an always-on thread; schedule it externally.
 - No connection pooling tuning beyond SQLAlchemy defaults; no load testing has been done.
@@ -416,15 +437,17 @@ service containers, followed by the demo and benchmark.
 
 1. Back up Postgres.
 2. `recap db migrate`.
-3. If the embedding model or dimension changed: configure the new provider, bump
-   `index_generation`, `recap search init`, `recap search reconcile`. Never point a new
-   dimension at an existing index.
+3. If the embedding model or dimension changed: configure the new provider and run
+   `recap search reindex --to-generation vN`. The command validates dimensions, builds beside
+   the old index, and swaps aliases atomically. Never point a new dimension at an existing
+   index.
 4. Run `python scripts/run_smoke_test.py`.
 5. Run `recap eval run --split test` and compare against the previous report.
 6. Deploy.
 
-A dimension change without a new index generation will fail at `search init`; that is the
-guard against mixing incompatible vectors in one index.
+A dimension or fingerprint change without a new index generation fails at startup and tells
+the operator to run `recap search reindex`; that is the guard against mixing incompatible
+vectors in one index.
 
 ## 13. Known operational gaps
 

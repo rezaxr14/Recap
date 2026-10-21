@@ -15,7 +15,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 20
-    restart: unless-stopped
+    restart: "no"
 
   elasticsearch:
     image: elasticsearch:8.19.3
@@ -40,7 +40,7 @@ services:
       timeout: 5s
       retries: 30
       start_period: 30s
-    restart: unless-stopped
+    restart: "no"
 
   api:
     build:

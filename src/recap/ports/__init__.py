@@ -25,12 +25,22 @@ class EmbeddingProvider(Protocol):
     def embed_query(self, text: str) -> list[float]: ...
 
 
-class Reranker(Protocol):
+class RerankerProvider(Protocol):
+    """Second-pass query-document scorer.
+
+    Implementations only reorder candidates. Safety eligibility is evaluated
+    afterwards by the recall policy, never by the reranker.
+    """
+
     name: str
 
     def rerank(
         self, query: str, documents: Sequence[str], top_k: int
     ) -> list[tuple[int, float]]: ...
+
+
+# Backwards-compatible name used by existing adapter type hints.
+Reranker = RerankerProvider
 
 
 class LLMProvider(Protocol):

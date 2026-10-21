@@ -17,7 +17,9 @@ from recap.domain.repairs import FailureWindow
 from recap.domain.runs import RunEvent
 from recap.errors import ValidationError
 from recap.repair_compiler.candidate_generation import (
+    CandidateDraft,
     LLMCandidateGenerator,
+    provider_compatible_schema,
     validate_draft,
 )
 
@@ -28,13 +30,32 @@ class StubProvider:
         self.system_prompt = ""
         self.user_prompt = ""
         self.schema: dict[str, Any] = {}
+        self.calls = 0
 
     def generate_structured(
         self, *, system_prompt: str, user_prompt: str, schema: dict[str, Any]
     ) -> dict[str, Any]:
+        self.calls += 1
         self.system_prompt = system_prompt
         self.user_prompt = user_prompt
         self.schema = schema
+        return self.payload
+
+
+class SequenceProvider(StubProvider):
+    def __init__(self, payloads: list[dict[str, Any]]) -> None:
+        super().__init__(payloads[-1])
+        self.payloads = list(payloads)
+
+    def generate_structured(
+        self, *, system_prompt: str, user_prompt: str, schema: dict[str, Any]
+    ) -> dict[str, Any]:
+        self.calls += 1
+        self.system_prompt = system_prompt
+        self.user_prompt = user_prompt
+        self.schema = schema
+        if self.payloads:
+            return self.payloads.pop(0)
         return self.payload
 
 
@@ -175,6 +196,55 @@ def test_missing_required_fields_are_rejected_by_the_schema() -> None:
         LLMCandidateGenerator(StubProvider(payload)).generate(
             window=_window(), environment={}, events=_events()
         )
+
+
+def test_provider_schema_adds_a_type_to_untyped_any_fields() -> None:
+    raw = CandidateDraft.model_json_schema()
+    assert "type" not in raw["$defs"]["Predicate"]["properties"]["value"]
+
+    compatible = provider_compatible_schema(raw)
+
+    value_schema = compatible["$defs"]["Predicate"]["properties"]["value"]
+    assert set(value_schema["type"]) == {
+        "string",
+        "number",
+        "integer",
+        "boolean",
+        "array",
+        "object",
+        "null",
+    }
+    # The source schema is not mutated for local validation or tests.
+    assert "type" not in raw["$defs"]["Predicate"]["properties"]["value"]
+
+
+def test_invalid_schema_is_retried_then_accepted_and_counted() -> None:
+    provider = SequenceProvider([{"not": "a draft"}, _draft_payload()])
+    generator = LLMCandidateGenerator(provider, max_attempts=2)
+
+    drafts = generator.generate(window=_window(), environment={}, events=_events())
+
+    assert len(drafts) == 1
+    assert provider.calls == 2
+    assert generator.stats.calls == 1
+    assert generator.stats.attempts == 2
+    assert generator.stats.format_failures == 1
+    assert generator.stats.successes == 1
+    assert generator.stats.last_error
+    assert "did not match the schema" in provider.user_prompt
+
+
+def test_invalid_schema_exhausts_retries_without_hiding_the_failure() -> None:
+    provider = SequenceProvider([{"not": "a draft"}, {"still": "invalid"}])
+    generator = LLMCandidateGenerator(provider, max_attempts=2)
+
+    with pytest.raises(ValidationError, match="after 2 attempt"):
+        generator.generate(window=_window(), environment={}, events=_events())
+
+    assert provider.calls == 2
+    assert generator.stats.attempts == 2
+    assert generator.stats.format_failures == 2
+    assert generator.stats.successes == 0
 
 
 def test_model_cannot_claim_validation_from_the_generator() -> None:

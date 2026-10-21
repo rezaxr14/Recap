@@ -51,9 +51,7 @@ def upgrade() -> None:
         ),
         sa.Column("task_families", sa.JSON(), nullable=False),
         sa.Column("exact_ids", sa.JSON(), nullable=False),
-        sa.Column(
-            "active_for_retrieval", sa.Boolean(), nullable=False, server_default=sa.true()
-        ),
+        sa.Column("active_for_retrieval", sa.Boolean(), nullable=False, server_default=sa.true()),
         sa.Column("index_status", sa.String(length=32), nullable=False, server_default="pending"),
         sa.Column("indexed_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),

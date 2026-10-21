@@ -7,6 +7,7 @@ index. Commands never print success for an operation that did not run.
 from __future__ import annotations
 
 import json
+from dataclasses import asdict
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -18,7 +19,7 @@ from recap.config import get_settings, load_settings
 from recap.container import Container
 from recap.domain.enums import MemoryStatus, RetrievalMode
 from recap.domain.retrieval import RetrievalContext, RetrievalRequest
-from recap.errors import RecapError
+from recap.errors import RecapError, ValidationError
 from recap.infrastructure.outbox import OutboxWorker
 
 app = typer.Typer(help="RECAP memory and recovery engine", no_args_is_help=True)
@@ -226,6 +227,72 @@ def search_health(config: str | None = None) -> None:
         _fail(exc)
         return
     console.print_json(json.dumps(result, default=str))
+
+
+@search_app.command("reindex")
+def search_reindex(
+    to_generation: Annotated[
+        str,
+        typer.Option(
+            "--to-generation",
+            help="Target concrete index generation, for example v2",
+        ),
+    ],
+    workspace: Annotated[
+        str | None,
+        typer.Option(
+            "--workspace",
+            "-w",
+            help="Reindex one workspace only (default: every active/suspect memory)",
+        ),
+    ] = None,
+    include_suspect: Annotated[
+        bool,
+        typer.Option(
+            "--include-suspect/--active-only",
+            help="Include suspect memories, which the read policy may explicitly allow",
+        ),
+    ] = True,
+    delete_old: Annotated[
+        bool,
+        typer.Option(
+            "--delete-old",
+            help="Delete the previous concrete index after the alias swap and DB update",
+        ),
+    ] = False,
+    batch_size: Annotated[
+        int,
+        typer.Option("--batch-size", min=1, max=256),
+    ] = 0,
+) -> None:
+    """Build a new memory-index generation and atomically swap both aliases.
+
+    The read alias keeps serving the old generation until the new index is
+    fully populated and refreshed. A failure before the swap leaves aliases
+    untouched and removes the partial target index.
+    """
+    from recap.reindex import MemoryReindexService
+
+    raw = to_generation.strip().lower()
+    if raw.startswith("v"):
+        raw = raw[1:]
+    try:
+        generation = int(raw)
+    except ValueError as exc:
+        raise ValidationError("--to-generation must look like v2 or 2") from exc
+    try:
+        container = _container()
+        result = MemoryReindexService(container).reindex(
+            generation,
+            workspace_id=workspace,
+            include_suspect=include_suspect,
+            delete_old=delete_old,
+            batch_size=batch_size or None,
+        )
+    except Exception as exc:
+        _fail(exc)
+        return
+    console.print_json(json.dumps(result.as_dict(), indent=2, default=str))
 
 
 @search_app.command("reconcile")
@@ -632,6 +699,13 @@ def agent_run(
         ),
     ] = False,
     task_id: Annotated[str | None, typer.Option("--task-id")] = None,
+    transcript: Annotated[
+        str | None,
+        typer.Option(
+            "--transcript",
+            help="Write a redacted run/event transcript JSON file after the run",
+        ),
+    ] = None,
 ) -> None:
     """Run the configured LLM agent against the mock API and record the run.
 
@@ -677,27 +751,37 @@ def agent_run(
     except Exception as exc:
         _fail(exc)
         return
-    console.print_json(
-        json.dumps(
-            {
-                "run_id": run_id,
-                "success": result.success,
-                "agent": "llm-tool-agent-v1",
-                "model": container.llm.model,
-                "environment_version": environment_version,
-                "tool_calls": result.tool_calls,
-                "retries": result.retries,
-                "model_turns": result.model_turns,
-                "input_tokens": result.input_tokens,
-                "output_tokens": result.output_tokens,
-                "duration_ms": result.duration_ms,
-                "used_memory_id": result.used_memory_id,
-                "final_error": result.final_error,
-            },
-            indent=2,
-            default=str,
+    payload: dict[str, Any] = {
+        "run_id": run_id,
+        "success": result.success,
+        "agent": "llm-tool-agent-v1",
+        "model": container.llm.model,
+        "provider": getattr(container.llm, "provider_type", ""),
+        "environment_version": environment_version,
+        "workspace_id": workspace,
+        "tool_calls": result.tool_calls,
+        "retries": result.retries,
+        "model_turns": result.model_turns,
+        "input_tokens": result.input_tokens,
+        "output_tokens": result.output_tokens,
+        "duration_ms": result.duration_ms,
+        "used_memory_id": result.used_memory_id,
+        "final_error": result.final_error,
+        "steps": [asdict(step) for step in result.steps],
+    }
+    if transcript:
+        with container.services() as services:
+            stored = services.runs.get_run(run_id)
+            events = services.runs.list_events(run_id)
+        payload["run"] = stored.model_dump(mode="json") if stored is not None else None
+        payload["events"] = [event.model_dump(mode="json") for event in events]
+        output = Path(transcript)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(
+            json.dumps(payload, indent=2, default=str) + "\n",
+            encoding="utf-8",
         )
-    )
+    console.print_json(json.dumps(payload, indent=2, default=str))
 
 
 # -------------------------------------------------------------------- demo
@@ -744,6 +828,27 @@ def eval_run(
         return
     console.print_json(json.dumps(result["summary"], indent=2, default=str))
     console.print(f"report: {result['report_path']}")
+
+
+@eval_app.command("repair-generator")
+def eval_repair_generator(
+    runs: Annotated[int, typer.Option("--runs", min=1, max=50)] = 4,
+    output: Annotated[
+        Path,
+        typer.Option("--output"),
+    ] = Path("benchmark/reports/repair-generator-acceptance.json"),
+) -> None:
+    """Measure live LLM repair generation, format failures, and validation pass rates."""
+    from recap.evals.repair_generator import run_repair_generator_acceptance
+
+    try:
+        report = run_repair_generator_acceptance(_container(), runs=runs, output=output)
+    except Exception as exc:
+        _fail(exc)
+        return
+    summary = {key: value for key, value in report.items() if key != "results"}
+    console.print_json(json.dumps(summary, indent=2, default=str))
+    console.print(f"report: {output}")
 
 
 @app.command()

@@ -1,0 +1,70 @@
+{
+  "generated_at": "2026-10-20T23:13:45.142952+00:00",
+  "kind": "live_repair_generator_acceptance",
+  "model": {
+    "provider": "openai_compatible",
+    "model_id": "gemma-4-e4b-uncensored-hauhaucs-aggressive",
+    "base_url": "http://localhost:1234/v1",
+    "generator": "llm",
+    "max_attempts": 2
+  },
+  "runs": 2,
+  "generation": {
+    "schema_successes": 0,
+    "attempts": 2,
+    "retries": 0,
+    "format_failures": 0,
+    "schema_success_rate": 0.0,
+    "format_failure_rate": 0.0,
+    "provider_errors": 2,
+    "provider_error_breakdown": {
+      "ProviderResponseError": 2
+    }
+  },
+  "candidates": {
+    "count": 0,
+    "candidate_rate": 0.0,
+    "static_passed": 0,
+    "static_pass_rate": 0.0,
+    "sandbox_passed": 0,
+    "sandbox_pass_rate": 0.0,
+    "end_to_end_pass_rate": 0.0
+  },
+  "elapsed_ms": 71314,
+  "results": [
+    {
+      "workspace_id": "repair-acceptance-eefc34575d",
+      "environment_version": "1",
+      "run_id": "run_23a5538ad17a415a8d876aea4bd35fb7",
+      "generation_error": "ProviderResponseError: provider rejected the request",
+      "candidates": 0,
+      "static_passed": 0,
+      "sandbox_passed": 0,
+      "validation_checks": [],
+      "generation": {
+        "calls": 1,
+        "attempts": 1,
+        "format_failures": 0,
+        "successes": 0,
+        "last_error": ""
+      }
+    },
+    {
+      "workspace_id": "repair-acceptance-51930313de",
+      "environment_version": "2",
+      "run_id": "run_19ce7da7e7e74ebcb2185c92f8f0f7cf",
+      "generation_error": "ProviderResponseError: provider rejected the request",
+      "candidates": 0,
+      "static_passed": 0,
+      "sandbox_passed": 0,
+      "validation_checks": [],
+      "generation": {
+        "calls": 1,
+        "attempts": 1,
+        "format_failures": 0,
+        "successes": 0,
+        "last_error": ""
+      }
+    }
+  ]
+}

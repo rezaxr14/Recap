@@ -59,6 +59,9 @@ dev = [
 sentence-transformers = [
   "sentence-transformers>=3.0,<4",
 ]
+rerank = [
+  "sentence-transformers>=3.0,<4",
+]
 
 [project.scripts]
 recap = "recap.cli:app"

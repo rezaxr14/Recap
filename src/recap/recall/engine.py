@@ -513,6 +513,8 @@ class RecallEngine:
                 "no_safe_memory_threshold": self.settings.recall.no_safe_memory_threshold,
                 "rerank_applied": rerank_applied,
                 "reranker": getattr(self.reranker, "name", "none"),
+                "reranker_model_path": getattr(self.reranker, "model_path", ""),
+                "rerank_max_length": self.settings.recall.rerank_max_length,
                 "memory_snapshot_id": snapshot_id,
                 "memory_snapshot_entries": snapshot.entry_count if snapshot else None,
                 "retrieval_granule": "chunk" if chunk_mode else "memory_card",

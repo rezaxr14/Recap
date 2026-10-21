@@ -36,7 +36,7 @@ a deterministic mock environment. Neither is a general LLM-capability claim. See
 | **Search** | Elasticsearch 8.19: BM25, dense vectors, hybrid RRF, card and chunk indices |
 | **Interfaces** | `recap` CLI, FastAPI HTTP API, Python package |
 | **Stack** | Python 3.12, FastAPI, SQLAlchemy 2, Alembic, Pydantic 2, Docker Compose |
-| **Verification** | `269 passed, 1 skipped` locally; real-service integration tests; benchmark reproducibility gate |
+| **Verification** | `270 passed, 1 skipped` locally; real-service integration tests; benchmark reproducibility gate |
 
 ---
 

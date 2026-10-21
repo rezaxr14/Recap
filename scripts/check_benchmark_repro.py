@@ -15,7 +15,9 @@ from pathlib import Path
 
 
 def _load_report(directory: Path) -> dict:
-    reports = sorted(directory.glob("*.json"))
+    # Checkpoint metadata is also JSON. Only the rendered benchmark report is
+    # part of the reproducibility comparison.
+    reports = sorted(directory.glob("benchmark_*.json"))
     if len(reports) != 1:
         raise SystemExit(f"expected exactly one JSON report in {directory}, found {len(reports)}")
     with reports[0].open(encoding="utf-8") as handle:

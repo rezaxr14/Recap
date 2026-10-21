@@ -119,6 +119,16 @@ def _memory(actions: list[dict[str, Any]]) -> SelectedMemory:
     )
 
 
+def test_implicit_and_explicit_failure_family_are_distinguished() -> None:
+    default = PaginatedApiEnvironment(version="1")
+    explicit = PaginatedApiEnvironment(version="1", failure_family="rate_limit")
+
+    assert default.failure_family == "invalid_cursor"
+    assert default.family_explicit is False
+    assert explicit.failure_family == "rate_limit"
+    assert explicit.family_explicit is True
+
+
 def test_v2_dataset_has_120_tasks_across_ten_families() -> None:
     tasks = build_benchmark_v2_tasks()
     assert len(tasks) == 120

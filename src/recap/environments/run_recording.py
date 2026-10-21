@@ -214,12 +214,13 @@ def record_reference_run(
     failure_family: str | None = None,
 ) -> tuple[str, AgentRunResult]:
     family = failure_family or environment.failure_family
+    explicit_family = failure_family is not None or environment.family_explicit
     metadata = AgentRunMetadata(
         agent_id="reference-agent",
         model_provider="deterministic",
         model_name="reference-agent-v1",
-        task_family=family,
-        failure_type=family,
+        task_family=family if explicit_family else "api_pagination",
+        failure_type=family if explicit_family else "invalid_pagination_cursor",
     )
     run = start_recorded_run(
         container, environment, metadata=metadata, workspace_id=workspace_id, task_id=task_id
@@ -245,7 +246,9 @@ def record_llm_run(
         agent_id="llm-tool-agent-v1",
         model_provider=str(getattr(provider, "provider_type", "unknown")),
         model_name=str(getattr(provider, "model", "") or "unknown"),
-        task_family=environment.failure_family,
+        task_family=(
+            environment.failure_family if environment.family_explicit else "api_pagination"
+        ),
         config_snapshot={
             "prompt_version": PROMPT_VERSION,
             "max_tool_calls": max_tool_calls,

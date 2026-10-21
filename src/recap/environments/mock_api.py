@@ -196,8 +196,10 @@ class PaginatedApiEnvironment:
     _cursor_counter: int = 0
     _expired_cursors: set[str] = field(default_factory=set)
     _access_log: list[dict[str, Any]] = field(default_factory=list)
+    _family_explicit: bool = field(default=False, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
+        self._family_explicit = bool(self.failure_family)
         if not self.failure_family:
             # Preserve the original demo contract: v1 used a cursor, v2 renamed
             # the parameter to page_token. New benchmark tasks always pass an
@@ -220,6 +222,17 @@ class PaginatedApiEnvironment:
             self._fail_next_code = "TIMEOUT"
 
     # ----------------------------------------------------------- metadata
+    @property
+    def family_explicit(self) -> bool:
+        """Whether the caller selected a failure family explicitly.
+
+        The legacy demo relied on the implicit v1/v2 defaults and recorded the
+        generic ``api_pagination`` task family. Benchmark and new-family runs
+        pass a family explicitly and keep that family on the recorded run.
+        """
+
+        return self._family_explicit
+
     @property
     def tool_schema(self) -> dict[str, Any]:
         return build_tool_schema(self.failure_family, self.version)

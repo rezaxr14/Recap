@@ -281,8 +281,8 @@ MemoryShiftService.on_incompatible_environment(memory, environment)
 
 ## 7. Known architectural gaps
 
-See `IMPLEMENTATION_STATUS.md` for the authoritative list. The architecturally significant
-ones:
+See the README capability table and `docs/evidence/phase1-summary.md` for the
+evidence-backed list. The architecturally significant gaps are:
 
 - no always-on scheduler: the outbox worker (`recap search drain`) is pull-based and
   revalidation jobs are processed on demand

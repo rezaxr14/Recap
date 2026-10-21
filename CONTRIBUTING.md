@@ -101,7 +101,8 @@ same pull request.
 - Keep line endings LF (see `.gitattributes`). Do not commit caches, virtual environments,
   generated benchmark reports, or `demo_report.md`.
 - Documentation is part of the change: update the README, `docs/`, and
-  `IMPLEMENTATION_STATUS.md` when behaviour or evidence changes.
+  `docs/evidence/` when behaviour or evidence changes. Keep any local
+  implementation log under `.git/`; it is intentionally never published.
 
 ## Database migrations
 
@@ -125,7 +126,7 @@ mapping validation and the migration test in the same pull request.
 - [ ] New behaviour has a regression test.
 - [ ] Benchmarks were re-run and the reproducibility check passes if retrieval, chunking, or
       scoring changed.
-- [ ] Documentation and `IMPLEMENTATION_STATUS.md` reflect the new state.
+- [ ] Documentation and `docs/evidence/` reflect the new state.
 - [ ] No secrets, generated reports, or local environment files are included.
 - [ ] The pull request states which limitations remain.
 

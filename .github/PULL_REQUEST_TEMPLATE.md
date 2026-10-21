@@ -31,6 +31,6 @@
 
 - [ ] The change is focused and has a regression test.
 - [ ] Migrations are append-only and have a clear `down_revision`.
-- [ ] Documentation and `IMPLEMENTATION_STATUS.md` are updated.
+- [ ] Documentation and `docs/evidence/` are updated.
 - [ ] No secrets, generated reports, local environment files, or caches are included.
 - [ ] The pull request states which known gaps remain.

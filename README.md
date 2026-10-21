@@ -70,8 +70,9 @@ Elasticsearch 8.19.3 node. There are no stub endpoints in the implemented paths.
 
 ## Known limits
 
-The project is deliberately explicit about what is not built. The full list lives in
-[`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md).
+The project is deliberately explicit about what is not built. The capability table above,
+the evidence under [`docs/evidence/`](docs/evidence/), and the limitations below are the
+public record. A local implementation log is intentionally not published.
 
 - The default embedding provider is a deterministic **hashing lexical embedder**, not a
   neural model. The numbers below do not measure semantic embedding quality.

@@ -8,7 +8,7 @@ the code and its tests are authoritative and the document should be fixed in the
 | Document | What it answers |
 |---|---|
 | [`../README.md`](../README.md) | What RECAP is, what works, quickstart, measured results, known limits |
-| [`../IMPLEMENTATION_STATUS.md`](../IMPLEMENTATION_STATUS.md) | Current implementation state, evidence, review follow-up, and remaining gaps |
+| [`evidence/phase1-summary.md`](evidence/phase1-summary.md) | Evidence-backed implementation state, live-run results, and known limits |
 | [`../NEXT_STEPS.md`](../NEXT_STEPS.md) | The staged plan for real models, benchmark v2, RAG depth, packaging, and the web app |
 | [`architecture.md`](architecture.md) | Components, data flow, and the separation between retrieval and selection |
 | [`data-model.md`](data-model.md) | Postgres tables, Elasticsearch mappings, ids, versions, and lifecycle fields |

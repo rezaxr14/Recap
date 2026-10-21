@@ -91,7 +91,7 @@ def run_benchmark(
     agent: str = "reference",
     seed: int = 1,
     baselines: list[str] | None = None,
-    resume: bool = True,
+    resume: bool = False,
     max_tool_calls: int = 6,
 ) -> dict[str, Any]:
     if suite not in {"legacy", "v2"}:
@@ -129,10 +129,6 @@ def run_benchmark(
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
-    # A stable workspace makes a resumed run start from the same seeded
-    # memories. It is still reset before and after the run, so stale rows from
-    # an earlier process cannot compete with the freshly seeded set.
-    workspace = workspace_id or f"bench-{dataset_hash[:8]}-{agent}-seed{seed}"
     signature = _checkpoint_signature(
         suite=suite,
         split=split,
@@ -147,6 +143,11 @@ def run_benchmark(
     checkpoint_path, checkpoint_meta_path = _checkpoint_paths(
         output, suite=suite, split=split, agent=agent, seed=seed, stamp=stamp, resume=resume
     )
+    # Fresh runs get a unique workspace. A resumed run reuses the workspace
+    # recorded in its checkpoint so the seeded memories and run rows line up;
+    # the workspace is still reset and reseeded below.
+    fresh_workspace = workspace_id or f"bench-{dataset_hash[:8]}-{agent}-seed{seed}-{stamp.lower()}"
+    workspace = _resume_workspace(checkpoint_meta_path, resume=resume, fallback=fresh_workspace)
     from recap.maintenance import reset_workspace
 
     reset_workspace(container, [workspace])
@@ -156,8 +157,18 @@ def run_benchmark(
             checkpoint_path,
             checkpoint_meta_path,
             signature=signature,
+            workspace_id=workspace,
             resume=resume,
         )
+        active_names = {name for name, _, _ in active_baselines}
+        task_ids = {task.task_id for task in tasks}
+        per_task = [
+            row
+            for row in per_task
+            if row.get("baseline") in active_names
+            and row.get("seed") == seed
+            and row.get("task_id") in task_ids
+        ]
         completed = {(row["task_id"], row["baseline"], row["seed"]) for row in per_task}
 
         for baseline, mode, chunk_strategy in active_baselines:
@@ -233,7 +244,10 @@ def run_benchmark(
                 "suite": suite,
                 "failure_families": sorted({task.failure_mode for task in tasks}),
                 "metrics_source": "persisted_run_records",
-                "workspace_isolation": "stable workspace, reset before and after",
+                "workspace_isolation": (
+                    "fresh workspace per run; checkpoint-pinned workspace on resume; "
+                    "reset before and after"
+                ),
                 "checkpointing": "append-only JSONL, idempotent per (task, baseline, seed)",
                 "note": (
                     "Deterministic mock pipeline test. Not evidence of real LLM performance."
@@ -354,11 +368,22 @@ def _checkpoint_paths(
     return output / f"{stem}.jsonl", output / f"{stem}.meta.json"
 
 
+def _resume_workspace(meta_path: Path, *, resume: bool, fallback: str) -> str:
+    """Reuse the workspace pinned by an existing checkpoint, if any."""
+    if resume and meta_path.exists():
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        value = meta.get("workspace_id")
+        if isinstance(value, str) and value:
+            return value
+    return fallback
+
+
 def _load_checkpoint(
     path: Path,
     meta_path: Path,
     *,
     signature: dict[str, Any],
+    workspace_id: str,
     resume: bool,
 ) -> list[dict[str, Any]]:
     if resume and path.exists():
@@ -384,6 +409,7 @@ def _load_checkpoint(
         json.dumps(
             {
                 "created_at": datetime.now(UTC).isoformat(),
+                "workspace_id": workspace_id,
                 "signature": signature,
             },
             indent=2,

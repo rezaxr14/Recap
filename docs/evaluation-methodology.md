@@ -2,20 +2,21 @@
 
 ## 1. What this benchmark is
 
-A **deterministic pipeline benchmark**. It measures whether the retrieval and selection
-machinery behaves as designed, using:
+A benchmark with two agent modes over the same deterministic environments:
 
-- a deterministic mock API with two schema versions
-- a deterministic reference agent that follows memory-mapped parameter names
-- a deterministic, non-semantic hashing embedding provider
-- a small, hand-built task suite
+- the default **deterministic pipeline benchmark**, using a reference agent that follows
+  memory-mapped parameter names;
+- an opt-in **real-model benchmark** (`--agent llm`), using the configured chat provider in the
+  same bounded tool loop and the same persisted-run accounting.
 
-It is **not** a measurement of LLM agent performance. The reports embed that statement, and
-the recorded `agent`/`provider` fields identify the deterministic components. A configured-LLM
-tool-using agent exists (`recap agent run`) and is validated separately, but it is not part of
-these benchmark numbers, so the claim cannot drift.
+Both modes use a deterministic mock API with two schema versions, a small hand-built task
+suite, and either real nomic embeddings or a deterministic hashing embedder. The default mode
+measures whether the retrieval and selection machinery behaves as designed. The live mode
+measures one configured model's behavior in that mock environment; it is not a general
+LLM-capability claim. Every report records the agent kind, exact model, prompt version,
+temperature, seed, and tool budget, so the two modes cannot be confused.
 
-What it *can* show, and does show:
+What the deterministic mode *can* show, and does show:
 
 - a policy-free retrieval baseline selects schema-incompatible memories
 - the outcome-aware policy does not
@@ -23,6 +24,11 @@ What it *can* show, and does show:
 - retrying the same failing call prevents recovery entirely
 - the promotion gate actually gates (memories are created through the real compile ->
   validate -> promote path)
+
+The live mode adds a different question: does a real model actually need the memory? On the v2
+dev split the answer was no for the tested model. It solved all 24 tasks with `no_memory`, so
+the split has a ceiling effect for that model. The live report keeps the retrieval metrics
+separate from task success and records this result rather than hiding it.
 
 ## 2. Task suite
 
@@ -176,6 +182,26 @@ How to read this honestly:
 - `false_abstention` is 0.000 for `outcome_aware`; abstention precision/recall is not reported
   because there are no negative-control tasks.
 
+### Live model (Phase 3, in progress)
+
+A separate run used the same 24 dev tasks and real nomic embeddings with
+`gemma-4-e4b-uncensored-hauhaucs-aggressive` through LM Studio (temperature 0, prompt
+`llm-tool-agent-v1`, tool budget 6, seed 1):
+
+| baseline | success | recall@3 | MRR | harmful transfer | incompatible selection | input tokens |
+|---|---|---|---|---|---|---|
+| `no_memory` | 1.000 | 0.000 | 0.000 | 0.000 | 0.000 | 21,282 |
+| `bm25` | 1.000 | 1.000 | 0.750 | 0.000 | 1.000 | 54,556 |
+| `hybrid_rrf_version_filter` | 1.000 | 1.000 | 1.000 | 0.000 | 0.000 | 50,863 |
+| `outcome_aware` | 1.000 | 1.000 | 0.750 | 0.000 | 0.000 | 50,073 |
+
+The model solved every task without memory. `bm25` selected an incompatible memory on all 24
+tasks and still succeeded, which means task success alone cannot validate selection safety for
+this model. This is one model, one seed, four baselines, and one split; it is not the full
+Phase 3 matrix and does not show that memory is useless. It shows that this split does not
+require memory for this model. Full provenance and limits:
+[`evidence/phase3-llm-dev-core/summary.md`](evidence/phase3-llm-dev-core/summary.md).
+
 The held-out test split is implemented but has not been run. Full provenance and the
 deterministic hashing comparison: [`evidence/phase2-summary.md`](evidence/phase2-summary.md).
 
@@ -196,6 +222,11 @@ Every JSON report includes:
 Plus `generated_at`, `split`, `dataset_hash`, the task definitions, per-task rows, and the
 summary. The Markdown report repeats the caveat in its header.
 
+Live reports add `agent.kind: "llm"`, the exact model, prompt version, temperature, tool
+budget, token usage, provider errors, and checkpoint metadata. A live report also includes the
+retrieval/embedding fingerprint and the active index, so a model result cannot be attributed
+to the wrong embedding space.
+
 ## 7. Reproducing
 
 ```bash
@@ -208,6 +239,15 @@ recap eval run --suite v2 --split test
 
 For real nomic embeddings, export the `EMBEDDING_*` variables and `RECAP_VECTOR_DIMENSION=768`
 as shown in [`benchmark-v2.md`](benchmark-v2.md), then initialize a separate index generation.
+
+For a live-model run, configure `LLM_*` and add `--agent llm`. The CLI resumes from a matching
+checkpoint by default; use `--no-resume` for an independent fresh run:
+
+```bash
+recap eval run --suite v2 --split dev --agent llm --seed 1 \
+  --baselines no_memory,bm25,hybrid_rrf_version_filter,outcome_aware \
+  --output docs/evidence/phase3-llm-dev-core
+```
 
 Outputs:
 

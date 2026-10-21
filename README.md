@@ -24,8 +24,10 @@ memory* instead of confidently returning the wrong one.
 implemented local path is exercised against PostgreSQL 17 and Elasticsearch 8.19.3, and the
 full suite runs in CI. It is not a hosted product. There is no multi-tenant auth layer, the
 default embedder is a deterministic hashing embedder rather than a semantic model, and the
-bundled evaluation split is deliberately small. Benchmark numbers measure pipeline and
-safety behaviour, not LLM capability. See [Known limits](#known-limits) for the honest gaps.
+bundled evaluation split is deliberately small. The deterministic snapshot measures pipeline
+and safety behaviour, while the separate live-model snapshot measures one configured model in
+a deterministic mock environment. Neither is a general LLM-capability claim. See
+[Known limits](#known-limits) for the honest gaps.
 
 | At a glance | |
 |---|---|
@@ -34,7 +36,7 @@ safety behaviour, not LLM capability. See [Known limits](#known-limits) for the 
 | **Search** | Elasticsearch 8.19: BM25, dense vectors, hybrid RRF, card and chunk indices |
 | **Interfaces** | `recap` CLI, FastAPI HTTP API, Python package |
 | **Stack** | Python 3.12, FastAPI, SQLAlchemy 2, Alembic, Pydantic 2, Docker Compose |
-| **Verification** | `254 passed, 1 skipped`; real-service integration tests; benchmark reproducibility gate |
+| **Verification** | `269 passed, 1 skipped` locally; real-service integration tests; benchmark reproducibility gate |
 
 ---
 
@@ -130,6 +132,26 @@ wrong-family and bad-track-record distractors; its MRR is lower (0.750 vs 1.000)
 comparison is **degenerate** because there is no same-environment distractor set. Full matrix,
 CIs, and caveats: [`docs/evidence/phase2-summary.md`](docs/evidence/phase2-summary.md) and
 [`docs/benchmark-v2.md`](docs/benchmark-v2.md).
+
+### Real-model check (Phase 3, in progress)
+
+A separate run uses the live LM Studio model `gemma-4-e4b-uncensored-hauhaucs-aggressive`
+(temperature 0, prompt `llm-tool-agent-v1`, six-tool budget) on the same 24 dev tasks:
+
+| Baseline | recall@3 | MRR | task success | harmful transfer | incompatible selection | input tokens |
+|---|---:|---:|---:|---:|---:|---:|
+| `no_memory` | 0.000 | 0.000 | 1.000 | 0.000 | 0.000 | 21,282 |
+| `bm25` | 1.000 | 0.750 | 1.000 | 0.000 | 1.000 | 54,556 |
+| `hybrid_rrf_version_filter` | 1.000 | 1.000 | 1.000 | 0.000 | 0.000 | 50,863 |
+| `outcome_aware` | 1.000 | 0.750 | 1.000 | 0.000 | 0.000 | 50,073 |
+
+The live model solved every dev task with no memory. That is a **ceiling effect**, not evidence
+that memory is useless: `bm25` selected an incompatible memory on 24/24 tasks and still
+succeeded, because the model verified against the live schema. The retrieval metrics expose the
+bad ranking; task success does not. This run is one model, one seed, and four of sixteen
+baselines. Details and limits:
+[`docs/evidence/phase3-llm-dev-core/summary.md`](docs/evidence/phase3-llm-dev-core/summary.md)
+and [`docs/results-llm.md`](docs/results-llm.md).
 
 ## Documentation
 

@@ -150,6 +150,35 @@ recap eval run --suite v2 --split dev
 A dimension or model change requires a new index generation or a new isolated
 prefix/aliases; never mix vector spaces in one index.
 
+### Real LLM agent
+
+`--agent llm` runs the configured chat provider through the same bounded tool loop and the same
+persisted-run accounting as the deterministic reference agent:
+
+```bash
+export LLM_PROVIDER=openai_compatible
+export LLM_BASE_URL=http://localhost:1234/v1
+export LLM_API_KEY=lm-studio
+export LLM_MODEL=gemma-4-e4b-uncensored-hauhaucs-aggressive
+export LLM_TEMPERATURE=0
+export LLM_TIMEOUT_SECONDS=120
+recap eval run --suite v2 --split dev --agent llm \
+  --baselines no_memory,bm25,hybrid_rrf_version_filter,outcome_aware \
+  --seed 1 --output docs/evidence/phase3-llm-dev-core
+```
+
+The runner writes an append-only checkpoint keyed by `(task, baseline, seed)`. Re-running the
+same command resumes only missing rows; `--no-resume` writes a fresh timestamped checkpoint
+without deleting the old one. The checkpoint metadata pins the dataset hash, agent/model,
+prompt version, embedding fingerprint, tool budget, and seed, and a mismatch is refused instead
+of silently mixing results. Reports record the exact model, prompt version, temperature, tool
+budget, token usage, and provider failures per row. A failed provider call is recorded as a
+failed run and does not abort the rest of the matrix.
+
+The report's warning line and `agent.kind` make it impossible to confuse a real-model run with
+the deterministic reference run. Development smoke runs may use `--limit`; committed evidence
+must not.
+
 ## What the dev run does and does not show
 
 The measured dev run is in [`evidence/phase2-summary.md`](evidence/phase2-summary.md).

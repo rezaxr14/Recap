@@ -61,6 +61,7 @@ def _ordered_summaries(summary: dict[str, Any]) -> list[tuple[str, dict[str, Any
 def render(payload: dict[str, Any], *, title: str | None = None) -> str:
     retrieval = payload.get("retrieval") or {}
     protocol = payload.get("protocol") or {}
+    agent = payload.get("agent") or {}
     suite = payload.get("suite", "legacy")
     split = payload.get("split", "unknown")
     heading = title or f"RECAP benchmark results: suite `{suite}` / split `{split}`"
@@ -78,7 +79,13 @@ def render(payload: dict[str, Any], *, title: str | None = None) -> str:
         f"| Generated | `{payload.get('generated_at')}` |",
         f"| Suite / split | `{suite}` / `{split}` |",
         f"| Dataset hash | `{payload.get('dataset_hash')}` |",
-        f"| Agent | `{protocol.get('agent')}` (`{protocol.get('provider')}`) |",
+        f"| Agent | `{agent.get('kind') or protocol.get('agent')}` "
+        f"(`{protocol.get('provider')}`) |",
+        f"| Model | `{protocol.get('model') or agent.get('model') or 'n/a'}` |",
+        f"| Prompt version | `{protocol.get('prompt_version') or agent.get('prompt_version') or 'n/a'}` |",
+        f"| Temperature | `{protocol.get('temperature', agent.get('temperature', 'n/a'))}` |",
+        f"| Seed | `{protocol.get('seed', 'n/a')}` |",
+        f"| Tool budget | `{protocol.get('max_tool_calls', 'n/a')}` |",
         f"| Embedding model | `{retrieval.get('embedding_model')}` |",
         f"| Embedding dimension | `{retrieval.get('vector_dimension')}` |",
         f"| Embedding fingerprint | `{retrieval.get('embedding_fingerprint')}` |",
@@ -166,11 +173,19 @@ def render(payload: dict[str, Any], *, title: str | None = None) -> str:
             lines.append(f"| `{key}` | {_fmt(performance[key])} |")
         lines.append("")
 
+    agent_limit = (
+        "- The benchmark agent is the deterministic reference agent, not an LLM."
+        if agent.get("kind") != "llm"
+        else (
+            "- The benchmark agent is a real configured LLM in a deterministic mock environment; "
+            "provider failures are recorded as failed runs."
+        )
+    )
     lines.extend(
         [
             "## Limits",
             "",
-            "- The benchmark agent is the deterministic reference agent, not an LLM.",
+            agent_limit,
             "- The hashing embedder is lexical, not semantic; a report using it is not a "
             "semantic-retrieval measurement.",
             "- CIs resample tasks within one run; they are not seed-paired intervals.",

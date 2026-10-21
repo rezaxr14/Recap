@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import pytest
@@ -21,6 +22,7 @@ from recap.evals.datasets import (
 from recap.evals.runner import (
     _append_checkpoint,
     _load_checkpoint,
+    _resume_workspace,
     _select_baselines,
 )
 from recap.repair_compiler.candidate_generation import (
@@ -151,7 +153,16 @@ def test_checkpoint_round_trip_refuses_a_different_runner_signature(tmp_path) ->
     rows = tmp_path / "checkpoint.jsonl"
     meta = tmp_path / "checkpoint.meta.json"
     signature = {"runner_version": 2, "model": "test-model", "seed": 1}
-    assert _load_checkpoint(rows, meta, signature=signature, resume=True) == []
+    assert (
+        _load_checkpoint(
+            rows,
+            meta,
+            signature=signature,
+            workspace_id="test-workspace",
+            resume=True,
+        )
+        == []
+    )
 
     row = {
         "task_id": "task-1",
@@ -160,13 +171,23 @@ def test_checkpoint_round_trip_refuses_a_different_runner_signature(tmp_path) ->
         "task_success": False,
     }
     _append_checkpoint(rows, row)
-    assert _load_checkpoint(rows, meta, signature=signature, resume=True) == [row]
+    assert _load_checkpoint(
+        rows,
+        meta,
+        signature=signature,
+        workspace_id="test-workspace",
+        resume=True,
+    ) == [row]
+    assert json.loads(meta.read_text(encoding="utf-8"))["workspace_id"] == "test-workspace"
+    assert _resume_workspace(meta, resume=True, fallback="fresh-workspace") == "test-workspace"
+    assert _resume_workspace(meta, resume=False, fallback="fresh-workspace") == "fresh-workspace"
 
     with pytest.raises(ConfigurationError, match="different agent"):
         _load_checkpoint(
             rows,
             meta,
             signature={"runner_version": 2, "model": "other-model", "seed": 1},
+            workspace_id="test-workspace",
             resume=True,
         )
 

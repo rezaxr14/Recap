@@ -18,6 +18,12 @@ All notable changes to this project are documented here. The format follows
   evidence, and lifecycle propagation through the transactional outbox.
 - Benchmark harness with card and chunk ablations, safety audit, JSON/CSV/Markdown reports,
   and a CI reproducibility check.
+- Opt-in real-model benchmark runs (`--agent llm`) through the same bounded tool loop and
+  persisted-run path, with append-only checkpoints keyed by `(task, baseline, seed)` and a
+  signature that refuses mismatched model, prompt, embedding, or tool-budget resumes.
+- Reports now record agent kind, exact model, prompt version, temperature, seed, tool budget,
+  token usage, and provider failures, and `scripts/render_results.py` renders both deterministic
+  and live-model reports.
 - FastAPI health, diagnostics, recall, recording, and repair endpoints.
 - CLI for migrations, index initialization, health, demo, benchmark, reconcile, outbox drain,
   providers, agent runs, and workspace maintenance.

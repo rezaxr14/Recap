@@ -11,6 +11,7 @@ the code and its tests are authoritative and the document should be fixed in the
 | [`evidence/phase1-summary.md`](evidence/phase1-summary.md) | Evidence-backed implementation state, live-run results, and known limits |
 | [`benchmark-v2.md`](benchmark-v2.md) | Ten-family task suite, hard negatives, fair baselines, leakage checks, and limitations |
 | [`evidence/phase2-summary.md`](evidence/phase2-summary.md) | Measured benchmark v2 dev results and live new-family model runs |
+| [`evidence/phase3-llm-dev-core/summary.md`](evidence/phase3-llm-dev-core/summary.md) | Live-model benchmark on the v2 dev split, four core baselines, ceiling effect, and limits |
 | [`architecture.md`](architecture.md) | Components, data flow, and the separation between retrieval and selection |
 | [`data-model.md`](data-model.md) | Postgres tables, Elasticsearch mappings, ids, versions, and lifecycle fields |
 
@@ -30,7 +31,8 @@ the code and its tests are authoritative and the document should be fixed in the
 |---|---|
 | [`operations.md`](operations.md) | Local stack, health, migrations, index initialization, outbox, reconcile, backup/restore |
 | [`evaluation-methodology.md`](evaluation-methodology.md) | Dataset, baselines, metrics, reproducibility rules, and what the benchmark does not prove |
-| [`results.md`](results.md) | Generated benchmark table from the committed v2 dev JSON report |
+| [`results.md`](results.md) | Generated benchmark table from the committed deterministic v2 dev JSON report |
+| [`results-llm.md`](results-llm.md) | Generated benchmark table from the committed live-model v2 dev JSON report |
 | [`results/2026-10-20-dev.md`](results/2026-10-20-dev.md) | Earlier measured dev-split matrix and caveats |
 | [`evidence/phase0-audit.md`](evidence/phase0-audit.md) | Fresh-clone quickstart, live LM Studio probe, and capability-claim corrections |
 

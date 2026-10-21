@@ -106,8 +106,10 @@ number for this 24-task split.
   matrix.
 - It does not show that outcome-aware selection is useless. It shows that the current dev split
   is too easy and lacks memory-required evidence.
-- It does not measure the held-out `test` families (`required_parameter`, `enum_change`,
-  `date_format`).
+- This document covers dev only. The separate held-out `test` run
+  (`required_parameter`, `enum_change`, `date_format`) is in
+  [`../phase3-llm-test-core/summary.md`](../phase3-llm-test-core/summary.md); it also has a
+  `no_memory` ceiling.
 - The mock environment is deterministic; the model is not. Temperature 0 reduces but does not
   eliminate provider-request variability.
 - It does not measure the local CrossEncoder reranker or chunked baselines.
@@ -118,7 +120,6 @@ number for this 24-task split.
 
 The next run needs evidence that memory is actually required, not just present:
 
-- held-out `test` split with the same model and seeds;
 - at least three paired seeds for the core baselines;
 - tasks where the schema does not reveal the required adaptation (for example, a side-effect
   rule, a tenant-specific constraint, or a rate-limit sequence that must be learned from prior
@@ -126,5 +127,6 @@ The next run needs evidence that memory is actually required, not just present:
 - a same-environment noise control and an abstention control;
 - `raw_trajectory_rag` and the chunked baselines under the same protocol.
 
-Until those exist, the honest headline is: **the live model passes this split without memory;
-the retrieval policies differ in ranking and cost, not in task success.**
+Until those exist, the honest headline is: **the live model passes both the dev and held-out
+test splits without memory; the retrieval policies differ in ranking and cost, not in task
+success.**

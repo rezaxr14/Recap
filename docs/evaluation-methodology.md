@@ -25,10 +25,11 @@ What the deterministic mode *can* show, and does show:
 - the promotion gate actually gates (memories are created through the real compile ->
   validate -> promote path)
 
-The live mode adds a different question: does a real model actually need the memory? On the v2
-dev split the answer was no for the tested model. It solved all 24 tasks with `no_memory`, so
-the split has a ceiling effect for that model. The live report keeps the retrieval metrics
-separate from task success and records this result rather than hiding it.
+The live mode adds a different question: does a real model actually need the memory? On both
+the v2 dev and held-out test splits the answer was no for the tested model. It solved all 24
+dev and all 36 test tasks with `no_memory`, so both splits have a ceiling effect for that
+model. The live reports keep the retrieval metrics separate from task success and record this
+result rather than hiding it.
 
 ## 2. Task suite
 
@@ -197,13 +198,26 @@ A separate run used the same 24 dev tasks and real nomic embeddings with
 
 The model solved every task without memory. `bm25` selected an incompatible memory on all 24
 tasks and still succeeded, which means task success alone cannot validate selection safety for
-this model. This is one model, one seed, four baselines, and one split; it is not the full
-Phase 3 matrix and does not show that memory is useless. It shows that this split does not
-require memory for this model. Full provenance and limits:
-[`evidence/phase3-llm-dev-core/summary.md`](evidence/phase3-llm-dev-core/summary.md).
+this model.
 
-The held-out test split is implemented but has not been run. Full provenance and the
-deterministic hashing comparison: [`evidence/phase2-summary.md`](evidence/phase2-summary.md).
+The held-out test split (36 tasks; `required_parameter`, `enum_change`, `date_format`) shows
+the same result:
+
+| baseline | success | recall@3 | MRR | harmful transfer | incompatible selection | input tokens |
+|---|---|---|---|---|---|---|
+| `no_memory` | 1.000 | 0.000 | 0.000 | 0.000 | 0.000 | 36,108 |
+| `bm25` | 1.000 | 1.000 | 0.750 | 0.000 | 1.000 | 80,605 |
+| `hybrid_rrf_version_filter` | 1.000 | 1.000 | 1.000 | 0.000 | 0.000 | 69,641 |
+| `outcome_aware` | 1.000 | 1.000 | 0.750 | 0.000 | 0.000 | 69,636 |
+
+This is one model, one seed, and four baselines per split; it is not the full Phase 3 matrix
+and does not show that memory is useless. It shows that both current splits are a ceiling for
+this model: the schema and error text contain enough information to adapt without memory.
+Full provenance and limits:
+[`evidence/phase3-llm-dev-core/summary.md`](evidence/phase3-llm-dev-core/summary.md) and
+[`evidence/phase3-llm-test-core/summary.md`](evidence/phase3-llm-test-core/summary.md). The
+deterministic hashing comparison remains in
+[`evidence/phase2-summary.md`](evidence/phase2-summary.md).
 
 ## 6. Protocol metadata
 

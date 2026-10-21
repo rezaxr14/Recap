@@ -49,6 +49,9 @@ All notable changes to this project are documented here. The format follows
 - Live gemma v1/v2 agent transcripts and a live repair-generator acceptance harness that
   reports schema success, retries, candidates, static validation, and sandbox validation.
 - Phase 1 evidence summary distinguishing live model runs from CI and unit coverage.
+- Phase 3 live-model evidence for the v2 dev and held-out test splits, with exact model,
+  prompt, temperature, seed, tool budget, embedding fingerprint, token cost, and a documented
+  ceiling effect: `no_memory` succeeds on every task in both splits.
 
 ### Changed
 
@@ -70,6 +73,8 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- Benchmark reproducibility gate now ignores checkpoint metadata JSON and compares only the
+  rendered benchmark report.
 - Removed stale workspace state that made chunk-baseline MRR drift between benchmark runs.
 - Outbox worker now dispatches memory, chunk, and chunk-lifecycle rows, including deletes for
   chunks whose Postgres row is already gone.

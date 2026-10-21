@@ -78,18 +78,20 @@ the evidence under [`docs/evidence/`](docs/evidence/), and the limitations below
 public record. A local implementation log is intentionally not published.
 
 - The default embedding provider is a deterministic **hashing lexical embedder**, not a
-  neural model. The benchmark v2 dev split was also run with real
-  `text-embedding-nomic-embed-text-v1.5` (768-d) through LM Studio; those results are labelled
-  separately and are still not LLM-agent results.
-- The demo and benchmark use a **scripted reference agent** for reproducibility. The
-  configured-LLM tool-using agent (`recap agent run`) completed live v1/v2 runs with
-  `gemma-4-e4b-uncensored-hauhaucs-aggressive`, including the new `response_field` and
+  neural model. Both benchmark splits were also run with real
+  `text-embedding-nomic-embed-text-v1.5` (768-d) through LM Studio; deterministic and
+  live-model results are labelled separately.
+- The demo and the default benchmark use a **scripted reference agent** for reproducibility.
+  The opt-in benchmark mode (`--agent llm`) uses the configured tool-using model. The
+  configured-LLM agent completed live v1/v2 runs with
+  `gemma-4-e4b-uncensored-hauhaucs-aggressive`, including the `response_field` and
   `idempotency_key` families; the opt-in live suite passes locally
-  (`docs/evidence/phase1-live-provider-tests-gemma.txt`), but still skips in CI. The benchmark
-  numbers below were not produced by an LLM agent.
-- Benchmark v2 is implemented but only the **dev** split has been measured. The held-out test
-  families have not been run yet. `raw_trajectory_rag`, abstention precision/recall, and
-  paired CIs across >= 3 seeds are not implemented; do not infer them from the report.
+  (`docs/evidence/phase1-live-provider-tests-gemma.txt`), but still skips in CI.
+- Benchmark v2 dev and held-out test are both measured with the live model. Both are a
+  **ceiling** for this model: `no_memory` succeeds on every task, so task success does not
+  distinguish memory policies. `raw_trajectory_rag`, abstention precision/recall, multiple
+  paired seeds, and memory-required task families are still missing; do not infer them from
+  the reports.
 - **Live LLM repair generation is not working with the selected gemma model.** The acceptance
   harness produced 0 schema-valid candidates: `json_schema` calls timed out and `json_object`
   calls were rejected by the provider. The deterministic repair generator remains the default.
@@ -109,8 +111,9 @@ public record. A local implementation log is intentionally not published.
   near-duplicate memories before it can support a claim.
 - The stack is single-node and local-first. Elasticsearch security is disabled in the local
   Compose file, and there is no multi-tenant auth or RBAC layer.
-- Benchmark numbers measure **pipeline and safety behaviour**, not LLM capability. Reports
-  and `recap providers` state which mode produced a result.
+- Deterministic benchmark numbers measure **pipeline and safety behaviour**; live-model runs
+  measure one configured model in a deterministic mock environment. Neither is a general LLM
+  capability claim. Reports and `recap providers` state which mode produced a result.
 
 ## Results snapshot (benchmark v2 dev, real nomic embeddings)
 
@@ -148,10 +151,17 @@ A separate run uses the live LM Studio model `gemma-4-e4b-uncensored-hauhaucs-ag
 The live model solved every dev task with no memory. That is a **ceiling effect**, not evidence
 that memory is useless: `bm25` selected an incompatible memory on 24/24 tasks and still
 succeeded, because the model verified against the live schema. The retrieval metrics expose the
-bad ranking; task success does not. This run is one model, one seed, and four of sixteen
-baselines. Details and limits:
-[`docs/evidence/phase3-llm-dev-core/summary.md`](docs/evidence/phase3-llm-dev-core/summary.md)
-and [`docs/results-llm.md`](docs/results-llm.md).
+bad ranking; task success does not.
+
+The held-out test families (`required_parameter`, `enum_change`, `date_format`) show the same
+ceiling: `no_memory` succeeded on 36/36 tasks. `bm25` again selected incompatible memories on
+36/36 tasks with zero harmful transfer; `hybrid_rrf_version_filter` ranked at MRR 1.000 versus
+0.750 for `outcome_aware`, with identical task success and tool calls. These runs are one model,
+one seed, and four of sixteen baselines. Details and limits:
+[`docs/evidence/phase3-llm-dev-core/summary.md`](docs/evidence/phase3-llm-dev-core/summary.md),
+[`docs/evidence/phase3-llm-test-core/summary.md`](docs/evidence/phase3-llm-test-core/summary.md),
+[`docs/results-llm.md`](docs/results-llm.md), and
+[`docs/results-llm-test.md`](docs/results-llm-test.md).
 
 ## Documentation
 

@@ -2,11 +2,14 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from recap.domain.enums import ValidationStatus
 from recap.domain.repairs import FailureWindow
 from recap.domain.retrieval import SelectedMemory, UtilityFeatures
 from recap.environments.mock_api import PaginatedApiEnvironment
 from recap.environments.reference_agent import ReferenceAgent
+from recap.errors import ConfigurationError
 from recap.evals.datasets import (
     FAMILY_SIGNATURES,
     FAMILY_SPLITS,
@@ -14,6 +17,11 @@ from recap.evals.datasets import (
     build_benchmark_v2_tasks,
     check_leakage,
     split_hash,
+)
+from recap.evals.runner import (
+    _append_checkpoint,
+    _load_checkpoint,
+    _select_baselines,
 )
 from recap.repair_compiler.candidate_generation import (
     DeterministicGenerator,
@@ -127,6 +135,40 @@ def test_implicit_and_explicit_failure_family_are_distinguished() -> None:
     assert default.family_explicit is False
     assert explicit.failure_family == "rate_limit"
     assert explicit.family_explicit is True
+
+
+def test_baseline_subset_keeps_declared_order_and_rejects_unknown_names() -> None:
+    selected = _select_baselines(["outcome_aware", "bm25"])
+    assert [name for name, _, _ in selected] == ["bm25", "outcome_aware"]
+
+    with pytest.raises(ValueError, match="unknown baselines"):
+        _select_baselines(["does_not_exist"])
+    with pytest.raises(ValueError, match="at least one baseline"):
+        _select_baselines([" "])
+
+
+def test_checkpoint_round_trip_refuses_a_different_runner_signature(tmp_path) -> None:
+    rows = tmp_path / "checkpoint.jsonl"
+    meta = tmp_path / "checkpoint.meta.json"
+    signature = {"runner_version": 2, "model": "test-model", "seed": 1}
+    assert _load_checkpoint(rows, meta, signature=signature, resume=True) == []
+
+    row = {
+        "task_id": "task-1",
+        "baseline": "no_memory",
+        "seed": 1,
+        "task_success": False,
+    }
+    _append_checkpoint(rows, row)
+    assert _load_checkpoint(rows, meta, signature=signature, resume=True) == [row]
+
+    with pytest.raises(ConfigurationError, match="different agent"):
+        _load_checkpoint(
+            rows,
+            meta,
+            signature={"runner_version": 2, "model": "other-model", "seed": 1},
+            resume=True,
+        )
 
 
 def test_v2_dataset_has_120_tasks_across_ten_families() -> None:

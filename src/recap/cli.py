@@ -833,23 +833,50 @@ def eval_run(
     suite: Annotated[str, typer.Option("--suite")] = "legacy",
     limit: Annotated[int | None, typer.Option("--limit")] = None,
     output: Annotated[Path, typer.Option("--output")] = Path("benchmark/reports"),
+    agent: Annotated[
+        str,
+        typer.Option("--agent", help="Agent under test: reference (deterministic) or llm (live)"),
+    ] = "reference",
+    seed: Annotated[int, typer.Option("--seed", min=1)] = 1,
+    baselines: Annotated[
+        str,
+        typer.Option("--baselines", help="Optional comma-separated baseline subset"),
+    ] = "",
+    resume: Annotated[
+        bool,
+        typer.Option("--resume/--no-resume", help="Resume completed (task, baseline, seed) rows"),
+    ] = True,
+    max_tool_calls: Annotated[int, typer.Option("--max-tool-calls", min=1, max=32)] = 6,
 ) -> None:
-    """Run the deterministic benchmark across retrieval baselines.
+    """Run the benchmark across retrieval baselines.
 
-    ``--suite v2`` runs the ten-family, 120-task dataset. Use ``--limit`` for a
-    smoke run while developing; full evidence runs must not use it.
+    ``--suite v2`` runs the ten-family, 120-task dataset. ``--agent llm`` uses
+    the configured real chat provider and writes an append-only checkpoint so
+    an interrupted multi-hour run can resume. Use ``--limit`` only for a smoke
+    run while developing; full evidence runs must not use it.
     """
     from recap.evals.runner import run_benchmark
 
+    selected_baselines = [item.strip() for item in baselines.split(",") if item.strip()] or None
     try:
         result = run_benchmark(
-            _container(), split=split, suite=suite, limit=limit, output_dir=output
+            _container(),
+            split=split,
+            suite=suite,
+            limit=limit,
+            output_dir=output,
+            agent=agent,
+            seed=seed,
+            baselines=selected_baselines,
+            resume=resume,
+            max_tool_calls=max_tool_calls,
         )
     except Exception as exc:
         _fail(exc)
         return
     console.print_json(json.dumps(result["summary"], indent=2, default=str))
     console.print(f"report: {result['report_path']}")
+    console.print(f"checkpoint: {result['checkpoint_path']}")
 
 
 @eval_app.command("repair-generator")

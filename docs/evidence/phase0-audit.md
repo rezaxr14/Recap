@@ -4,7 +4,6 @@
 - **Commit audited:** `7a529e4` (`feat: harden chunking and add embedding cache`)
 - **Environment:** Windows 11, Python 3.12.3, Docker Desktop, PostgreSQL 17-alpine,
   Elasticsearch 8.19.3, LM Studio at `http://localhost:1234/v1`
-- **Plan:** `NEXT_STEPS.md` Phase 0
 
 This file records what was run, not projections. No model weights were downloaded by the
 agent.

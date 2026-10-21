@@ -1,16 +1,14 @@
 """Benchmark runner: fair baselines over the same tasks, real measured metrics.
 
-Baselines compared (all deterministic, same tool budget):
-  - no_memory
-  - retry_only
-  - bm25
-  - vector
-  - hybrid_rrf
-  - hybrid_rerank (configured reranker; lexical by default)
-  - outcome_aware (RECAP selection policy)
+The default agent is the deterministic reference policy. ``agent="llm"`` runs
+the configured real chat provider through the same bounded tool loop and the
+same persisted-run accounting. The report labels which agent produced the
+numbers; the two must never be conflated.
 
 Frozen-memory setting: retrieval is read-only and tasks never write memories
 during the evaluation, so test memories cannot leak into later test episodes.
+Real-model runs are checkpointed per ``(task, baseline, seed)`` and can resume
+after an interruption without repeating completed model calls.
 """
 
 from __future__ import annotations
@@ -25,13 +23,15 @@ from recap.container import Container
 from recap.domain.enums import EventType, MemoryStatus, OutcomeStatus, RetrievalMode, RunStatus
 from recap.domain.memories import ExperienceMemory
 from recap.domain.retrieval import RetrievalContext, RetrievalRequest
+from recap.environments.llm_agent import PROMPT_VERSION, LlmAgent, MemoryAdvisory
 from recap.environments.mock_api import PaginatedApiEnvironment, family_error
-from recap.environments.reference_agent import ReferenceAgent
+from recap.environments.reference_agent import AgentRunResult, ReferenceAgent
 from recap.environments.run_recording import (
     AgentRunMetadata,
     complete_recorded_run,
     start_recorded_run,
 )
+from recap.errors import ConfigurationError
 from recap.evals.datasets import (
     FAMILY_SPLITS,
     BenchmarkTask,
@@ -88,15 +88,30 @@ def run_benchmark(
     output_dir: Path | str = Path("benchmark/reports"),
     workspace_id: str | None = None,
     cleanup: bool = True,
+    agent: str = "reference",
+    seed: int = 1,
+    baselines: list[str] | None = None,
+    resume: bool = True,
+    max_tool_calls: int = 6,
 ) -> dict[str, Any]:
+    if suite not in {"legacy", "v2"}:
+        raise ValueError("suite must be legacy or v2")
+    if agent not in {"reference", "llm"}:
+        raise ValueError("agent must be reference or llm")
+    if seed < 1:
+        raise ValueError("seed must be positive")
+    if max_tool_calls < 1:
+        raise ValueError("max_tool_calls must be positive")
+    active_baselines = _select_baselines(baselines)
+    identity = _agent_identity(container, agent)
+    identity["max_tool_calls"] = max_tool_calls
+
     container.migrate()
     container.init_search()
     container.init_search_chunks()
     # The dimension probe above is not part of benchmark cost. Reset after it
     # so the report covers only seeding and retrieval in this run.
     _reset_embedding_stats(container.embeddings)
-    if suite not in {"legacy", "v2"}:
-        raise ValueError("suite must be legacy or v2")
     available = (
         tasks
         if tasks is not None
@@ -112,36 +127,64 @@ def run_benchmark(
 
     dataset_hash = split_hash(tasks)
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-    # Never reuse a workspace across runs: stale memories or chunk documents
-    # from an earlier run would compete with the freshly seeded ones and make
-    # the summaries drift. An explicit workspace is reset; otherwise each run
-    # gets its own name and is torn down afterwards.
-    workspace = workspace_id or f"bench-{dataset_hash[:8]}-{stamp.lower()}"
+    output = Path(output_dir)
+    output.mkdir(parents=True, exist_ok=True)
+    # A stable workspace makes a resumed run start from the same seeded
+    # memories. It is still reset before and after the run, so stale rows from
+    # an earlier process cannot compete with the freshly seeded set.
+    workspace = workspace_id or f"bench-{dataset_hash[:8]}-{agent}-seed{seed}"
+    signature = _checkpoint_signature(
+        suite=suite,
+        split=split,
+        dataset_hash=dataset_hash,
+        tasks=tasks,
+        agent=agent,
+        seed=seed,
+        max_tool_calls=max_tool_calls,
+        identity=identity,
+        container=container,
+    )
+    checkpoint_path, checkpoint_meta_path = _checkpoint_paths(
+        output, suite=suite, split=split, agent=agent, seed=seed, stamp=stamp, resume=resume
+    )
     from recap.maintenance import reset_workspace
 
     reset_workspace(container, [workspace])
     try:
         _seed_memories(container, workspace, tasks)
+        per_task = _load_checkpoint(
+            checkpoint_path,
+            checkpoint_meta_path,
+            signature=signature,
+            resume=resume,
+        )
+        completed = {(row["task_id"], row["baseline"], row["seed"]) for row in per_task}
 
-        per_task: list[dict[str, Any]] = []
-        for baseline, mode, chunk_strategy in BASELINES:
+        for baseline, mode, chunk_strategy in active_baselines:
             for task in tasks:
-                per_task.append(
-                    _run_task(
-                        container,
-                        workspace,
-                        task,
-                        baseline=baseline,
-                        mode=mode,
-                        chunk_strategy=chunk_strategy,
-                    )
+                key = (task.task_id, baseline, seed)
+                if key in completed:
+                    logger.info("benchmark resume: skipping %s", key)
+                    continue
+                row = _run_task(
+                    container,
+                    workspace,
+                    task,
+                    baseline=baseline,
+                    mode=mode,
+                    chunk_strategy=chunk_strategy,
+                    agent=agent,
+                    seed=seed,
+                    max_tool_calls=max_tool_calls,
                 )
+                _append_checkpoint(checkpoint_path, row)
+                per_task.append(row)
+                completed.add(key)
 
+        _sort_rows(per_task, tasks)
         summary = _summarize(per_task)
         by_family = _summarize_by_family(per_task)
         performance = _summarize_performance(per_task)
-        output = Path(output_dir)
-        output.mkdir(parents=True, exist_ok=True)
         json_path = output / f"benchmark_{split}_{stamp}.json"
         csv_path = output / f"benchmark_{split}_{stamp}.csv"
         md_path = output / f"benchmark_{split}_{stamp}.md"
@@ -156,7 +199,7 @@ def run_benchmark(
             "dataset_hash": dataset_hash,
             "workspace_id": workspace,
             "tasks": [task.to_dict() for task in tasks],
-            "baselines": [name for name, _, _ in BASELINES],
+            "baselines": [name for name, _, _ in active_baselines],
             "per_task": per_task,
             "summary": summary,
             "by_task_family": by_family,
@@ -164,18 +207,42 @@ def run_benchmark(
             "retrieval": _retrieval_provenance(container),
             "embedding": embedding_usage,
             "embedding_cache_table": cache_table,
+            "agent": identity,
+            "checkpoint": {
+                "path": str(checkpoint_path),
+                "meta_path": str(checkpoint_meta_path),
+                "keys": len(per_task),
+                "seed": seed,
+            },
             "protocol": {
                 "memory_setting": "frozen_memory",
                 "memory_snapshot": "one per run, created before retrieval",
                 "retrieval_scope": "run",
-                "agent": "deterministic-reference-agent-v1",
-                "provider": "deterministic",
+                "agent": (
+                    "deterministic-reference-agent-v1"
+                    if agent == "reference"
+                    else "llm-tool-agent-v1"
+                ),
+                "provider": identity["provider_type"],
+                "model": identity["model"],
+                "prompt_version": identity["prompt_version"],
+                "temperature": identity["temperature"],
+                "max_tool_calls": max_tool_calls,
+                "seed": seed,
                 "environment": "mock-api-failure-families",
                 "suite": suite,
                 "failure_families": sorted({task.failure_mode for task in tasks}),
                 "metrics_source": "persisted_run_records",
-                "workspace_isolation": "unique workspace per run, reset before and after",
-                "note": ("Deterministic mock pipeline test. Not evidence of real LLM performance."),
+                "workspace_isolation": "stable workspace, reset before and after",
+                "checkpointing": "append-only JSONL, idempotent per (task, baseline, seed)",
+                "note": (
+                    "Deterministic mock pipeline test. Not evidence of real LLM performance."
+                    if agent == "reference"
+                    else (
+                        "Real configured chat model in a deterministic mock environment. "
+                        "Model performance is measured, not assumed."
+                    )
+                ),
             },
         }
         json_path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
@@ -188,10 +255,161 @@ def run_benchmark(
             "json_path": str(json_path),
             "csv_path": str(csv_path),
             "workspace_id": workspace,
+            "checkpoint_path": str(checkpoint_path),
         }
     finally:
         if cleanup:
             reset_workspace(container, [workspace])
+
+
+def _select_baselines(names: list[str] | None) -> list[tuple[str, RetrievalMode | None, str]]:
+    if names is None:
+        return list(BASELINES)
+    requested = [name.strip() for name in names if name.strip()]
+    if not requested:
+        raise ValueError("at least one baseline is required")
+    known = {name for name, _, _ in BASELINES}
+    unknown = sorted(set(requested) - known)
+    if unknown:
+        raise ValueError(f"unknown baselines: {', '.join(unknown)}")
+    wanted = set(requested)
+    return [baseline for baseline in BASELINES if baseline[0] in wanted]
+
+
+def _agent_identity(container: Container, agent: str) -> dict[str, Any]:
+    """Record the exact agent, model, and decoding settings used for a run."""
+    if agent == "reference":
+        return {
+            "kind": "reference",
+            "agent_id": "benchmark-reference-agent",
+            "provider_type": "deterministic",
+            "model": "reference-agent-v1",
+            "prompt_version": "deterministic-policy-v1",
+            "temperature": 0.0,
+            "max_tool_calls": 6,
+        }
+    provider = container.llm
+    if provider is None:
+        raise ConfigurationError(
+            "agent=llm requires a configured LLM provider; set LLM_PROVIDER, "
+            "LLM_BASE_URL, and LLM_MODEL (for example LM Studio at http://localhost:1234/v1)"
+        )
+    settings = container.settings.llm
+    return {
+        "kind": "llm",
+        "agent_id": "benchmark-llm-agent",
+        "provider_type": str(getattr(provider, "provider_type", settings.provider)),
+        "model": str(getattr(provider, "model", "") or settings.model),
+        "prompt_version": PROMPT_VERSION,
+        "temperature": float(getattr(provider, "temperature", settings.temperature)),
+        "max_tool_calls": 6,
+        "capabilities": provider.capabilities.to_dict(),
+    }
+
+
+def _checkpoint_signature(
+    *,
+    suite: str,
+    split: str,
+    dataset_hash: str,
+    tasks: list[BenchmarkTask],
+    agent: str,
+    seed: int,
+    max_tool_calls: int,
+    identity: dict[str, Any],
+    container: Container,
+) -> dict[str, Any]:
+    """Identity that must match before resuming an append-only checkpoint."""
+    return {
+        "runner_version": 2,
+        "suite": suite,
+        "split": split,
+        "dataset_hash": dataset_hash,
+        "task_ids": [task.task_id for task in tasks],
+        "agent": agent,
+        "seed": seed,
+        "max_tool_calls": max_tool_calls,
+        "model": identity["model"],
+        "provider_type": identity["provider_type"],
+        "prompt_version": identity["prompt_version"],
+        "embedding_model": getattr(container.embeddings, "model_id", ""),
+        "embedding_fingerprint": getattr(container.embeddings, "embedding_fingerprint", ""),
+        "vector_dimension": container.settings.elasticsearch.vector_dimension,
+    }
+
+
+def _checkpoint_paths(
+    output: Path,
+    *,
+    suite: str,
+    split: str,
+    agent: str,
+    seed: int,
+    stamp: str,
+    resume: bool,
+) -> tuple[Path, Path]:
+    stem = f"checkpoint_{suite}_{split}_{agent}_seed{seed}"
+    if not resume:
+        stem = f"{stem}_{stamp.lower()}"
+    return output / f"{stem}.jsonl", output / f"{stem}.meta.json"
+
+
+def _load_checkpoint(
+    path: Path,
+    meta_path: Path,
+    *,
+    signature: dict[str, Any],
+    resume: bool,
+) -> list[dict[str, Any]]:
+    if resume and path.exists():
+        if not meta_path.exists():
+            raise ConfigurationError(
+                "benchmark checkpoint exists without its metadata; refusing to mix runs",
+                details={"checkpoint": str(path), "meta": str(meta_path)},
+            )
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        if meta.get("signature") != signature:
+            raise ConfigurationError(
+                "benchmark checkpoint was produced by a different agent, model, dataset, "
+                "embedding configuration, or tool budget; use --no-resume for a fresh run",
+                details={"checkpoint": str(path)},
+            )
+        rows: list[dict[str, Any]] = []
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                rows.append(json.loads(line))
+        logger.info("benchmark resume: loaded %d completed task rows from %s", len(rows), path)
+        return rows
+    meta_path.write_text(
+        json.dumps(
+            {
+                "created_at": datetime.now(UTC).isoformat(),
+                "signature": signature,
+            },
+            indent=2,
+            default=str,
+        ),
+        encoding="utf-8",
+    )
+    path.touch(exist_ok=True)
+    return []
+
+
+def _append_checkpoint(path: Path, row: dict[str, Any]) -> None:
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(row, default=str, sort_keys=True) + "\n")
+        handle.flush()
+
+
+def _sort_rows(rows: list[dict[str, Any]], tasks: list[BenchmarkTask]) -> None:
+    baseline_order = {name: index for index, (name, _, _) in enumerate(BASELINES)}
+    task_order = {task.task_id: index for index, task in enumerate(tasks)}
+    rows.sort(
+        key=lambda row: (
+            baseline_order.get(row["baseline"], len(baseline_order)),
+            task_order.get(row["task_id"], len(task_order)),
+        )
+    )
 
 
 def _seed_memories(container: Container, workspace_id: str, tasks: list[BenchmarkTask]) -> None:
@@ -342,29 +560,38 @@ def _run_task(
     baseline: str,
     mode: RetrievalMode | None,
     chunk_strategy: str = "",
+    agent: str = "reference",
+    seed: int = 1,
+    max_tool_calls: int = 6,
 ) -> dict[str, Any]:
     environment = PaginatedApiEnvironment(
         version=task.environment_version, failure_family=task.failure_mode
     )
     fingerprint = environment.fingerprint()
-    agent = ReferenceAgent()
+    identity = _agent_identity(container, agent)
     failure = family_error(task.failure_mode)
-
+    config_snapshot = {
+        "baseline": baseline,
+        "agent_kind": agent,
+        "model": identity["model"],
+        "prompt_version": identity["prompt_version"],
+        "temperature": identity["temperature"],
+        "max_tool_calls": max_tool_calls,
+        "seed": seed,
+        "retrieval_mode": mode.value if mode is not None else None,
+        "chunk_strategy": chunk_strategy or None,
+        "split": task.split,
+        "dataset_hash": split_hash([task]),
+        "run_scoped_retrieval": True,
+    }
     metadata = AgentRunMetadata(
-        agent_id="benchmark-reference-agent",
-        model_provider="deterministic",
-        model_name="reference-agent-v1",
+        agent_id=str(identity["agent_id"]),
+        model_provider=str(identity["provider_type"]),
+        model_name=str(identity["model"]),
         task_family=task.task_family,
         success_criteria="all records collected",
-        failure_type="benchmark_task_failed",
-        config_snapshot={
-            "baseline": baseline,
-            "retrieval_mode": mode.value if mode is not None else None,
-            "chunk_strategy": chunk_strategy or None,
-            "split": task.split,
-            "dataset_hash": split_hash([task]),
-            "run_scoped_retrieval": True,
-        },
+        failure_type="benchmark_task_failed" if agent == "reference" else None,
+        config_snapshot=config_snapshot,
     )
     # Start the run before retrieval so its snapshot pins the candidate set for
     # the whole task. All reported task metrics below are read back from this
@@ -425,31 +652,49 @@ def _run_task(
                 selected_ids = [memory_id for memory_id in selected_ids if memory_id in allowed]
                 status = "selected" if selected_ids else "no_safe_memory"
 
-    memory = None
-    if baseline == "retry_only":
-        # A naive retry with the same pre-memory request cannot succeed.
-        result = agent.run(environment, memory=None)
-    elif selected_ids:
+    decision_memory = None
+    if selected_ids:
         with container.services() as services:
             decision_memory = services.memories.get_memory(selected_ids[0], workspace_id)
-            if decision_memory is not None:
-                from recap.domain.retrieval import CandidateEvaluation
-                from recap.recall.engine import _to_selected
 
-                memory = _to_selected(
-                    decision_memory,
-                    CandidateEvaluation(
-                        memory_id=decision_memory.id,
-                        memory_version=decision_memory.memory_version,
-                        title=decision_memory.content.title,
-                        status=str(decision_memory.status),
-                    ),
-                )
-        result = (
-            agent.run(environment, memory=memory) if memory is not None else agent.run(environment)
-        )
+    recorded_memory: Any | None = None
+    agent_error: str | None = None
+    if agent == "reference":
+        reference = ReferenceAgent()
+        if decision_memory is not None:
+            from recap.domain.retrieval import CandidateEvaluation
+            from recap.recall.engine import _to_selected
+
+            recorded_memory = _to_selected(
+                decision_memory,
+                CandidateEvaluation(
+                    memory_id=decision_memory.id,
+                    memory_version=decision_memory.memory_version,
+                    title=decision_memory.content.title,
+                    status=str(decision_memory.status),
+                ),
+            )
+        result = reference.run(environment, memory=recorded_memory, max_tool_calls=max_tool_calls)
     else:
-        result = agent.run(environment)
+        provider = container.llm
+        if provider is None:  # defensive: _agent_identity already validated
+            raise ConfigurationError("agent=llm requires a configured LLM provider")
+        if decision_memory is not None:
+            recorded_memory = MemoryAdvisory.from_memory(decision_memory)
+        try:
+            result = LlmAgent(provider).run(
+                environment,
+                memory=recorded_memory,
+                max_tool_calls=max_tool_calls,
+            )
+        except Exception as exc:  # provider boundary: record and continue the matrix
+            logger.exception(
+                "LLM agent failed for task %s baseline %s",
+                task.task_id,
+                baseline,
+            )
+            agent_error = f"{type(exc).__name__}: {exc}"
+            result = AgentRunResult(success=False, final_error=agent_error)
 
     run_id = complete_recorded_run(
         container,
@@ -457,8 +702,8 @@ def _run_task(
         environment,
         result,
         metadata=metadata,
-        memory=memory,
-        memory_source="retrieval_selection",
+        memory=recorded_memory,
+        memory_source="llm_advisory" if agent == "llm" else "retrieval_selection",
     )
     relevant = _relevant_ids(container, workspace_id, task)
     incompatible_selected = _count_incompatible_selected(
@@ -500,6 +745,11 @@ def _run_task(
         "baseline": baseline,
         "split": task.split,
         "environment_version": task.environment_version,
+        "agent": agent,
+        "model": identity["model"],
+        "seed": seed,
+        "prompt_version": identity["prompt_version"],
+        "temperature": identity["temperature"],
         "run_id": run_id,
         "memory_snapshot_id": recorded.memory_snapshot_id,
         "retrieval_status": status,
@@ -511,6 +761,10 @@ def _run_task(
         "task_success": success,
         "tool_calls": recorded.tool_calls_count,
         "retries": recorded.retry_count,
+        "input_tokens": recorded.input_tokens,
+        "output_tokens": recorded.output_tokens,
+        "duration_ms": recorded.duration_ms,
+        "agent_error": agent_error,
         "used_memory_id": used_memory_id,
         "harmful_transfer": bool(used_memory_id and not success),
         "incompatible_selected": incompatible_selected,
@@ -737,14 +991,34 @@ def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
 
 
 def _render_markdown(payload: dict[str, Any]) -> str:
+    agent = payload.get("agent") or {}
+    is_llm = agent.get("kind") == "llm"
+    agent_label = (
+        f"real LLM `{agent.get('model', '')}` via `{agent.get('provider_type', '')}`"
+        if is_llm
+        else "deterministic reference agent"
+    )
+    warning = (
+        "> Deterministic mock environment with a real configured chat model. Model behavior "
+        "is measured, not assumed; provider failures are recorded as failed runs."
+        if is_llm
+        else (
+            "> Deterministic mock environment and deterministic reference agent. These numbers "
+            "measure pipeline behavior, not real LLM agent performance."
+        )
+    )
     lines = [
         f"# RECAP benchmark - suite `{payload.get('suite', 'legacy')}` split `{payload['split']}`",
         "",
         f"Generated: {payload['generated_at']}",
         f"Dataset hash: `{payload['dataset_hash']}`",
+        f"Agent: {agent_label}",
+        f"Prompt version: `{agent.get('prompt_version', '')}` | "
+        f"temperature: {agent.get('temperature', 0.0)} | "
+        f"seed: {payload.get('protocol', {}).get('seed', 1)} | "
+        f"tool budget: {payload.get('protocol', {}).get('max_tool_calls', 6)}",
         "",
-        "> Deterministic mock environment and deterministic reference agent. These numbers "
-        "measure pipeline behavior, not real LLM agent performance.",
+        warning,
         "",
         "## Summary",
         "",
@@ -806,6 +1080,27 @@ def _render_markdown(payload: dict[str, Any]) -> str:
             f"| {row['task_id']} | {row['baseline']} | `{row['run_id']}` | "
             f"{row['task_success']} | {row['retrieval_status']} | {error[:60]} |"
         )
+    if is_llm:
+        lines.extend(
+            [
+                "",
+                "## Model usage (provider-reported)",
+                "",
+                "| baseline | mean input tokens | mean output tokens | mean duration ms | errors |",
+                "|---|---|---|---|---|",
+            ]
+        )
+        for baseline in payload["summary"]:
+            rows = [row for row in payload["per_task"] if row["baseline"] == baseline]
+            durations = [row["duration_ms"] for row in rows if row.get("duration_ms") is not None]
+            errors = sum(1 for row in rows if row.get("agent_error"))
+            lines.append(
+                f"| {baseline} | {mean([float(row.get('input_tokens') or 0) for row in rows]):.1f} | "
+                f"{mean([float(row.get('output_tokens') or 0) for row in rows]):.1f} | "
+                f"{mean([float(value) for value in durations]) if durations else 0.0:.1f} | "
+                f"{errors} |"
+            )
+
     performance = payload.get("performance") or {}
     if performance:
         lines.extend(
@@ -874,7 +1169,8 @@ def _render_markdown(payload: dict[str, Any]) -> str:
             "## Reproduction",
             "",
             "```bash",
-            f"recap eval run --suite {payload.get('suite', 'legacy')} --split {payload['split']}",
+            f"recap eval run --suite {payload.get('suite', 'legacy')} --split {payload['split']} "
+            f"--agent {agent.get('kind', 'reference')} --seed {payload.get('protocol', {}).get('seed', 1)}",
             "```",
         ]
     )

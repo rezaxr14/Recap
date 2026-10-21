@@ -11,7 +11,6 @@ the code and its tests are authoritative and the document should be fixed in the
 | [`evidence/phase1-summary.md`](evidence/phase1-summary.md) | Evidence-backed implementation state, live-run results, and known limits |
 | [`benchmark-v2.md`](benchmark-v2.md) | Ten-family task suite, hard negatives, fair baselines, leakage checks, and limitations |
 | [`evidence/phase2-summary.md`](evidence/phase2-summary.md) | Measured benchmark v2 dev results and live new-family model runs |
-| [`../NEXT_STEPS.md`](../NEXT_STEPS.md) | The staged plan for real models, benchmark v2, RAG depth, packaging, and the web app |
 | [`architecture.md`](architecture.md) | Components, data flow, and the separation between retrieval and selection |
 | [`data-model.md`](data-model.md) | Postgres tables, Elasticsearch mappings, ids, versions, and lifecycle fields |
 

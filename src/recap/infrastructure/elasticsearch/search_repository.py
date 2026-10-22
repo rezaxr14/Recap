@@ -87,6 +87,7 @@ class ElasticsearchMemoryRepository:
         memories: Sequence[tuple[ExperienceMemory, Sequence[float]]],
         *,
         index: str | None = None,
+        refresh: bool | str = "wait_for",
     ) -> None:
         if not memories:
             return
@@ -113,7 +114,7 @@ class ElasticsearchMemoryRepository:
             )
             operations.append(document)
         try:
-            response = self.client.bulk(operations=operations, refresh="wait_for")
+            response = self.client.bulk(operations=operations, refresh=refresh)
         except TRANSPORT_ERRORS as exc:
             raise SearchUnavailable(
                 "cannot bulk index memories: Elasticsearch unreachable"

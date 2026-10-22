@@ -215,7 +215,19 @@ POST /api/v1/retrieval/select
   <- RetrievalDecision (selected, rejected + reasons, latency, policy version)
 ```
 
-### 3.3 Compile and promote a repair
+### 3.3 Ask RECAP
+
+```
+POST /api/v1/ask
+  -> AskService.ask
+     -> hybrid memory retrieval + bounded run/event history
+     -> answerer: extractive (default) or configured LLM
+     -> verify every cited source id and quote
+     -> insufficient_evidence on any verification failure
+  <- AskAnswer (answer, citations, verification, retrieval trace)
+```
+
+### 3.4 Compile and promote a repair
 
 ```
 POST /api/v1/repairs/compile
@@ -233,7 +245,7 @@ POST /api/v1/repairs/{id}/promote
      -> create active memory -> audit -> index
 ```
 
-### 3.4 Drift
+### 3.5 Drift
 
 ```
 MemoryShiftService.evaluate_compatibility(memory, environment)

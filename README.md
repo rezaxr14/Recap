@@ -44,7 +44,7 @@ a deterministic mock environment. Neither is a general LLM-capability claim. See
 | **Search** | Elasticsearch 8.19: BM25, dense vectors, hybrid RRF, card and chunk indices |
 | **Interfaces** | `recap` CLI, FastAPI HTTP API, Python package, static replay web app |
 | **Stack** | Python 3.12, FastAPI, SQLAlchemy 2, Alembic, Pydantic 2, Docker Compose |
-| **Verification** | `288 passed, 1 skipped` locally with `--run-integration`; real-service integration tests; benchmark reproducibility gate |
+| **Verification** | `298 passed, 1 skipped` locally with `--run-integration`; real-service integration tests; benchmark reproducibility gate |
 
 ---
 
@@ -58,6 +58,8 @@ Elasticsearch 8.19.3 node. There are no stub endpoints in the implemented paths.
 | Run recording with idempotent events + redaction | Working | `tests/unit/test_run_recorder.py`, `tests/integration/test_security.py` |
 | PostgreSQL source of truth (Postgres 17, Alembic) | Working | `migrations/versions/`, `tests/integration/test_postgres.py` |
 | Elasticsearch BM25 + dense vector + hybrid RRF | Working | `tests/integration/test_elasticsearch.py` |
+| 100k-document index/query scale harness | Working; deterministic and live-nomic measurements recorded | `scripts/scale_test.py`, `docs/evidence/phase4-scale-100k.md` |
+| Grounded Q&A with verified citations (`POST /api/v1/ask`) | Working; extractive path in CI, optional LLM path tested with a scripted provider | `tests/unit/test_ask.py`, `tests/integration/test_ask.py`, `docs/ask.md` |
 | Lexical reranker + opt-in local CrossEncoder (`hybrid_rerank`) | Working; cross-encoder latency measured, quality comparison not yet meaningful | `tests/unit/test_reranker.py`, `tests/integration/test_cross_encoder_live.py`, `docs/evidence/phase1-rerank-benchmark/` |
 | Outcome-aware selection with rejection reasons | Working | `tests/unit/test_recall_policy.py` |
 | RepairCompiler (failure window -> typed candidate) | Working | `tests/unit/test_repair_compiler.py` |
@@ -229,6 +231,7 @@ one seed, and four of sixteen baselines. Details and limits:
 | Understand the system | [`docs/architecture.md`](docs/architecture.md), [`docs/data-model.md`](docs/data-model.md), [`docs/retrieval.md`](docs/retrieval.md) |
 | Run and operate it | [`docs/operations.md`](docs/operations.md), [Quickstart](#quickstart) |
 | Understand repair and safety | [`docs/repair-validation.md`](docs/repair-validation.md), [`docs/threat-model.md`](docs/threat-model.md) |
+| Ask questions over recorded evidence | [`docs/ask.md`](docs/ask.md) (`POST /api/v1/ask`, verified citations) |
 | Evaluate it | [`docs/benchmark-v3.md`](docs/benchmark-v3.md), [`docs/results-v3.md`](docs/results-v3.md), [`docs/benchmark-v2.md`](docs/benchmark-v2.md), [`docs/evidence/phase2-summary.md`](docs/evidence/phase2-summary.md) |
 | Explore the recorded runs | [`web/README.md`](web/README.md), [`docs/evidence/phase3b-v3-live-test.md`](docs/evidence/phase3b-v3-live-test.md) |
 | Connect a model | [`docs/providers.md`](docs/providers.md) |
@@ -441,6 +444,18 @@ recap serve --port 8000
 `GET /health/live`, `GET /health/ready`, `GET /api/v1/diagnostics`. Full route list in
 [`docs/operations.md`](docs/operations.md).
 
+Grounded Q&A is available at `POST /api/v1/ask`. The default extractive mode needs no model;
+`mode=llm` uses the configured agent role. Every citation is verified against the supplied
+source text, and an unverifiable answer becomes `insufficient_evidence`:
+
+```bash
+curl -s http://localhost:8000/api/v1/ask \
+  -H 'content-type: application/json' \
+  -d '{"workspace_id":"demo","question":"Which memory fixes INVALID_CURSOR?"}'
+```
+
+See [`docs/ask.md`](docs/ask.md) for the contract, limits, and tests.
+
 ---
 
 ## CLI surface
@@ -578,6 +593,7 @@ src/recap/
   infrastructure/    SQLAlchemy, Elasticsearch, embeddings
   environments/      mock API, deterministic reference agent, configured-LLM agent
   evals/             datasets, metrics, benchmark runner
+  ask/               grounded retrieval, answer synthesis, citation verification
   api/               FastAPI routes
   demo.py            the 10-step end-to-end flow
 migrations/          Alembic

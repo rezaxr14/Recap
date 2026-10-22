@@ -15,6 +15,7 @@ from types import TracebackType
 from elasticsearch import Elasticsearch
 from sqlalchemy.orm import Session
 
+from recap.ask.service import AskService
 from recap.chunking.service import ChunkIndexSynchronizer, ChunkService
 from recap.config import Settings, get_settings
 from recap.domain.enums import MemoryStatus
@@ -304,6 +305,8 @@ class Container:
 class Services:
     """Services bound to one database session."""
 
+    ask: AskService
+
     def __init__(self, container: Container, session: Session) -> None:
         self.container = container
         self.session = session
@@ -408,6 +411,7 @@ class Services:
             audit_repository=self.audit,
             index_sync=self.index_sync,
         )
+        self.ask = AskService(self)
 
 
 class ServicesContext:

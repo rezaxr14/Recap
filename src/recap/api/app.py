@@ -12,6 +12,7 @@ from fastapi.responses import JSONResponse
 
 from recap import __version__
 from recap.api.routes import (
+    ask,
     environments,
     health,
     memories,
@@ -96,6 +97,7 @@ def create_app(container: Container | None = None) -> FastAPI:
 
     prefix = settings.app.api_prefix
     app.include_router(health.router)
+    app.include_router(ask.router, prefix=prefix)
     app.include_router(runs.router, prefix=prefix)
     app.include_router(memories.router, prefix=prefix)
     app.include_router(retrieval.router, prefix=prefix)

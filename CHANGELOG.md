@@ -21,6 +21,13 @@ All notable changes to this project are documented here. The format follows
   handled by `scripts/export_replay.py`.
 - `recap search worker` daemon for the index outbox, plus a packaged Compose `worker` service.
   The API never starts a hidden consumer thread.
+- `scripts/scale_test.py`: temporary-prefix 100k synthetic index with bulk loading, BM25/vector/
+  hybrid p50/p95 latency, deterministic hashing and configured-embedding modes, exact evidence
+  in `docs/evidence/phase4-scale-100k.md`.
+- Grounded Q&A at `POST /api/v1/ask`: hybrid memory retrieval plus bounded run/event history,
+  an extractive default and an optional configured-LLM answerer, strict source-id and
+  verbatim-quote verification, and explicit `insufficient_evidence` downgrade on any
+  unverifiable citation. No live-model Ask evaluation is claimed.
 - Optional shared `RECAP_API_KEY` and `RECAP_CORS_ORIGINS` settings. Health endpoints stay
   public; application routes accept `X-API-Key`; auth uses a constant-time comparison.
 - API auth tests covering public health, missing/wrong key rejection, and local no-key mode.

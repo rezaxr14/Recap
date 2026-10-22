@@ -101,13 +101,17 @@ POST /api/v1/repairs/{candidate_id}/promote
 
 POST /api/v1/environments/fingerprints
 
+POST /api/v1/ask
+
 GET  /health/live
 GET  /health/ready
 GET  /api/v1/diagnostics
 ```
 
 `retrieval/search` returns ranked candidates without the operational policy;
-`retrieval/select` applies it. Errors are structured:
+`retrieval/select` applies it. `ask` performs grounded retrieval over memories, runs, and
+events and returns only programmatically verified citations; see
+[`ask.md`](ask.md) for the contract and its limits. Errors are structured:
 
 ```json
 {"code": "validation_error", "message": "...", "details": {...}}
@@ -487,7 +491,11 @@ service containers, followed by the demo and benchmark.
 - The outbox has a bounded one-shot drain (`recap search drain`) and an explicit daemon
   (`recap search worker`) with retry/backoff and a `dead` state after `max_attempts`. It is not
   a hidden thread inside the API; run one or more workers under a supervisor.
-- No connection pooling tuning beyond SQLAlchemy defaults; no load testing has been done.
+- No connection pooling tuning beyond SQLAlchemy defaults.
+- `scripts/scale_test.py` creates a temporary index prefix and measures bulk indexing plus
+  BM25/vector/hybrid p50/p95. It is a single-node latency sample, not a load test with
+  concurrent clients. The 100k deterministic and live-nomic measurements are in
+  [`evidence/phase4-scale-100k.md`](evidence/phase4-scale-100k.md).
 
 ## 12. Upgrade procedure
 

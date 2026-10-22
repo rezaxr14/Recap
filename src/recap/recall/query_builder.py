@@ -34,4 +34,10 @@ def redact_context(context: RetrievalContext) -> RetrievalContext:
     payload = context.model_dump(mode="json")
     redacted, _ = redact_payload(payload)
     redacted["query"] = redacted.get("query", "")[:MAX_QUERY_CHARS]
-    return RetrievalContext.model_validate(redacted)
+    result = RetrievalContext.model_validate(redacted)
+    # Schema path *hashes* are opaque digests, not credentials. Their key names
+    # can contain "token" (e.g. ``...properties.page_token``), which the generic
+    # key-based redactor would otherwise replace. Restoring them keeps
+    # field-scoped compatibility exact without weakening secret redaction.
+    result.schema_path_hashes = dict(context.schema_path_hashes)
+    return result

@@ -1,5 +1,23 @@
 # Evaluation Methodology
 
+> **Current suite: benchmark v3.** It is the memory-required, leak-resistant suite.
+> Benchmark v2 and the legacy suite are retained as regression/ceiling suites; do not
+> cite their task success as evidence that memory helps. See
+> [`benchmark-v3.md`](benchmark-v3.md) for the design, acceptance gate, and held-out
+> deterministic result.
+
+## 0. Which suite answers which question
+
+| Suite | Question | Status |
+|---|---|---|
+| **v3** | Does memory change the verified answer, and can the policy reject unsafe memory? | Current; Tier C `no_memory` 0/24 on the held-out deterministic run |
+| v2 | Does the full vertical slice remain stable across ten failure families? | Legacy ceiling/regression suite; live `no_memory` succeeds on every task |
+| legacy | Small six-task smoke path | Regression only |
+
+The rest of this document describes the shared harness and then the v2 details that
+remain useful for regression testing. v3-specific rules are in
+[`benchmark-v3.md`](benchmark-v3.md).
+
 ## 1. What this benchmark is
 
 A benchmark with two agent modes over the same deterministic environments:
@@ -25,17 +43,22 @@ What the deterministic mode *can* show, and does show:
 - the promotion gate actually gates (memories are created through the real compile ->
   validate -> promote path)
 
-The live mode adds a different question: does a real model actually need the memory? On both
-the v2 dev and held-out test splits the answer was no for the tested model. It solved all 24
-dev and all 36 test tasks with `no_memory`, so both splits have a ceiling effect for that
-model. The live reports keep the retrieval metrics separate from task success and record this
-result rather than hiding it.
+The live mode adds a different question: does a real model actually need the memory? On the
+v2 dev and held-out test splits the answer was no for the tested model: it solved all 24 dev
+and all 36 test tasks with `no_memory`. On v3 the question is different: the aggregate
+`no_memory` result is 6/24, but all six are `novel_failure` controls; on the 18 tasks that
+require selecting a memory it is 0/18. The live reports keep aggregate and selectable-task
+counts separate, and record the exact model, timeout, and seed rather than treating “model
+solved it” as the same thing as “memory was unnecessary”.
 
 ## 2. Task suite
 
-The original six-task suite remains in `default_tasks()` for the legacy smoke path.
-The current evaluation suite is **benchmark v2**; its design and commands are in
-[`benchmark-v2.md`](benchmark-v2.md).
+The original six-task suite remains in `default_tasks()` for the legacy smoke path. The
+current evaluation suite is **benchmark v3**; its design and commands are in
+[`benchmark-v3.md`](benchmark-v3.md). Benchmark v2 is retained as the legacy
+ceiling/regression suite in [`benchmark-v2.md`](benchmark-v2.md). v3 adds 48 tasks across
+three memory-required tiers, a 2,000-decoy synthetic store, silent-drift environments, and
+field-scoped schema compatibility.
 
 ### Legacy suite
 
@@ -105,12 +128,13 @@ policy. That is the ablation: it isolates what the policy adds. The `_chunk` and
 report separates "does the policy help?" from "does chunking help?". See
 [`retrieval.md` §8](retrieval.md#8-ablation-design-why-the-baselines-are-fair).
 
-**Current limitation:** the dev split seeds one correct memory per environment version plus
+**v2 limitation:** the v2 dev split seeds one correct memory per environment version plus
 stale, wrong-family, and bad-track-record distractors, but no same-environment near-duplicate
 or noise set. Chunk retrieval is environment-scoped, so every chunk baseline still sees the
 same correct candidate and succeeds. The chunk-strategy matrix is wired and reproducible, but
-it is degenerate until the dataset adds same-environment distractors. No "event-aware beats
-naive" claim is made from the current numbers.
+it is degenerate on v2 until the dataset adds same-environment distractors. No "event-aware
+beats naive" claim is made from the current numbers. v3 adds a 2,000-memory synthetic decoy
+store and field-scoped compatibility, but still does not claim a chunking win.
 
 `raw_trajectory_rag` is not implemented. The existing `*_chunk` modes index chunks derived
 from memories and run evidence, not raw full trajectories.
@@ -153,7 +177,17 @@ tasks. It is implemented and unit-tested; the current report surfaces per-baseli
 The audit never feeds back into selection. A baseline cannot be penalized or rewarded by a
 metric it influenced, which is what makes the comparison meaningful.
 
-## 5. Reported results (benchmark v2 dev)
+## 5. Reported results
+
+### Current v3 held-out test
+
+Deterministic reference agent, 24 Tier C tasks, 2,000 synthetic decoys, 256-d hashing
+embedder. `outcome_aware` succeeds on 15/24 tasks (62.5%; 15/18 selectable tasks) with 12.5%
+harmful transfer, 0% incompatible selection, and 0% false abstention. `no_memory` is 0/24,
+so the acceptance gate passes. The full matrix, CIs, and retained failures are in
+[`results-v3.md`](results-v3.md). This is a pipeline/safety result, not a live-model claim.
+
+### Legacy v2 dev
 
 From a real run with real nomic embeddings (`recap eval run --suite v2 --split dev`), 24 tasks:
 
@@ -183,9 +217,9 @@ How to read this honestly:
 - `false_abstention` is 0.000 for `outcome_aware`; abstention precision/recall is not reported
   because there are no negative-control tasks.
 
-### Live model (Phase 3, in progress)
+### Legacy v2 live-model run
 
-A separate run used the same 24 dev tasks and real nomic embeddings with
+A separate v2 run used the same 24 dev tasks and real nomic embeddings with
 `gemma-4-e4b-uncensored-hauhaucs-aggressive` through LM Studio (temperature 0, prompt
 `llm-tool-agent-v1`, tool budget 6, seed 1):
 
@@ -275,36 +309,38 @@ Normal reports are gitignored except for `.gitkeep`; regenerate them rather than
 committed number. The Phase 2 evidence copies under `docs/evidence/phase2-benchmark-v2-dev*`
 are committed deliberately as provenance for this milestone.
 
-## 8. What would make this a real evaluation
+## 8. What would make this a stronger evaluation
 
 In rough priority order:
 
-1. **Run the held-out test split and add same-environment noise.** The current v2 dev split
-   has 24 tasks and three hard-negative kinds; it still cannot distinguish the full policy
-   from a fair version filter on success.
-2. **A real agent.** An LLM agent with a fixed model, temperature, and tool budget. The
-   reference agent is a correctness harness, not a capability measurement. Live agent runs
-   exist, but they are not yet part of the benchmark matrix.
-3. **Negative-control tasks and abstention quality.** Precision/recall require tasks where
-   abstaining is correct; the current suite only reports false abstention.
-4. **Repeated seeds and paired CIs.** Run each `(task, baseline, seed)` at least three times
+1. **Improve the live agent's execution, not just its selection.** On v3 the policy selected
+   the correct gold on 18/18 selectable tasks, but the small model completed only 8. A better
+   tool-use prompt or a larger model is needed before the live result measures selection
+   rather than execution.
+2. **Repeated seeds and paired CIs.** Run each `(task, baseline, seed)` at least three times
    and report paired intervals, not only task resampling.
-5. **Ablations beyond retrieval mode.** Compatibility-only, utility-only, reliability-only,
+3. **Scale and cluster behavior.** The current store is 2,003 synthetic memories and one
+   single-node Elasticsearch. Add realistic corpus sizes, shard layouts, and latency budgets.
+4. **Ablations beyond retrieval mode.** Compatibility-only, utility-only, reliability-only,
    and reranker-on/off, so the contribution of each policy component is separable.
-6. **Adversarial memories.** Same-environment near-duplicates and noise, not only stale and
-   wrong-family memories.
-7. **`raw_trajectory_rag`.** Standard RAG over full past trajectories, with no repair
+5. **Adversarial memories.** Same-environment near-duplicates and noise beyond the current
+   stale, wrong-family, and bad-track-record decoys.
+6. **`raw_trajectory_rag`.** Standard RAG over full past trajectories, with no repair
    compilation, as a baseline.
 
 ## 9. Non-claims
 
-- No claim that RECAP improves LLM task success.
-- No claim of statistical significance at the current sample size.
-- No claim that the full policy beats the fair `hybrid_rrf_version_filter` on this dev split;
-  it matches success and safety, with lower MRR.
-- No claim that the test-split result generalizes; the test split has not been run.
+- No claim that RECAP improves general LLM capability. The live v3 run completes 8/18
+  selectable tasks; its failures are retained.
+- No claim of statistical significance at one seed and one model.
+- No claim that the full policy beats the fair `hybrid_rrf_version_filter` on the v2 dev
+  split; it matches success and safety there, with lower MRR.
+- No claim that the v3 live result matches the deterministic 15/18 selectable-task result.
+  It is 8/18, and 10 failures are execution failures after correct selection.
 - No claim that the utility weights are optimal; they are interpretable defaults tuned on
   dev.
-- No claim that the mock environment represents production APIs.
+- No claim that the mock environment represents production APIs or that the synthetic store
+  represents production memories.
 - No claim that the chunk ablation shows event-aware chunking is better; it is degenerate on
   the current split.
+- No scale, multi-tenant security, or production-traffic claim.

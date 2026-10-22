@@ -42,6 +42,21 @@ jobs:
       - name: Mypy
         run: mypy src
 
+      - name: Check replay JavaScript
+        run: node --check web/app.js
+
+      - name: Validate replay JSON
+        run: |
+          python - <<'PY'
+          import glob
+          import json
+
+          for path in glob.glob("web/replay/*.json"):
+              with open(path, encoding="utf-8") as handle:
+                  json.load(handle)
+              print(f"valid {path}")
+          PY
+
   unit:
     name: Unit tests
     runs-on: ubuntu-latest

@@ -13,6 +13,7 @@ from recap.config import RecallSettings
 from recap.domain.enums import CompatibilityStatus, MemoryStatus, RetrievalMode
 from recap.domain.memories import ExperienceMemory
 from recap.domain.retrieval import RetrievalContext
+from recap.recall.applicability import field_scoped_compatibility
 
 
 @dataclass
@@ -67,13 +68,21 @@ def check_eligibility(
         ):
             reasons.append("suspect_compatibility")
 
+    # Field-scoped compatibility can override a whole-schema mismatch when only
+    # irrelevant fields changed. Unknown/partial path evidence falls back to the
+    # strict whole-schema checks below.
+    scoped, scoped_reason = field_scoped_compatibility(memory, context)
+    scoped_compatible = scoped is CompatibilityStatus.COMPATIBLE
+
     # Tool/schema mismatch is a hard filter when the memory declares them.
-    if apply_compatibility_filters:
+    if apply_compatibility_filters and not scoped_compatible:
         for tool, expected_hash in memory.content.tool_schema_fingerprints.items():
             actual = context.tool_schema_fingerprints.get(tool)
             if actual and expected_hash and actual != expected_hash:
                 reasons.append(f"tool_schema_mismatch:{tool}")
                 details.append(f"expected {expected_hash}, got {actual}")
+    elif scoped_compatible:
+        details.append(scoped_reason)
     if (
         settings.require_tool_match
         and memory.content.tool_names
@@ -85,6 +94,7 @@ def check_eligibility(
     # A memory pinned to a different environment fingerprint is not applicable.
     if (
         apply_compatibility_filters
+        and not scoped_compatible
         and memory.environment_fingerprint
         and context.environment_fingerprint
         and memory.environment_fingerprint != context.environment_fingerprint

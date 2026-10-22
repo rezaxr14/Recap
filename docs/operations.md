@@ -11,9 +11,12 @@ docker compose ps
 |---|---|---|
 | PostgreSQL 17 | `localhost:5433` | `recap` / `recap`, db `recap` |
 | Elasticsearch 8.19.3 | `localhost:9200` | security disabled (local only) |
-| API (optional profile) | `localhost:8000` | `docker compose --profile full up -d api` |
+| API | `localhost:8000` | `docker compose up -d api` |
+| Outbox worker | no port | `docker compose up -d worker` |
 
-Container names: `recap-postgres`, `recap-elasticsearch`, `recap-api`.
+Container names: `recap-postgres`, `recap-elasticsearch`, `recap-api`, `recap-worker`.
+`postgres` and `elasticsearch` are the only services needed for local development and
+integration tests. Start `api`/`worker` explicitly when exercising the packaged stack.
 
 The ES image is referenced as `elasticsearch:8.19.3`. If direct registry access is blocked,
 pull from a mirror and tag it locally with that exact name before `compose up`.
@@ -122,6 +125,22 @@ Error codes map to HTTP statuses: `validation_error` 422, `not_found` 404, `conf
 `search_unavailable` 503, `embedding_unavailable` 503, `provider_unavailable` 503,
 `provider_auth_error` 502, `provider_response_error` 502, `configuration_error` 500.
 
+### Optional static API key
+
+Local development defaults to no auth. A deployed API should set a non-empty
+`RECAP_API_KEY`; every route except `/health/live` and `/health/ready` then requires the header
+`X-API-Key: <value>`. The comparison is constant-time. A missing or wrong key returns `401`
+with a structured `unauthorized` error.
+
+```bash
+curl -H "X-API-Key: $RECAP_API_KEY" http://localhost:8000/api/v1/diagnostics
+```
+
+This is a single shared key, **not** a principal or tenant boundary. `workspace_id` remains
+unauthenticated data scope, not an identity. Set `RECAP_CORS_ORIGINS` to a comma-separated
+allowlist; leave it empty to disable CORS. Do not reuse the local `lm-studio` placeholder key
+in a deployment.
+
 ## 5. Common tasks
 
 ### Reindex everything from Postgres
@@ -182,9 +201,17 @@ unavailable at write time, the row stays `pending` and is retried with exponenti
 - otherwise reschedules it (`attempts` + backoff), and moves it to `dead` after
   `max_attempts` (8)
 
-`recap search outbox` prints counts per state and the number of due pending rows. The worker
-is pull-based, not an always-on thread inside the API: run it from cron, a supervisor, or a
-scheduled job. `dead` rows are visible and must be investigated, not silently dropped.
+`recap search outbox` prints counts per state and the number of due pending rows. For a
+long-running worker use:
+
+```bash
+recap search worker --poll-seconds 2 --batch-size 20 --max-batches 100
+```
+
+It loops until SIGINT/SIGTERM, logs a clean shutdown, and relies on PostgreSQL
+`FOR UPDATE SKIP LOCKED`, so several workers are safe. Compose packages the same command as
+the `worker` service. The API never spawns this loop implicitly. `dead` rows are visible and
+must be investigated, not silently dropped.
 
 ### Rebuild a memory-index generation without downtime
 
@@ -277,14 +304,40 @@ recap demo run
 Writes `demo_report.md`. It resets only its own workspace (`demo-workspace`) rows and
 documents, so it is safe to re-run.
 
+### Serve the replay web app
+
+```bash
+python scripts/export_replay.py \
+  --input benchmark/reports/benchmark_test_20261022T061236Z.json \
+  --input benchmark/reports/benchmark_test_20261022T062346Z.json \
+  --out web/replay
+python -m http.server 8000 --directory web
+```
+
+The app is static and reads only exported JSON; it needs no database or model. A dataset
+selector keeps deterministic and live-model reports separate, and the provenance bar shows
+model, embedder, reranker, dataset hash, and timeout. See [`../web/README.md`](../web/README.md).
+
 ### Benchmark
 
 ```bash
-recap eval run --split dev
-recap eval run --split test
+# current memory-required suite
+recap eval run --suite v3 --split test --agent reference --fixture-count 2000 --seed 1
+
+# live model (requires the configured LLM and embedding roles)
+recap eval run --suite v3 --split test --agent llm_verifying \
+  --baselines no_memory,bm25,outcome_aware --fixture-count 2000 --seed 1
+
+# legacy ceiling/regression suite
+recap eval run --suite v2 --split dev
+recap eval run --suite v2 --split test
 ```
 
-Reports in `benchmark/reports/`. Gitignored; regenerate rather than commit.
+Reports in `benchmark/reports/`. Gitignored; regenerate rather than commit. The v3 suite uses
+a dedicated Elasticsearch prefix and aliases in a live run so a 768-d model can never read a
+256-d deterministic index. Exact commands and environment are in
+[`evidence/phase3b-v3-deterministic-test.md`](evidence/phase3b-v3-deterministic-test.md) and
+[`evidence/phase3b-v3-live-test.md`](evidence/phase3b-v3-live-test.md).
 
 ## 6. Failure modes and responses
 
@@ -299,7 +352,7 @@ Reports in `benchmark/reports/`. Gitignored; regenerate rather than commit.
 | Memory not selected after environment upgrade | `suspect`/`incompatible` compatibility | expected; compile a new validated memory |
 | Promotion rejected | failed check | response lists each check and result |
 | Duplicate event conflict | same sequence with different payload | client bug; inspect `details.sequence_number` |
-| Outbox rows stuck pending | ES down or worker not scheduled | `recap search drain`; inspect `last_error`; check cron |
+| Outbox rows stuck pending | ES down or worker not running | `recap search drain`; inspect `last_error`; check the worker/supervisor |
 | `provider_auth_error` | wrong/missing API key | set the role's `*_API_KEY`; the key is never echoed |
 | `provider_unavailable` | model endpoint down/rate-limited | `recap doctor`, check endpoint and retry/backoff settings |
 | `provider_response_error` | malformed/truncated output, bad tool args, wrong embedding dimension | inspect provider logs; verify model and schema support; do not bypass validation |
@@ -382,7 +435,9 @@ search relevance quietly rots.
 
 - Elasticsearch security is disabled **for local development only**. For any shared
   deployment, enable TLS + auth and set `ELASTICSEARCH_API_KEY`.
-- There is no API authentication. Do not expose the API beyond a trusted network.
+- API auth is a single optional shared key (`RECAP_API_KEY`). It is not multi-tenant RBAC and
+  does not authenticate a `workspace_id`. Set it for any shared deployment and keep the API
+  behind a trusted network boundary.
 - Redaction runs before persistence and before indexing. It is pattern-based and best-effort;
   treat stored data as potentially sensitive and protect the database accordingly.
 - Provider credentials (`EMBEDDING_API_KEY`, `LLM_API_KEY`, `REPAIR_LLM_API_KEY`) live in
@@ -429,8 +484,9 @@ service containers, followed by the demo and benchmark.
 - Retrieval candidate cap is 100; per-branch candidate k is 30.
 - Retrieval latency is recorded per stage (`query_build`, `search`, `fuse`, `rerank` when
   applicable, `evaluate`, `total`) in every decision.
-- The outbox has a pull-based worker (`recap search drain`) with retry/backoff and a `dead`
-  state after `max_attempts`. It is not an always-on thread; schedule it externally.
+- The outbox has a bounded one-shot drain (`recap search drain`) and an explicit daemon
+  (`recap search worker`) with retry/backoff and a `dead` state after `max_attempts`. It is not
+  a hidden thread inside the API; run one or more workers under a supervisor.
 - No connection pooling tuning beyond SQLAlchemy defaults; no load testing has been done.
 
 ## 12. Upgrade procedure
@@ -451,8 +507,9 @@ vectors in one index.
 
 ## 13. Known operational gaps
 
-- no background scheduler for revalidation jobs (the outbox worker is pull-based)
-- no authentication or rate limiting
+- no background scheduler for revalidation jobs
+- no multi-tenant authentication/RBAC; only an optional shared API key
+- no rate limiting
 - no retention/deletion policy
 - no metrics endpoint (Prometheus/OpenTelemetry); structured logs and `/diagnostics` only
 - no backup automation for Postgres or Elasticsearch

@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import secrets
 from collections.abc import Callable
 from typing import Any
 
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from recap import __version__
@@ -41,6 +43,32 @@ def create_app(container: Container | None = None) -> FastAPI:
         return container
 
     app.state.get_container = get_container
+
+    if settings.app.cors_origin_list:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=settings.app.cors_origin_list,
+            allow_methods=["GET", "POST"],
+            allow_headers=["content-type", "x-api-key", "x-correlation-id"],
+            max_age=600,
+        )
+
+    @app.middleware("http")
+    async def api_key_middleware(request: Request, call_next: Callable[[Request], Any]) -> Any:
+        # Local development and the static replay app need no auth. A deployed
+        # API must set RECAP_API_KEY; the comparison is constant-time.
+        if settings.app.api_key and request.url.path not in {"/health/live", "/health/ready"}:
+            supplied = request.headers.get("x-api-key", "")
+            if not secrets.compare_digest(supplied, settings.app.api_key):
+                return JSONResponse(
+                    status_code=401,
+                    content={
+                        "code": "unauthorized",
+                        "message": "missing or invalid X-API-Key",
+                        "details": {},
+                    },
+                )
+        return await call_next(request)
 
     @app.middleware("http")
     async def correlation_middleware(request: Request, call_next: Callable[[Request], Any]) -> Any:

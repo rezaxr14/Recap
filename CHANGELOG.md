@@ -8,6 +8,22 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Benchmark v3: memory-required tiers, silent drift (field, enum, account, cursor, novel
+  failure), a 2,000-decoy synthetic store, field-scoped schema-path compatibility, a
+  `no_memory` acceptance gate, and a non-discrimination guard. v2 is retained as the legacy
+  ceiling/regression suite.
+- v3 evidence artifacts: deterministic held-out matrix and a separate live-model run with the
+  exact model, inference timeouts, nomic embedder, aggregate/selectable-task counts, and
+  retained execution-failure cases under `docs/evidence/phase3b-v3-*.md`.
+- No-build static replay web app under `web/` with a silent-drift contrast, acceptance gate,
+  baseline matrix, rejected-candidate inspector, report-grounded Q&A, deterministic/live
+  dataset selector, provenance labels, mobile layout, and GitHub Pages workflow. Export is
+  handled by `scripts/export_replay.py`.
+- `recap search worker` daemon for the index outbox, plus a packaged Compose `worker` service.
+  The API never starts a hidden consumer thread.
+- Optional shared `RECAP_API_KEY` and `RECAP_CORS_ORIGINS` settings. Health endpoints stay
+  public; application routes accept `X-API-Key`; auth uses a constant-time comparison.
+- API auth tests covering public health, missing/wrong key rejection, and local no-key mode.
 - End-to-end run recording with idempotent events, redaction, and PostgreSQL persistence.
 - Typed `RepairCompiler` that turns a failure window into a candidate, plus static and
   executing mock-sandbox validators.
@@ -68,6 +84,15 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- Benchmark v3 is the current suite. Its deterministic headline uses a 256-d hashing embedder
+  and synthetic decoys; the live run uses nomic 768-d and a dedicated `recap-v3-live` prefix
+  and aliases, so the two vector spaces cannot be mixed.
+- v3 memory ids are workspace-namespaced, preventing primary-key collisions when benchmarks
+  share one Postgres database.
+- Compose now packages `api` as a normal service and adds a separate `worker`; local services
+  still use `restart: "no"` and are started explicitly.
+- The README and documentation index now lead with v3 results, clearly separate deterministic
+  evidence from live-model evidence, and document the static replay app.
 - Chunker version bumped to `2`; chunk ids now include the chunk strategy so event-aware and
   naive chunks can coexist and be ablated.
 - Chunk retrieval is scoped to the request's environment fingerprint. This prevents a chunk
@@ -93,6 +118,9 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- Replay app duplicate DOM ids no longer let renderers replace their own controls; dataset
+  switching, inspector, and architecture panels remain intact.
+- Missing favicon no longer produces a console/network error in the replay app.
 - Benchmark reproducibility gate now ignores checkpoint metadata JSON and compares only the
   rendered benchmark report.
 - Removed stale workspace state that made chunk-baseline MRR drift between benchmark runs.
@@ -113,6 +141,8 @@ All notable changes to this project are documented here. The format follows
 ### Security
 
 - Fail-closed redaction for secrets and identifiers before persistence and indexing.
+- Optional constant-time `RECAP_API_KEY` gate and explicit CORS allowlist; health endpoints
+  remain public. This is a single shared key, not multi-tenant RBAC.
 - Provider credentials are read from the environment and excluded from reports, diagnostics,
   and repository files.
 - The local Compose stack is explicitly documented as development-only; it disables

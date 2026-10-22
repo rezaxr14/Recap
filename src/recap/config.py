@@ -30,6 +30,14 @@ class AppSettings(_SettingsModel):
     environment: str = "local"
     log_level: str = "INFO"
     api_prefix: str = "/api/v1"
+    # Empty disables auth, which is the local/replay default. Deployments must
+    # set RECAP_API_KEY and keep the CORS origin list narrow.
+    api_key: str = ""
+    cors_origins: str = "http://localhost:8000,http://localhost:3000"
+
+    @property
+    def cors_origin_list(self) -> list[str]:
+        return [item.strip() for item in self.cors_origins.split(",") if item.strip()]
 
 
 class StorageSettings(_SettingsModel):
@@ -472,6 +480,8 @@ def _apply_env_overrides(raw: dict[str, Any]) -> dict[str, Any]:
         ("ELASTICSEARCH_API_KEY", "elasticsearch", "api_key", "str"),
         ("RECAP_LOG_LEVEL", "app", "log_level", "str"),
         ("RECAP_ENVIRONMENT", "app", "environment", "str"),
+        ("RECAP_API_KEY", "app", "api_key", "str"),
+        ("RECAP_CORS_ORIGINS", "app", "cors_origins", "str"),
         # Embedding role.
         ("EMBEDDING_PROVIDER", "embeddings", "provider", "str"),
         ("EMBEDDING_BASE_URL", "embeddings", "base_url", "str"),

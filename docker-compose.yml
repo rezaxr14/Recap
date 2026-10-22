@@ -47,12 +47,14 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: recap-api
-    profiles: ["full"]
     environment:
       DATABASE_URL: postgresql+psycopg://recap:recap@postgres:5432/recap
       ELASTICSEARCH_URL: http://elasticsearch:9200
       RECAP_EMBEDDING_PROVIDER: hashing
       RECAP_EMBEDDING_DIMENSION: "256"
+      # Replay-mode web app needs no auth. Set RECAP_API_KEY on a deployed API.
+      RECAP_API_KEY: ${RECAP_API_KEY:-}
+      RECAP_CORS_ORIGINS: ${RECAP_CORS_ORIGINS:-http://localhost:8000,http://localhost:3000}
     ports:
       - "8000:8000"
     depends_on:
@@ -66,6 +68,25 @@ services:
       interval: 15s
       timeout: 5s
       retries: 5
+    restart: "no"
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: recap-worker
+    environment:
+      DATABASE_URL: postgresql+psycopg://recap:recap@postgres:5432/recap
+      ELASTICSEARCH_URL: http://elasticsearch:9200
+      RECAP_EMBEDDING_PROVIDER: hashing
+      RECAP_EMBEDDING_DIMENSION: "256"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+    command: ["recap", "search", "worker", "--poll-seconds", "2"]
+    restart: "no"
 
 volumes:
   recap_pgdata:

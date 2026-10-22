@@ -1,0 +1,90 @@
+{
+  "generated_at": "2026-10-22T06:57:21.064519+00:00",
+  "datasets": [
+    {
+      "source": "benchmark_test_20261022T061236Z.json",
+      "suite": "v3",
+      "split": "test",
+      "generated_at": "2026-10-22T06:21:24.217006+00:00",
+      "dataset_hash": "sha256:8438ccf598486dbdb44f8b29593187720e769b1389666fc1ff6dc568716697eb",
+      "agent": "deterministic-reference-agent-v1",
+      "agent_mode": "deterministic",
+      "provider": "deterministic",
+      "model": "reference-agent-v1",
+      "embedder": "recap-hashing-embedding-v1",
+      "embedder_provider": "hashing",
+      "fixture_count": 2000,
+      "inference": null,
+      "reranker": "cross-encoder:ms-marco-MiniLM-L-6-v2",
+      "synthetic_store": {
+        "gold_memories": 3,
+        "synthetic_fixtures": 2000,
+        "total": 2003,
+        "provenance": "real_gold_synthetic_decoys"
+      },
+      "warnings": [
+        "baselines 'fingerprint_filter_oracle' and 'hybrid_rrf_version_filter' have identical reported metrics; check that their retrieval configuration actually differs"
+      ],
+      "note": "Deterministic mock pipeline test. Not evidence of real LLM performance."
+    },
+    {
+      "source": "benchmark_dev_20261022T053236Z.json",
+      "suite": "v3",
+      "split": "dev",
+      "generated_at": "2026-10-22T05:39:07.474775+00:00",
+      "dataset_hash": "sha256:3e7e02237d9b8c1fd6510d95122a548fb3ec5e629e94032c41d5bdf1ab140d78",
+      "agent": "deterministic-reference-agent-v1",
+      "agent_mode": "deterministic",
+      "provider": "deterministic",
+      "model": "reference-agent-v1",
+      "embedder": "recap-hashing-embedding-v1",
+      "embedder_provider": "hashing",
+      "fixture_count": 2000,
+      "inference": null,
+      "reranker": "cross-encoder:ms-marco-MiniLM-L-6-v2",
+      "synthetic_store": {
+        "gold_memories": 2,
+        "synthetic_fixtures": 2000,
+        "total": 2002,
+        "provenance": "real_gold_synthetic_decoys"
+      },
+      "warnings": [],
+      "note": "Deterministic mock pipeline test. Not evidence of real LLM performance."
+    },
+    {
+      "source": "benchmark_test_20261022T062346Z.json",
+      "suite": "v3",
+      "split": "test",
+      "generated_at": "2026-10-22T06:52:18.899081+00:00",
+      "dataset_hash": "sha256:8438ccf598486dbdb44f8b29593187720e769b1389666fc1ff6dc568716697eb",
+      "agent": "benchmark-llm-agent",
+      "agent_mode": "verifying",
+      "provider": "openai_compatible",
+      "model": "gemma-4-e4b-uncensored-hauhaucs-aggressive",
+      "embedder": "text-embedding-nomic-embed-text-v1.5",
+      "embedder_provider": "openai_compatible",
+      "fixture_count": 2000,
+      "inference": {
+        "stream": true,
+        "max_concurrency": 1,
+        "max_tokens": 2048,
+        "connect_timeout_seconds": 10.0,
+        "read_timeout_seconds": 600.0,
+        "write_timeout_seconds": 30.0,
+        "pool_timeout_seconds": 30.0,
+        "overall_timeout_seconds": 900.0,
+        "no_progress_timeout_seconds": 180.0,
+        "max_retries": 2
+      },
+      "reranker": "cross-encoder:ms-marco-MiniLM-L-6-v2",
+      "synthetic_store": {
+        "gold_memories": 3,
+        "synthetic_fixtures": 2000,
+        "total": 2003,
+        "provenance": "real_gold_synthetic_decoys"
+      },
+      "warnings": [],
+      "note": "Real configured chat model in a deterministic mock environment. Model performance is measured, not assumed."
+    }
+  ]
+}

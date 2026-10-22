@@ -27,6 +27,19 @@ def build_state_snapshot(memory: ExperienceMemory, context: RetrievalContext) ->
         state.setdefault("tool_versions", context.tool_versions)
     if context.tool_schema_fingerprints:
         state.setdefault("tool_schema_fingerprints", context.tool_schema_fingerprints)
+    if context.schema_path_hashes:
+        nested: dict[str, object] = {}
+        for path, digest in context.schema_path_hashes.items():
+            current = nested
+            parts = path.split(".")
+            for part in parts[:-1]:
+                child = current.setdefault(part, {})
+                if not isinstance(child, dict):
+                    break
+                current = child
+            else:
+                current[parts[-1]] = digest
+        state.setdefault("schema_path_hashes", nested)
     return state
 
 
@@ -46,6 +59,36 @@ def is_operationally_applicable(result: ApplicabilityResult) -> bool:
     return result.result is PredicateResult.SATISFIED
 
 
+def field_scoped_compatibility(
+    memory: ExperienceMemory, context: RetrievalContext
+) -> tuple[CompatibilityStatus, str]:
+    """Compare only the schema paths the strategy depends on.
+
+    Returns ``UNKNOWN`` when either side has no path evidence, so callers can
+    fall back to the strict whole-schema check. A relevant mismatch is
+    ``INCOMPATIBLE``; an exact relevant-path match is ``COMPATIBLE`` even when
+    unrelated schema fields changed.
+    """
+    expected = memory.content.schema_path_hashes
+    if not expected:
+        return CompatibilityStatus.UNKNOWN, "memory has no relevant schema paths"
+    actual = context.schema_path_hashes
+    if not actual:
+        return CompatibilityStatus.UNKNOWN, "context has no schema path hashes"
+    overlap = [path for path in expected if path in actual]
+    if not overlap:
+        return CompatibilityStatus.UNKNOWN, "no overlapping schema paths"
+    mismatched = sorted(path for path in overlap if actual[path] != expected[path])
+    if mismatched:
+        return (
+            CompatibilityStatus.INCOMPATIBLE,
+            "relevant schema path changed: " + ", ".join(mismatched),
+        )
+    if len(overlap) < len(expected):
+        return CompatibilityStatus.SUSPECT, "some relevant schema paths are unknown"
+    return CompatibilityStatus.COMPATIBLE, "all relevant schema paths match"
+
+
 def combine_compatibility(
     memory: ExperienceMemory,
     context: RetrievalContext,
@@ -54,6 +97,11 @@ def combine_compatibility(
     """Resolve compatibility for this request from stored state + fingerprints."""
     if stored is CompatibilityStatus.INCOMPATIBLE:
         return CompatibilityStatus.INCOMPATIBLE, "stored compatibility is incompatible"
+    scoped, scoped_reason = field_scoped_compatibility(memory, context)
+    if scoped is CompatibilityStatus.INCOMPATIBLE:
+        return scoped, scoped_reason
+    if scoped is CompatibilityStatus.COMPATIBLE:
+        return scoped, scoped_reason
     if (
         memory.environment_fingerprint
         and context.environment_fingerprint

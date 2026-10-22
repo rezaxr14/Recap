@@ -119,10 +119,14 @@ RECAP can provide.
 - Elasticsearch hard-filters on `workspace_id`.
 - Retrieval rejects candidates whose workspace does not match the request context
   (`wrong_workspace`).
+- A deployment can require a shared `RECAP_API_KEY` on every route except `/health/live` and
+  `/health/ready`; the comparison is constant-time. CORS is opt-in through a configured origin
+  allowlist.
 
-**Residual risk:** there is **no authentication**. `workspace_id` is a data boundary, not a
-verified principal. Anyone who can reach the API can claim any workspace. The API is intended
-for a trusted local network only; see §5.
+**Residual risk:** a deployment can set a shared `RECAP_API_KEY`, but that is a gate, not an
+identity. `workspace_id` is a data boundary, not a verified principal. Any key holder can
+claim any workspace; there is no RBAC, per-user audit, or key-rotation API. The API remains
+intended for a trusted network, and auth should only be disabled for local development; see ?5.
 
 ### 3.5 Arbitrary code execution
 
@@ -172,7 +176,9 @@ confident garbage.
 - Postgres is authoritative; a lost index is rebuilt with `recap search reconcile`.
 - The outbox records indexing intent so a transient ES failure does not lose documents.
 
-**Residual risk:** no automatic outbox consumer yet; recovery is an operator action.
+**Residual risk:** the outbox consumer must be run and supervised explicitly
+(`recap search worker`); if it is not running, writes succeed in Postgres while the index
+lags. `dead` rows are visible and require an operator response.
 
 ### 3.8 Resource exhaustion
 
@@ -248,7 +254,8 @@ authorization and the tool's own side-effect class remain authoritative.
 
 RECAP explicitly does **not**:
 
-- authenticate or authorize callers
+- provide tenant identity, RBAC, or per-user authorization (it offers only an optional shared
+  API key)
 - sandbox the host agent
 - prevent a host agent from misusing a valid memory
 - guarantee redaction completeness
@@ -261,14 +268,16 @@ RECAP explicitly does **not**:
 
 The current implementation assumes:
 
-- a trusted network boundary in front of the API
+- a trusted network boundary in front of the API; a shared `RECAP_API_KEY` is set for any
+  shared deployment
 - Postgres and Elasticsearch not exposed publicly
 - model endpoints are chosen and trusted by the operator; TLS is expected for remote hosts
 - Elasticsearch security may be disabled **only** for local development
 - the host agent treats memory as data, not instructions
 
-These assumptions are load-bearing. Deploying RECAP on an untrusted network without adding
-authentication would violate the model in this document.
+These assumptions are load-bearing. Deploying RECAP on an untrusted network without enabling
+the shared API key, TLS, and a real tenant-identity layer would violate the model in this
+document. The bundled key is not a substitute for that layer.
 
 ## 6. Security test coverage
 
@@ -292,6 +301,8 @@ authentication would violate the model in this document.
 Unit tests cover the redaction patterns directly and the promotion gate's secret check.
 `tests/unit/test_providers.py` covers provider auth/error mapping, no-secret reporting,
 dimension rejection, bounded retries, and fail-closed tool/structured output.
+`tests/unit/test_api_auth.py` covers public health probes, missing/wrong API-key rejection,
+and the local no-key mode.
 
 ## 7. Reporting
 

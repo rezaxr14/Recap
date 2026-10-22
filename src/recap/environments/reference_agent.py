@@ -52,6 +52,7 @@ class AgentRunResult:
     provider_retries: int = 0
     first_token_ms: float | None = None
     provider_error_type: str | None = None
+    ordered_record_ids: list[str] = field(default_factory=list)
 
 
 class ReferenceAgent:
@@ -74,6 +75,15 @@ class ReferenceAgent:
         token: str | None = None
         response_field = environment.naive_response_field()
         parameter_name = _paginations_parameter(environment)
+        # Silent drift has no error to trigger a recovery. A memory-driven agent
+        # applies its typed actions before the first call; a memory-free agent
+        # cannot know the convention and is expected to fail externally.
+        if memory is not None and getattr(environment, "is_v3", False):
+            applied, base, response_field, parameter_name = self._apply_proactive(
+                memory, base, response_field, parameter_name
+            )
+            if applied:
+                result.used_memory_id = memory.memory_id
         while result.tool_calls < max_tool_calls:
             parameters = dict(base)
             if token is not None:
@@ -92,6 +102,18 @@ class ReferenceAgent:
             if not call.ok:
                 result.final_error = (call.error or {}).get("error_message", "tool call failed")
                 if memory is None:
+                    # Tier B: the fix is discoverable by probing. The opaque
+                    # message does not name the field, but the schema exposes an
+                    # optional account id that can be supplied speculatively.
+                    error_code = str((call.error or {}).get("error_code", ""))
+                    if (
+                        getattr(environment, "is_v3", False)
+                        and error_code == "INVALID_REQUEST"
+                        and "account_id" not in base
+                    ):
+                        base["account_id"] = "acct-bench"
+                        result.retries += 1
+                        continue
                     return result
                 recovered, base, token, response_field = self._recover(
                     memory, base, token, response_field, call
@@ -133,15 +155,70 @@ class ReferenceAgent:
                 continue
 
             collected.extend(items)
+            result.ordered_record_ids = [str(record.get("id")) for record in collected]
             token = call.payload.get(parameter_name)
             if not call.payload.get("has_more"):
-                result.success = len(collected) == len(environment.records)
+                if getattr(environment, "requires_exact_order", False):
+                    expected = getattr(
+                        environment, "expected_records", lambda: environment.records
+                    )()
+                    result.success = collected == expected
+                else:
+                    result.success = len(collected) == len(environment.records)
                 if not result.success:
                     result.final_error = (
                         f"collected {len(collected)}/{len(environment.records)} records"
                     )
                 return result
         return result
+
+    def _apply_proactive(
+        self,
+        memory: SelectedMemory,
+        base: dict[str, Any],
+        response_field: str,
+        parameter_name: str,
+    ) -> tuple[bool, dict[str, Any], str, str]:
+        """Apply pre-call typed actions for silent-drift scenarios."""
+        applied = False
+        next_base = dict(base)
+        next_response_field = response_field
+        next_parameter = parameter_name
+        for action in memory.actions:
+            action_type = action.get("action_type")
+            parameters = action.get("parameters") or {}
+            if action_type == ActionType.MAP_PARAMETER.value:
+                old = parameters.get("from")
+                new = parameters.get("to")
+                if old and new and old in next_base:
+                    value = next_base.pop(old)
+                    if value not in {None, "", "start"}:
+                        next_base[new] = value
+                elif old:
+                    next_base.pop(old, None)
+                if isinstance(new, str) and new:
+                    next_parameter = new
+                applied = True
+            elif action_type == ActionType.SUPPLY_REQUIRED_PARAMETER.value:
+                for key, value in parameters.items():
+                    if isinstance(key, str) and isinstance(value, (str, int, float, bool)):
+                        next_base[key] = value
+                applied = True
+            elif action_type == ActionType.MAP_PARAMETER_VALUE.value:
+                field = parameters.get("field")
+                target = parameters.get("to")
+                if isinstance(field, str) and target is not None:
+                    next_base[field] = target
+                applied = True
+            elif action_type == ActionType.NORMALIZE_TIMESTAMP.value:
+                field = parameters.get("field", "since")
+                value = parameters.get("value", "2026-01-01T00:00:00Z")
+                next_base[str(field)] = value
+                applied = True
+            elif action_type == ActionType.MAP_RESPONSE_FIELD.value:
+                next_response_field = str(parameters.get("field", "data"))
+                applied = True
+        return applied, next_base, next_response_field, next_parameter
 
     def _recover(
         self,

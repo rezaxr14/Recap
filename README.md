@@ -18,12 +18,20 @@ apply.** A memory that is textually similar can be stale, schema-incompatible, o
 verified track record. RECAP separates retrieval from selection so it can say *no safe
 memory* instead of confidently returning the wrong one.
 
+**Explore the recorded runs:** the recruiter-facing replay app in [`web/`](web/) is a
+no-build static page. It shows a silent-drift contrast, the v3 acceptance gate, the full
+baseline matrix, rejected candidates with reasons, and a report-grounded Q&A. The provenance
+bar separates deterministic evidence from live-model evidence. Run it with
+`python -m http.server 8000 --directory web` after exporting a report; see
+[`web/README.md`](web/README.md).
+
 ## Project status
 
 **Alpha, single-node, deterministic by default.** The vertical slice is real: every
 implemented local path is exercised against PostgreSQL 17 and Elasticsearch 8.19.3, and the
-full suite runs in CI. It is not a hosted product. There is no multi-tenant auth layer, the
-default embedder is a deterministic hashing embedder rather than a semantic model, and the
+full suite runs in CI. It is not a hosted product. There is no multi-tenant auth layer (only
+an optional shared API key), the default embedder is a deterministic hashing embedder rather
+than a semantic model, and the
 bundled evaluation split is deliberately small. The deterministic snapshot measures pipeline
 and safety behaviour, while the separate live-model snapshot measures one configured model in
 a deterministic mock environment. Neither is a general LLM-capability claim. See
@@ -34,9 +42,9 @@ a deterministic mock environment. Neither is a general LLM-capability claim. See
 | **Core loop** | record -> compile a typed repair -> execute it in a sandbox -> promote only if valid -> retrieve with compatibility and outcome-aware selection |
 | **Source of truth** | PostgreSQL 17 (runs, memories, chunks, outbox, snapshots, audit) |
 | **Search** | Elasticsearch 8.19: BM25, dense vectors, hybrid RRF, card and chunk indices |
-| **Interfaces** | `recap` CLI, FastAPI HTTP API, Python package |
+| **Interfaces** | `recap` CLI, FastAPI HTTP API, Python package, static replay web app |
 | **Stack** | Python 3.12, FastAPI, SQLAlchemy 2, Alembic, Pydantic 2, Docker Compose |
-| **Verification** | `270 passed, 1 skipped` locally; real-service integration tests; benchmark reproducibility gate |
+| **Verification** | `288 passed, 1 skipped` locally with `--run-integration`; real-service integration tests; benchmark reproducibility gate |
 
 ---
 
@@ -56,7 +64,8 @@ Elasticsearch 8.19.3 node. There are no stub endpoints in the implemented paths.
 | Static + executing mock-sandbox validators | Working | `tests/unit/test_repair_compiler.py` |
 | Promotion gate (no bypass path) | Working | `tests/unit/test_repair_compiler.py`, `tests/integration/test_api.py` |
 | MemoryShift drift detection + revalidation queue | Working | `tests/integration/test_postgres.py`, demo step 8 |
-| Benchmark v2 (10 failure families, 120 tasks, family-held-out splits) | Implemented; both dev and held-out test splits run with real nomic embeddings and the live model | `tests/unit/test_benchmark_v2.py`, `tests/integration/test_benchmark_v2.py`, `docs/benchmark-v2.md`, `docs/evidence/phase2-summary.md`, `docs/evidence/phase3-llm-test-core/summary.md` |
+| Benchmark v3 (memory-required tiers, silent drift, 2,000 decoys, field-scoped compatibility) | Implemented; held-out deterministic matrix and dedicated integration smoke pass; live-model run recorded separately | `tests/unit/test_benchmark_v3.py`, `tests/integration/test_benchmark_v3.py`, `docs/benchmark-v3.md`, `docs/results-v3.md`, `docs/evidence/phase3b-v3-deterministic-test.md`, `docs/evidence/phase3b-v3-live-test.md` |
+| Benchmark v2 (10 failure families, 120 tasks, family-held-out splits) | Legacy ceiling/regression suite; both dev and held-out test run with real nomic embeddings and the live model | `tests/unit/test_benchmark_v2.py`, `tests/integration/test_benchmark_v2.py`, `docs/benchmark-v2.md`, `docs/evidence/phase2-summary.md`, `docs/evidence/phase3-llm-test-core/summary.md` |
 | Benchmark with card + chunk ablations and safety audit | Working (chunk ablation still degenerate on current data) | `recap eval run --suite v2`, `docs/results/2026-10-20-dev.md` |
 | Transactional outbox + retry worker | Working | `tests/unit/test_outbox_worker.py`, `recap search drain` |
 | Explicit memory versions + supersession | Working | `tests/unit/test_memory_versions.py`, `tests/e2e/test_lifecycle.py` |
@@ -87,11 +96,16 @@ public record. A local implementation log is intentionally not published.
   `gemma-4-e4b-uncensored-hauhaucs-aggressive`, including the `response_field` and
   `idempotency_key` families; the opt-in live suite passes locally
   (`docs/evidence/phase1-live-provider-tests-gemma.txt`), but still skips in CI.
+- Benchmark v3 is the current memory-required suite. Its deterministic headline is not a
+  live-model result. The separate live v3 run passes the gate on the recorded aggregate
+  (`no_memory` 6/24), but all six are `novel_failure` controls; on the 18 selectable tasks it
+  is 0/18. `outcome_aware` selects the correct memory on 18/18 selectable live tasks yet the
+  small model completes only 8, so the live result measures execution as much as selection.
+  It is one model, one seed, one machine: [`docs/results-v3.md`](docs/results-v3.md).
 - Benchmark v2 dev and held-out test are both measured with the live model. Both are a
   **ceiling** for this model: `no_memory` succeeds on every task, so task success does not
-  distinguish memory policies. `raw_trajectory_rag`, abstention precision/recall, multiple
-  paired seeds, and memory-required task families are still missing; do not infer them from
-  the reports.
+  distinguish memory policies. `raw_trajectory_rag` and multiple paired seeds are still
+  missing; do not infer them from the reports.
 - **Live LLM repair generation now passes a small local acceptance run, but is not a general
   reliability claim.** With `gemma-4-e4b-uncensored-hauhaucs-aggressive`, streaming, the
   timeouts listed in `configs/default.yaml`, and two bounded format attempts, 4/4 runs produced
@@ -116,16 +130,55 @@ public record. A local implementation log is intentionally not published.
   `event_aware` chunk ablation is **degenerate**. It needs same-environment noise and
   near-duplicate memories before it can support a claim.
 - The stack is single-node and local-first. Elasticsearch security is disabled in the local
-  Compose file, and there is no multi-tenant auth or RBAC layer.
+  Compose file. The API supports an optional shared `RECAP_API_KEY` and CORS allowlist, but
+  there is no multi-tenant identity, RBAC, key rotation, or rate limiting. A shared key is not
+  a tenant boundary; do not expose the API to an untrusted network.
 - Deterministic benchmark numbers measure **pipeline and safety behaviour**; live-model runs
   measure one configured model in a deterministic mock environment. Neither is a general LLM
   capability claim. Reports and `recap providers` state which mode produced a result.
 
-## Results snapshot (benchmark v2 dev, real nomic embeddings)
+## Results snapshot (benchmark v3 held-out test)
+
+The current suite asks a narrower question than v2: can the policy refuse a memory that is
+relevant but unsafe, and act when a field-scoped strategy is still compatible? These are
+measured numbers, not projections. Deterministic reference agent, 24 held-out Tier C tasks,
+2,000 synthetic decoys, seed 1, deterministic 256-d hashing embedder, live PostgreSQL and
+Elasticsearch. **Not a live-LLM result.**
+
+| Baseline | Task success | Selectable tasks (18) | Harmful transfer | Incompatible selection | False abstention |
+|---|---:|---:|---:|---:|---:|
+| `no_memory` | 0.0% | 0/18 | 0.0% | 0.0% | 0.0% |
+| `bm25` | 41.7% | 10/18 | 58.3% | 29.2% | 0.0% |
+| `outcome_aware` | **62.5%** | **15/18** | **12.5%** | **0.0%** | **0.0%** |
+
+Tier C `no_memory` acceptance gate: **0/24**, threshold ≤ 50%, **PASS**. The other six failures
+for `outcome_aware` are the `novel_failure` controls, where it correctly selected nothing;
+false abstention is 0% and abstention precision/recall are 1.0. Design, CIs, and retained
+failures: [`docs/results-v3.md`](docs/results-v3.md) and
+[`docs/evidence/phase3b-v3-deterministic-test.md`](docs/evidence/phase3b-v3-deterministic-test.md).
+
+A separate live-model run on the same held-out tasks uses
+`gemma-4-e4b-uncensored-hauhaucs-aggressive`, nomic 768-d embeddings, streaming, seed 1,
+and a 600 s read / 900 s overall timeout:
+
+| Live baseline | Task success (24) | Selectable tasks (18) | Harmful transfer | Incompatible selection |
+|---|---:|---:|---:|---:|
+| `no_memory` | 25.0% (6/24) | **0/18** | 0.0% | 0.0% |
+| `bm25` | 41.7% (10/24) | 4/18 | 58.3% | 29.2% |
+| `outcome_aware` | 58.3% (14/24) | **8/18** | 41.7% | **0.0%** |
+
+The six `no_memory` successes are all `novel_failure` negative controls; it succeeds on zero
+tasks that require a memory. The policy selected the correct gold memory on 18/18 selectable
+tasks, but the small model failed to execute 10 of them, so the 41.7% “harmful transfer” is
+mostly **execution failure after correct selection**, not wrong-memory selection. This is
+reported, not hidden: [`docs/evidence/phase3b-v3-live-test.md`](docs/evidence/phase3b-v3-live-test.md).
+
+### Legacy benchmark v2 dev, real nomic embeddings
 
 These are measured numbers from `recap eval run --suite v2 --split dev`, not projections.
 They use 24 tasks, the scripted reference agent, and real
-`text-embedding-nomic-embed-text-v1.5` 768-d embeddings through LM Studio.
+`text-embedding-nomic-embed-text-v1.5` 768-d embeddings through LM Studio. They remain useful
+as a ceiling/regression suite, not as evidence that memory is required.
 
 | Baseline | recall@3 | MRR | task success | harmful transfer | incompatible selection |
 |---|---:|---:|---:|---:|---:|
@@ -142,9 +195,9 @@ comparison is **degenerate** because there is no same-environment distractor set
 CIs, and caveats: [`docs/evidence/phase2-summary.md`](docs/evidence/phase2-summary.md) and
 [`docs/benchmark-v2.md`](docs/benchmark-v2.md).
 
-### Real-model check (Phase 3, in progress)
+### Legacy v2 live-model check
 
-A separate run uses the live LM Studio model `gemma-4-e4b-uncensored-hauhaucs-aggressive`
+A separate v2 run uses the live LM Studio model `gemma-4-e4b-uncensored-hauhaucs-aggressive`
 (temperature 0, prompt `llm-tool-agent-v1`, six-tool budget) on the same 24 dev tasks:
 
 | Baseline | recall@3 | MRR | task success | harmful transfer | incompatible selection | input tokens |
@@ -176,7 +229,8 @@ one seed, and four of sixteen baselines. Details and limits:
 | Understand the system | [`docs/architecture.md`](docs/architecture.md), [`docs/data-model.md`](docs/data-model.md), [`docs/retrieval.md`](docs/retrieval.md) |
 | Run and operate it | [`docs/operations.md`](docs/operations.md), [Quickstart](#quickstart) |
 | Understand repair and safety | [`docs/repair-validation.md`](docs/repair-validation.md), [`docs/threat-model.md`](docs/threat-model.md) |
-| Evaluate it | [`docs/evaluation-methodology.md`](docs/evaluation-methodology.md), [`docs/benchmark-v2.md`](docs/benchmark-v2.md), [`docs/results.md`](docs/results.md), [`docs/evidence/phase2-summary.md`](docs/evidence/phase2-summary.md) |
+| Evaluate it | [`docs/benchmark-v3.md`](docs/benchmark-v3.md), [`docs/results-v3.md`](docs/results-v3.md), [`docs/benchmark-v2.md`](docs/benchmark-v2.md), [`docs/evidence/phase2-summary.md`](docs/evidence/phase2-summary.md) |
+| Explore the recorded runs | [`web/README.md`](web/README.md), [`docs/evidence/phase3b-v3-live-test.md`](docs/evidence/phase3b-v3-live-test.md) |
 | Connect a model | [`docs/providers.md`](docs/providers.md) |
 | Contribute | [`CONTRIBUTING.md`](CONTRIBUTING.md), [`SECURITY.md`](SECURITY.md), [`CHANGELOG.md`](CHANGELOG.md) |
 | Repository metadata | [`docs/github-repository.md`](docs/github-repository.md) |
@@ -195,6 +249,7 @@ docker compose up -d postgres elasticsearch
 
 - PostgreSQL 17 on `localhost:5433` (`recap` / `recap` / `recap`)
 - Elasticsearch 8.19.3 on `localhost:9200`, security disabled for local use only
+- Optional packaged API + outbox worker: `docker compose up -d api worker` (API on `:8000`)
 
 If another RECAP checkout is already running on this machine, stop that stack first
 (`docker compose down` in the other checkout). The Compose file uses fixed container names
@@ -230,6 +285,10 @@ python scripts/run_smoke_test.py
 
 `run_smoke_test.py` is operator-facing: it prints each check as `PASS`/`FAIL` and exits
 non-zero on any deviation.
+
+For a shared deployment, set `RECAP_API_KEY` and `RECAP_CORS_ORIGINS` and send
+`X-API-Key` on application routes; `/health/live` and `/health/ready` stay public. This is a
+single shared key, not multi-tenant auth. See [`docs/operations.md`](docs/operations.md#optional-static-api-key).
 
 ### 4. Configure real models (API-first)
 
@@ -318,7 +377,7 @@ are reported as non-semantic. Production rejects them unless `EMBEDDING_ALLOW_DE
 is explicitly set. The embedding dimension must match the Elasticsearch mapping; changing
 models requires a new index generation. Details: [`docs/providers.md`](docs/providers.md).
 
-### 5. Run the demo
+### 6. Run the demo
 
 ```bash
 recap demo run
@@ -338,14 +397,19 @@ This executes the whole story end to end and writes `demo_report.md`:
 9. The v2 memory is retrieved and the run succeeds.
 10. Run the benchmark and emit JSON/CSV/Markdown reports.
 
-### 6. Benchmark
+### 7. Benchmark
 
 ```bash
-recap eval run --split dev
-recap eval run --split test
+# current memory-required suite (deterministic reference agent)
+recap eval run --suite v3 --split test --agent reference --fixture-count 2000 --seed 1
+
+# legacy ceiling/regression suite
+recap eval run --suite v2 --split dev
+recap eval run --suite v2 --split test
 ```
 
-Reports land in `benchmark/reports/`. See
+Reports land in `benchmark/reports/`. See [`docs/benchmark-v3.md`](docs/benchmark-v3.md),
+[`docs/results-v3.md`](docs/results-v3.md), and
 [`docs/evaluation-methodology.md`](docs/evaluation-methodology.md) for what the numbers do
 and do not mean.
 
@@ -355,7 +419,20 @@ Reproducibility check (the same gate CI runs):
 python scripts/run_benchmark_repro.py
 ```
 
-### 7. HTTP API
+### 8. Replay web app
+
+```bash
+python -m http.server 8000 --directory web
+```
+
+Open <http://localhost:8000>. The app is a no-build static replay: it reads committed JSON
+under `web/replay/` and needs no database, model, or backend. A dataset selector switches
+between the deterministic test/dev artifacts and the live-model artifact, and the provenance
+bar shows agent mode, exact model, embedder, reranker, dataset hash, and timeout. Re-export
+from reports with `python scripts/export_replay.py --input <report.json> --out web/replay`.
+See [`web/README.md`](web/README.md).
+
+### 9. HTTP API
 
 ```bash
 recap serve --port 8000
@@ -376,13 +453,13 @@ recap doctor [--live]
 recap serve
 
 recap db migrate | init
-recap search init | health | reconcile [--chunks] | drain | outbox
+recap search init | health | reconcile [--chunks] | drain | worker | outbox
 recap memory search | show | compatibility
 recap chunk build | show | count
 recap repair compile | validate | promote
 recap agent run --environment-version 1
 recap demo seed | run
-recap eval run
+recap eval run --suite v3 --split test --agent reference
 ```
 
 Every command performs real work. Nothing prints success for an operation that did not run.

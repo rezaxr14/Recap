@@ -1,0 +1,324 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark light" />
+    <meta
+      name="description"
+      content="RECAP: inspect silent drift, retrieval decisions, and safety-vs-utility tradeoffs from recorded agent-memory benchmark runs."
+    />
+    <title>RECAP — agent memory that knows when not to answer</title>
+    <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="site-header">
+      <a class="brand" href="#top" aria-label="RECAP home">
+        <span class="brand-mark" aria-hidden="true">R</span>
+        <span>RECAP</span>
+      </a>
+      <nav aria-label="Primary navigation">
+        <a href="#drift">Silent drift</a>
+        <a href="#benchmark">Benchmark</a>
+        <a href="#inspector">Inspector</a>
+        <a href="#lifecycle">Lifecycle</a>
+        <a href="#architecture">Architecture</a>
+      </nav>
+      <select class="dataset-select" id="dataset-select" aria-label="Recorded dataset"></select>
+      <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle colour theme">
+        <span aria-hidden="true">◐</span>
+      </button>
+    </header>
+
+    <div class="provenance" id="provenance" role="status">
+      Loading recorded run provenance…
+    </div>
+
+    <main id="main">
+      <section class="hero" id="top">
+        <div class="hero-copy">
+          <p class="eyebrow">Agent memory · retrieval · safety</p>
+          <h1>Memory that knows<br /><span>when not to answer.</span></h1>
+          <p class="lede">
+            Most RAG systems retrieve the most similar note. RECAP retrieves a
+            <strong>typed, versioned repair strategy</strong>, checks whether its
+            preconditions still hold, and fails closed when a schema change makes
+            it unsafe. The interesting result is not a higher success rate. It is
+            <strong>harmful transfer going down without hiding failures.</strong>
+          </p>
+          <div class="hero-actions">
+            <a class="button primary" href="#drift">Break a silent drift</a>
+            <a class="button ghost" href="#benchmark">Read the evidence</a>
+          </div>
+          <p class="micro">
+            Replay mode. Every number below comes from a committed benchmark
+            report; no live model is required to explore this page.
+          </p>
+        </div>
+        <aside class="hero-card" aria-labelledby="hero-card-title">
+          <div class="card-topline">
+            <span class="dot danger"></span>
+            <span id="hero-card-title">Same request. Different memory policy.</span>
+          </div>
+          <div class="compare-grid">
+            <button class="compare-option" data-hero="naive" type="button">
+              <span class="compare-label">Stale-memory retrieval</span>
+              <strong id="hero-naive-result">—</strong>
+              <span id="hero-naive-detail">—</span>
+            </button>
+            <button class="compare-option active" data-hero="recap" type="button">
+              <span class="compare-label">RECAP policy</span>
+              <strong id="hero-recap-result">—</strong>
+              <span id="hero-recap-detail">—</span>
+            </button>
+          </div>
+          <div class="hero-explain" id="hero-explain">
+            The legacy parameter is accepted but silently ignored. The result looks
+            successful while the record set is incomplete.
+          </div>
+          <div class="hero-footer">
+            <span class="chip" id="hero-task">recorded task</span>
+            <button class="link-button" id="hero-swap" type="button">Swap outcome →</button>
+          </div>
+        </aside>
+      </section>
+
+      <section class="section" id="drift">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">The signature failure</p>
+            <h2>Silent drift is not an error message.</h2>
+          </div>
+          <p class="section-note">
+            The v3 suite separates three tiers. Tier A is a control. Tier B is
+            discoverable by probing. Tier C needs memory: the request succeeds, but
+            the answer is wrong without the convention learned in a prior run.
+          </p>
+        </div>
+
+        <div class="tier-grid" id="tier-grid">
+          <article class="tier-card">
+            <span class="tier">A</span>
+            <h3>Self-explanatory</h3>
+            <p>No memory required. A control that catches a broken harness.</p>
+            <div class="tier-stat" id="tier-a">—</div>
+          </article>
+          <article class="tier-card">
+            <span class="tier">B</span>
+            <h3>Opaque, discoverable</h3>
+            <p>An error with a reference id. Probe until the required parameter is found.</p>
+            <div class="tier-stat" id="tier-b">—</div>
+          </article>
+          <article class="tier-card tier-c">
+            <span class="tier">C</span>
+            <h3>Memory required</h3>
+            <p>No error. Completion is verified against ground truth, not the model's claim.</p>
+            <div class="tier-stat" id="tier-c">—</div>
+          </article>
+        </div>
+
+        <div class="drift-panel">
+          <div class="drift-controls">
+            <label for="drift-scenario">Scenario</label>
+            <select id="drift-scenario"></select>
+            <p class="hint" id="drift-hint">
+              Pick a silent scenario to compare a relevance-only baseline with the
+              outcome-aware policy on the same recorded task.
+            </p>
+          </div>
+          <div class="drift-comparison" id="drift-comparison"></div>
+        </div>
+
+        <div class="gate" id="gate" aria-live="polite">Checking the v3 acceptance gate…</div>
+      </section>
+
+      <section class="section" id="benchmark">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Recorded evaluation</p>
+            <h2>Utility is only half the result.</h2>
+          </div>
+          <p class="section-note">
+            Each bar is a real row from the report. Hover a point to see the
+            baseline. The safety view plots harmful transfer against task success;
+            the best systems move up and left, not just up.
+          </p>
+        </div>
+
+        <div class="stat-row" id="stat-row"></div>
+
+        <div class="chart-grid">
+          <article class="panel">
+            <div class="panel-heading">
+              <h3>Success by baseline</h3>
+              <span class="panel-caption">task success rate · 95% CI in tooltip</span>
+            </div>
+            <div class="bars" id="success-bars" role="img" aria-label="Task success rate by baseline"></div>
+          </article>
+          <article class="panel">
+            <div class="panel-heading">
+              <h3>Safety vs utility</h3>
+              <span class="panel-caption">lower-left is safer · upper-right is more useful</span>
+            </div>
+            <div class="scatter-wrap">
+              <svg id="scatter" viewBox="0 0 420 300" role="img" aria-label="Harmful transfer versus task success"></svg>
+            </div>
+          </article>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <caption>Full recorded summary. Values are not rounded in the source report.</caption>
+            <thead>
+              <tr>
+                <th scope="col">Baseline</th>
+                <th scope="col">Success</th>
+                <th scope="col">95% CI</th>
+                <th scope="col">Recall@3</th>
+                <th scope="col">MRR</th>
+                <th scope="col">Harmful transfer</th>
+                <th scope="col">False abstention</th>
+                <th scope="col">Tool calls</th>
+                <th scope="col">Incompatible</th>
+              </tr>
+            </thead>
+            <tbody id="summary-body"></tbody>
+          </table>
+        </div>
+
+        <div class="panel family-panel">
+          <div class="panel-heading">
+            <h3>Per-family behavior</h3>
+            <select id="family-baseline" aria-label="Baseline for family table"></select>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th scope="col">Task family</th>
+                  <th scope="col">Success</th>
+                  <th scope="col">Harmful transfer</th>
+                  <th scope="col">False abstention</th>
+                  <th scope="col">Hard-negative outrank</th>
+                </tr>
+              </thead>
+              <tbody id="family-body"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="inspector">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Retrieval inspector</p>
+            <h2>Why did this memory get selected?</h2>
+          </div>
+          <p class="section-note">
+            Every row is a recorded task × baseline. Rejected candidates keep their
+            reason, so a policy decision can be audited instead of guessed at.
+          </p>
+        </div>
+        <div class="inspector-controls">
+          <label for="inspect-task">Task</label>
+          <select id="inspect-task"></select>
+          <label for="inspect-baseline">Baseline</label>
+          <select id="inspect-baseline"></select>
+        </div>
+        <div class="inspector" id="inspector-content"></div>
+      </section>
+
+      <section class="section" id="lifecycle">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Memory lifecycle</p>
+            <h2>Fail closed, then learn carefully.</h2>
+          </div>
+          <p class="section-note">
+            A completion failure becomes a typed candidate only after validation.
+            Promotion is a separate gate. The benchmark store is synthetic after
+            the gold fixtures; the UI labels that provenance explicitly.
+          </p>
+        </div>
+        <div class="lifecycle" id="lifecycle-flow" aria-label="Memory lifecycle"></div>
+        <div class="store-strip" id="store-strip"></div>
+      </section>
+
+      <section class="section" id="runs">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Run explorer</p>
+            <h2>Every claim has a run behind it.</h2>
+          </div>
+          <p class="section-note">
+            This replay shows the persisted decision summary for one run. The full
+            event stream remains in the API/Postgres source of truth.
+          </p>
+        </div>
+        <div class="inspector-controls">
+          <label for="run-task">Task</label>
+          <select id="run-task"></select>
+          <label for="run-baseline">Baseline</label>
+          <select id="run-baseline"></select>
+        </div>
+        <div class="timeline" id="timeline"></div>
+      </section>
+
+      <section class="section" id="ask">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Grounded Q&amp;A · replay</p>
+            <h2>Ask the report.</h2>
+          </div>
+          <p class="section-note">
+            These answers are computed from the selected benchmark artifact and
+            cite the exact report fields. They are not generated by an LLM, so they
+            are deterministic, auditable, and honest about being replay-only.
+          </p>
+        </div>
+        <div class="ask-box">
+          <div class="ask-buttons" id="ask-buttons"></div>
+          <div class="answer" id="answer" aria-live="polite">
+            Choose a question. Every citation points to a field in the loaded report.
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="architecture">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Architecture</p>
+            <h2>Postgres is the truth. Elasticsearch is the index.</h2>
+          </div>
+          <p class="section-note">
+            Click a component for its role and the source file. The benchmark uses
+            the same recall engine and persistence path as the API.
+          </p>
+        </div>
+        <div class="architecture" id="architecture-grid"></div>
+      </section>
+
+      <section class="section limitations">
+        <h2>What this page does not prove</h2>
+        <ul>
+          <li>The environment is a deterministic mock API, not production traffic.</li>
+          <li>The deterministic headline uses a 256-d hashing embedder. The selectable live dataset uses nomic 768-d and one small local model on one machine.</li>
+          <li>Elasticsearch is single-node. There is no scale claim here.</li>
+          <li>Gold v3 memories are labelled synthetic fixtures; decoys are synthetic too.</li>
+          <li>Task success counts only externally verified completion. A safe abstention is reported separately, not relabelled as success.</li>
+          <li>A live model can select the correct memory and still fail to execute its strategy. Harmful transfer records the failed outcome; it does not prove the wrong memory was selected.</li>
+        </ul>
+        <p class="micro" id="limitations-source"></p>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <p>RECAP · replay of recorded runs · <span id="footer-source">source pending</span></p>
+      <p><a href="#top">Back to top</a></p>
+    </footer>
+
+    <script src="app.js" defer></script>
+  </body>
+</html>

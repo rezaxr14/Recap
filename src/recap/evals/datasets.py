@@ -26,6 +26,17 @@ class BenchmarkTask:
     seed: int = 7
     difficulty: str = "easy"
     side_effect_risk: str = "read_only"
+    # v3 fields. They are defaults so the legacy and v2 suites keep the same
+    # public task shape while reports gain the labels v3 needs.
+    suite: str = "v2"
+    tier: str = "A"
+    scenario_id: str = ""
+    gold_memory_ids: tuple[str, ...] = ()
+    should_select: bool = True
+    retrieval_query: str = ""
+    schema_variant: str = ""
+    silent_drift: bool = False
+    tenant: str = "acme"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -42,6 +53,15 @@ class BenchmarkTask:
             "seed": self.seed,
             "difficulty": self.difficulty,
             "side_effect_risk": self.side_effect_risk,
+            "suite": self.suite,
+            "tier": self.tier,
+            "scenario_id": self.scenario_id or self.task_id,
+            "gold_memory_ids": list(self.gold_memory_ids),
+            "should_select": self.should_select,
+            "retrieval_query": self.retrieval_query,
+            "schema_variant": self.schema_variant,
+            "silent_drift": self.silent_drift,
+            "tenant": self.tenant,
         }
 
 
@@ -265,6 +285,209 @@ def build_benchmark_v2_tasks() -> list[BenchmarkTask]:
                         difficulty="hard" if version == "2" else "medium",
                     )
                 )
+    return tasks
+
+
+V3_TENANTS = ("acme", "northwind", "globex", "initech", "umbrella", "stark")
+
+# Tier C instructions deliberately describe only the goal. They never mention a
+# parameter, an error, a version change, or the recovery action.
+V3_TIER_C_INSTRUCTIONS: dict[str, tuple[str, ...]] = {
+    "silent_cursor": (
+        "Collect the complete record set for tenant {tenant}. The result must not miss or repeat rows.",
+        "Return every record belonging to tenant {tenant} and report the final count.",
+        "Gather all rows for tenant {tenant}; the answer will be checked against the stored data.",
+        "Produce the full tenant {tenant} record list and state how many rows it contains.",
+        "Fetch the entire set of tenant {tenant} records, with no omissions or duplicates.",
+        "Collect all tenant {tenant} rows from the records service and report the exact total.",
+    ),
+    "silent_field": (
+        "Read every record for tenant {tenant} and summarize the count.",
+        "Collect the complete tenant {tenant} record set from the service response.",
+        "Return all rows for tenant {tenant} and report how many were found.",
+        "Gather the tenant {tenant} records and state the exact total.",
+        "Produce the full record list for tenant {tenant} from the service payload.",
+        "Fetch every tenant {tenant} row and report the final count.",
+    ),
+    "silent_enum": (
+        "Collect every tenant {tenant} record in the order the service defines, then report the total.",
+        "Return all tenant {tenant} rows in canonical order and state the count.",
+        "Gather tenant {tenant} records in the service's canonical order and report the total.",
+        "Produce every tenant {tenant} row in canonical order; the exact sequence is checked.",
+        "Fetch the full tenant {tenant} record list in service order and report the count.",
+        "Collect all tenant {tenant} rows in the canonical sequence and state the total.",
+    ),
+    "silent_account": (
+        "Collect all tenant {tenant} records and report the final count.",
+        "Return the complete tenant {tenant} record set and state how many rows were found.",
+        "Gather every tenant {tenant} row from the records service and report the total.",
+        "Produce the full tenant {tenant} record list and give the exact count.",
+        "Fetch all tenant {tenant} records and report how many were returned.",
+        "Collect the entire tenant {tenant} record set and state the final total.",
+    ),
+    "novel_failure": (
+        "Collect all tenant {tenant} records and report the total.",
+        "Return every tenant {tenant} row and state the count.",
+        "Gather the complete tenant {tenant} record list and report how many were found.",
+        "Fetch all tenant {tenant} records and give the exact total.",
+        "Produce the full tenant {tenant} row set and report its size.",
+        "Collect every tenant {tenant} record and state the final count.",
+    ),
+}
+
+
+def build_benchmark_v3_tasks() -> list[BenchmarkTask]:
+    """Tiered, leak-free v3 suite.
+
+    Tier A is a control where a plain loop succeeds. Tier B has an opaque error
+    that can be resolved by probing. Tier C contains silent drift or a hidden
+    convention: the request succeeds, but the answer is wrong without memory.
+    ``should_select=False`` marks tasks where abstaining is the safe action.
+    """
+    tasks: list[BenchmarkTask] = []
+
+    def add(
+        *,
+        family: str,
+        tier: str,
+        split: str,
+        scenario: str,
+        instruction: str,
+        version: str = "2",
+        should_select: bool = True,
+        gold: bool = True,
+        variant: str = "",
+        silent: bool = False,
+        tenant: str = "acme",
+        index: int = 1,
+        gold_scenario: str = "",
+    ) -> None:
+        memory_id = f"v3-gold-{gold_scenario or scenario}-v{version}" if gold else ""
+        tasks.append(
+            BenchmarkTask(
+                task_id=f"v3-{scenario}-v{version}-{index:02d}",
+                task_family=scenario,
+                task_version=version,
+                instruction=instruction,
+                environment_version=version,
+                split=split,
+                failure_mode=family,
+                relevant_memory_tags=("pagination", family),
+                hard_negative_kinds=("stale_version", "wrong_family", "bad_track_record"),
+                seed=5000 + len(tasks),
+                difficulty="hard",
+                suite="v3",
+                tier=tier,
+                scenario_id=scenario,
+                gold_memory_ids=(memory_id,) if memory_id else (),
+                should_select=should_select,
+                retrieval_query=(
+                    f"{instruction} Previous attempt collected an unexpected record set."
+                ),
+                schema_variant=variant,
+                silent_drift=silent,
+                tenant=tenant,
+            )
+        )
+
+    # Tier A: self-explanatory/control. No memory is needed, and the deterministic
+    # agent succeeds without one.
+    for index, tenant in enumerate(V3_TENANTS, start=1):
+        add(
+            family="self_explanatory",
+            tier="A",
+            split="train",
+            scenario="tier-a-control",
+            instruction=(
+                f"Return the full set of records for tenant {tenant} and report how many there are."
+            ),
+            should_select=False,
+            gold=False,
+            tenant=tenant,
+            index=index,
+        )
+
+    # Tier B: opaque error, discoverable by probing.
+    for index, tenant in enumerate(V3_TENANTS, start=1):
+        add(
+            family="opaque_required",
+            tier="B",
+            split="dev",
+            scenario="tier-b-opaque",
+            instruction=(
+                f"Fetch every row belonging to tenant {tenant} from the records "
+                "endpoint, then report the total."
+            ),
+            tenant=tenant,
+            index=index,
+        )
+
+    # Tier C base scenarios.
+    for family in ("silent_cursor", "silent_field", "silent_enum", "silent_account"):
+        split = "dev" if family == "silent_cursor" else "test"
+        for index, (tenant, template) in enumerate(
+            zip(V3_TENANTS, V3_TIER_C_INSTRUCTIONS[family], strict=True), start=1
+        ):
+            add(
+                family=family,
+                tier="C",
+                split=split,
+                scenario=f"tier-c-{family}",
+                instruction=template.format(tenant=tenant),
+                silent=True,
+                tenant=tenant,
+                index=index,
+            )
+
+    # Partial drift: only the tenant description (an irrelevant schema path)
+    # changes. A whole-fingerprint gate abstains; field-scoped compatibility does
+    # not. The same task family with a relevant change is an abstention case.
+    for index, tenant in enumerate(V3_TENANTS[:3], start=1):
+        add(
+            family="silent_cursor",
+            tier="C",
+            split="dev",
+            scenario="tier-c-silent-cursor-irrelevant",
+            instruction=(f"Collect every record for tenant {tenant} and report the exact count."),
+            variant="irrelevant",
+            silent=True,
+            tenant=tenant,
+            index=index,
+            gold_scenario="tier-c-silent_cursor",
+        )
+    for index, tenant in enumerate(V3_TENANTS[3:], start=1):
+        add(
+            family="silent_cursor",
+            tier="C",
+            split="dev",
+            scenario="tier-c-silent-cursor-relevant",
+            instruction=(f"Collect all tenant {tenant} records and report the exact count."),
+            variant="relevant",
+            should_select=False,
+            gold=False,
+            silent=True,
+            tenant=tenant,
+            index=index,
+        )
+
+    # No relevant memory: the correct action is to abstain. The environment still
+    # has a silent failure, so "always select something" is visibly unsafe.
+    for index, (tenant, template) in enumerate(
+        zip(V3_TENANTS, V3_TIER_C_INSTRUCTIONS["novel_failure"], strict=True), start=1
+    ):
+        add(
+            family="novel_failure",
+            tier="C",
+            split="test",
+            scenario="tier-c-novel-failure",
+            instruction=template.format(tenant=tenant),
+            should_select=False,
+            gold=False,
+            silent=True,
+            tenant=tenant,
+            index=index,
+        )
+
     return tasks
 
 

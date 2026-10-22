@@ -6,7 +6,10 @@ index. Commands never print success for an operation that did not run.
 
 from __future__ import annotations
 
+import contextlib
 import json
+import signal
+import threading
 from dataclasses import asdict
 from pathlib import Path
 from typing import Annotated, Any
@@ -21,6 +24,7 @@ from recap.domain.enums import MemoryStatus, RetrievalMode
 from recap.domain.retrieval import RetrievalContext, RetrievalRequest
 from recap.errors import RecapError, ValidationError
 from recap.infrastructure.outbox import OutboxWorker
+from recap.logging import get_logger
 
 app = typer.Typer(help="RECAP memory and recovery engine", no_args_is_help=True)
 db_app = typer.Typer(help="Database operations")
@@ -41,6 +45,7 @@ app.add_typer(demo_app, name="demo")
 app.add_typer(eval_app, name="eval")
 
 console = Console()
+logger = get_logger(__name__)
 
 
 def _container(config: str | None = None) -> Container:
@@ -425,6 +430,55 @@ def search_outbox(config: str | None = None) -> None:
         _fail(exc)
         return
     console.print_json(json.dumps({"states": counts, "due_pending": due}, indent=2))
+
+
+@search_app.command("worker")
+def search_worker(
+    config: str | None = None,
+    poll_seconds: Annotated[float, typer.Option("--poll-seconds", min=0.5)] = 2.0,
+    batch_size: Annotated[int, typer.Option("--batch-size", min=1)] = 20,
+    max_batches: Annotated[int, typer.Option("--max-batches", min=1)] = 100,
+) -> None:
+    """Run the outbox drain loop until SIGINT/SIGTERM.
+
+    The API process never spawns this thread implicitly: one explicit worker is
+    easier to observe, restart, and scale than a background daemon hidden inside
+    every web process. PostgreSQL ``FOR UPDATE SKIP LOCKED`` makes several
+    workers safe.
+    """
+    container = _container(config)
+    worker = OutboxWorker(container, batch_size=batch_size, max_batches=max_batches)
+    stop = threading.Event()
+
+    def request_stop(signum: int, _frame: object) -> None:
+        logger.info("worker shutdown requested", extra={"event": "worker_stop", "signal": signum})
+        stop.set()
+
+    previous: dict[Any, Any] = {}
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        with contextlib.suppress(ValueError, OSError):
+            previous[sig] = signal.signal(sig, request_stop)
+    totals: dict[str, int] = {}
+    try:
+        console.print(
+            f"[green]outbox worker started[/green] poll={poll_seconds}s "
+            f"batch={batch_size} max_batches={max_batches}"
+        )
+        while not stop.is_set():
+            counts = worker.drain()
+            for key, value in counts.items():
+                if value:
+                    totals[key] = totals.get(key, 0) + value
+            if counts["claimed"] == 0:
+                stop.wait(poll_seconds)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        for sig, handler in previous.items():
+            with contextlib.suppress(ValueError, OSError):
+                signal.signal(sig, handler)
+        container.es_client.close()
+        console.print_json(json.dumps({"stopped": True, "totals": totals}, indent=2))
 
 
 # ------------------------------------------------------------------- chunk
@@ -835,9 +889,18 @@ def eval_run(
     output: Annotated[Path, typer.Option("--output")] = Path("benchmark/reports"),
     agent: Annotated[
         str,
-        typer.Option("--agent", help="Agent under test: reference (deterministic) or llm (live)"),
+        typer.Option(
+            "--agent",
+            help=(
+                "Agent under test: reference (deterministic), llm/llm_verifying, or llm_credulous"
+            ),
+        ),
     ] = "reference",
     seed: Annotated[int, typer.Option("--seed", min=1)] = 1,
+    fixture_count: Annotated[
+        int,
+        typer.Option("--fixture-count", min=0, help="v3 synthetic decoy store size"),
+    ] = 2000,
     baselines: Annotated[
         str,
         typer.Option("--baselines", help="Optional comma-separated baseline subset"),
@@ -870,6 +933,7 @@ def eval_run(
             baselines=selected_baselines,
             resume=resume,
             max_tool_calls=max_tool_calls,
+            fixture_count=fixture_count,
         )
     except Exception as exc:
         _fail(exc)

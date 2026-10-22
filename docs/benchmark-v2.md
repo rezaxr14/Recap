@@ -1,9 +1,10 @@
 # Benchmark v2
 
 Benchmark v2 is the larger, family-held-out suite that replaces the original six-task
-demonstration. It is implemented and has been run on the **dev** split with both the
-deterministic hashing embedder and real `text-embedding-nomic-embed-text-v1.5` embeddings
-through LM Studio. The **test** split is implemented but has not been run yet.
+demonstration. It is the legacy ceiling/regression suite; v3 is the current memory-required
+suite. Both **dev** and held-out **test** splits have been run with the deterministic hashing
+embedder and real `text-embedding-nomic-embed-text-v1.5` embeddings, and both were also run
+with the live model. The live-model ceiling is the reason v2 is not used for the memory claim.
 
 The measured dev results are in
 [`evidence/phase2-summary.md`](evidence/phase2-summary.md). This page documents the design,

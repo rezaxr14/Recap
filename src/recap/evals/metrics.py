@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
+from typing import Any, cast
 
 
 def recall_at_k(relevant: set[str], retrieved: Sequence[str], k: int) -> float:
@@ -81,6 +82,47 @@ def bootstrap_ci(
     for _ in range(samples):
         resample = [values[rng.randrange(n)] for _ in range(n)]
         estimates.append(sum(resample) / n)
+    estimates.sort()
+    lower_index = int((1 - confidence) / 2 * samples)
+    upper_index = int((1 + confidence) / 2 * samples) - 1
+    return estimates[lower_index], estimates[upper_index]
+
+
+def cluster_bootstrap_ci(
+    rows: Sequence[dict[str, object]],
+    *,
+    value_key: str,
+    cluster_key: str = "scenario_id",
+    samples: int = 2000,
+    confidence: float = 0.95,
+    seed: int = 7,
+) -> tuple[float, float]:
+    """Percentile bootstrap that resamples scenarios, not individual runs.
+
+    Multiple paraphrases of one scenario are nuisance variation. Treating them
+    as independent observations would shrink the interval artificially.
+    """
+    clusters: dict[str, list[float]] = {}
+    for row in rows:
+        value = row.get(value_key)
+        if value is None:
+            continue
+        cluster = str(row.get(cluster_key) or row.get("task_id") or "unknown")
+        clusters.setdefault(cluster, []).append(
+            1.0 if value is True else 0.0 if value is False else float(cast(Any, value))
+        )
+    if not clusters:
+        return 0.0, 0.0
+    import random
+
+    rng = random.Random(seed)
+    keys = sorted(clusters)
+    n = len(keys)
+    estimates: list[float] = []
+    for _ in range(samples):
+        chosen = [keys[rng.randrange(n)] for _ in range(n)]
+        values = [value for key in chosen for value in clusters[key]]
+        estimates.append(sum(values) / len(values))
     estimates.sort()
     lower_index = int((1 - confidence) / 2 * samples)
     upper_index = int((1 + confidence) / 2 * samples) - 1

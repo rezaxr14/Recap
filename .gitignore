@@ -19,4 +19,5 @@ dist/
 build/
 node_modules/
 models/
+.tmp/
 .DS_Store

@@ -8,8 +8,13 @@ the code and its tests are authoritative and the document should be fixed in the
 | Document | What it answers |
 |---|---|
 | [`../README.md`](../README.md) | What RECAP is, what works, quickstart, measured results, known limits |
+| [`benchmark-v3.md`](benchmark-v3.md) | Current memory-required suite: tiers, silent drift, field-scoped compatibility, acceptance gate, and held-out result |
+| [`results-v3.md`](results-v3.md) | Deterministic headline matrix plus the separate live-model run, including selectable-task splits and execution-failure caveats |
+| [`evidence/phase3b-v3-deterministic-test.md`](evidence/phase3b-v3-deterministic-test.md) | Exact deterministic command, environment, matrix, and retained failures |
+| [`evidence/phase3b-v3-live-test.md`](evidence/phase3b-v3-live-test.md) | Exact live model, inference timeouts, nomic embedder, aggregate/selectable results, and execution-failure audit |
+| [`../web/README.md`](../web/README.md) | Static recorder-replay app: export, serve, deploy, provenance, and honesty rules |
 | [`evidence/phase1-summary.md`](evidence/phase1-summary.md) | Evidence-backed implementation state, live-run results, and known limits |
-| [`benchmark-v2.md`](benchmark-v2.md) | Ten-family task suite, hard negatives, fair baselines, leakage checks, and limitations |
+| [`benchmark-v2.md`](benchmark-v2.md) | Legacy ceiling/regression suite: ten families, hard negatives, fair baselines, leakage checks, and limitations |
 | [`evidence/phase2-summary.md`](evidence/phase2-summary.md) | Measured benchmark v2 dev results and live new-family model runs |
 | [`evidence/phase2-inference-reliability.md`](evidence/phase2-inference-reliability.md) | Streaming/timeout changes, live doctor metrics, and 4/4 repair-generation acceptance |
 | [`evidence/phase3-llm-dev-core/summary.md`](evidence/phase3-llm-dev-core/summary.md) | Live-model benchmark on the v2 dev split, four core baselines, ceiling effect, and limits |

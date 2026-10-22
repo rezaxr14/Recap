@@ -14,6 +14,7 @@ after an interruption without repeating completed model calls.
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -42,11 +43,13 @@ from recap.evals.datasets import (
     FAMILY_SPLITS,
     BenchmarkTask,
     build_benchmark_v2_tasks,
+    build_benchmark_v3_tasks,
     default_tasks,
     split_hash,
 )
 from recap.evals.metrics import (
     bootstrap_ci,
+    cluster_bootstrap_ci,
     mean,
     ndcg_at_k,
     percentile,
@@ -68,6 +71,7 @@ BASELINES: list[tuple[str, RetrievalMode | None, str]] = [
     # from the task. It gets the same information as outcome-aware selection
     # but none of the compatibility, applicability, or utility policy.
     ("hybrid_rrf_version_filter", RetrievalMode.HYBRID_RRF, ""),
+    ("fingerprint_filter_oracle", RetrievalMode.HYBRID_RRF, ""),
     ("hybrid_rerank", RetrievalMode.HYBRID_RERANK, ""),
     ("outcome_aware", RetrievalMode.OUTCOME_AWARE, ""),
     # Chunk-granule ablations on the same tasks. Both chunk strategies are
@@ -82,6 +86,18 @@ BASELINES: list[tuple[str, RetrievalMode | None, str]] = [
     ("hybrid_rrf_chunk", RetrievalMode.HYBRID_RRF_CHUNK, "event_aware"),
     ("outcome_aware_chunk", RetrievalMode.OUTCOME_AWARE_CHUNK, "event_aware"),
 ]
+
+
+V3_BASELINES: tuple[str, ...] = (
+    "no_memory",
+    "bm25",
+    "vector",
+    "hybrid_rrf",
+    "hybrid_rerank",
+    "hybrid_rrf_version_filter",
+    "fingerprint_filter_oracle",
+    "outcome_aware",
+)
 
 
 def run_benchmark(
@@ -99,16 +115,21 @@ def run_benchmark(
     baselines: list[str] | None = None,
     resume: bool = False,
     max_tool_calls: int = 6,
+    fixture_count: int = 2000,
 ) -> dict[str, Any]:
-    if suite not in {"legacy", "v2"}:
-        raise ValueError("suite must be legacy or v2")
-    if agent not in {"reference", "llm"}:
-        raise ValueError("agent must be reference or llm")
+    if suite not in {"legacy", "v2", "v3"}:
+        raise ValueError("suite must be legacy, v2, or v3")
+    if agent not in {"reference", "llm", "llm_verifying", "llm_credulous"}:
+        raise ValueError("agent must be reference, llm, llm_verifying, or llm_credulous")
+    if fixture_count < 0:
+        raise ValueError("fixture_count must be >= 0")
     if seed < 1:
         raise ValueError("seed must be positive")
     if max_tool_calls < 1:
         raise ValueError("max_tool_calls must be positive")
-    active_baselines = _select_baselines(baselines)
+    active_baselines = _select_baselines(
+        list(V3_BASELINES) if baselines is None and suite == "v3" else baselines
+    )
     identity = _agent_identity(container, agent)
     identity["max_tool_calls"] = max_tool_calls
 
@@ -118,11 +139,14 @@ def run_benchmark(
     # The dimension probe above is not part of benchmark cost. Reset after it
     # so the report covers only seeding and retrieval in this run.
     _reset_embedding_stats(container.embeddings)
-    available = (
-        tasks
-        if tasks is not None
-        else (default_tasks() if suite == "legacy" else build_benchmark_v2_tasks())
-    )
+    if tasks is not None:
+        available = tasks
+    elif suite == "legacy":
+        available = default_tasks()
+    elif suite == "v2":
+        available = build_benchmark_v2_tasks()
+    else:
+        available = build_benchmark_v3_tasks()
     tasks = [task for task in available if task.split == split]
     if limit is not None:
         if limit < 1:
@@ -145,6 +169,7 @@ def run_benchmark(
         max_tool_calls=max_tool_calls,
         identity=identity,
         container=container,
+        fixture_count=fixture_count,
     )
     checkpoint_path, checkpoint_meta_path = _checkpoint_paths(
         output, suite=suite, split=split, agent=agent, seed=seed, stamp=stamp, resume=resume
@@ -158,7 +183,15 @@ def run_benchmark(
 
     reset_workspace(container, [workspace])
     try:
-        _seed_memories(container, workspace, tasks)
+        store_metadata: dict[str, Any] = {}
+        if suite == "v3":
+            from recap.evals.v3_seed import seed_v3_workspace
+
+            store_metadata = seed_v3_workspace(
+                container, workspace, tasks, fixture_count=fixture_count
+            )
+        else:
+            _seed_memories(container, workspace, tasks)
         per_task = _load_checkpoint(
             checkpoint_path,
             checkpoint_meta_path,
@@ -205,6 +238,8 @@ def run_benchmark(
         json_path = output / f"benchmark_{split}_{stamp}.json"
         csv_path = output / f"benchmark_{split}_{stamp}.csv"
         md_path = output / f"benchmark_{split}_{stamp}.md"
+        warnings = _non_discrimination_warnings(summary)
+        acceptance = _v3_acceptance(per_task, split) if suite == "v3" else None
         embedding_usage = _embedding_usage(container.embeddings)
         cache_table = (
             container.embedding_cache.stats() if container.embedding_cache is not None else None
@@ -220,6 +255,13 @@ def run_benchmark(
             "per_task": per_task,
             "summary": summary,
             "by_task_family": by_family,
+            "by_tier": {
+                tier: _summarize([row for row in per_task if row.get("tier") == tier])
+                for tier in sorted({str(row.get("tier", "A")) for row in per_task})
+            },
+            "acceptance": acceptance,
+            "warnings": warnings,
+            "store": store_metadata,
             "performance": performance,
             "retrieval": _retrieval_provenance(container),
             "embedding": embedding_usage,
@@ -238,8 +280,11 @@ def run_benchmark(
                 "agent": (
                     "deterministic-reference-agent-v1"
                     if agent == "reference"
-                    else "llm-tool-agent-v1"
+                    else identity.get("agent_id", "llm-tool-agent-v1")
                 ),
+                "agent_mode": identity.get("agent_mode", "deterministic"),
+                "fixture_count": fixture_count,
+                "suite_tier": suite if suite == "v3" else None,
                 "provider": identity["provider_type"],
                 "model": identity["model"],
                 "prompt_version": identity["prompt_version"],
@@ -272,6 +317,10 @@ def run_benchmark(
         return {
             "summary": summary,
             "per_task": per_task,
+            "dataset_hash": dataset_hash,
+            "store": store_metadata,
+            "acceptance": acceptance,
+            "warnings": warnings,
             "report_path": str(md_path),
             "json_path": str(json_path),
             "csv_path": str(csv_path),
@@ -303,6 +352,7 @@ def _agent_identity(container: Container, agent: str) -> dict[str, Any]:
         return {
             "kind": "reference",
             "agent_id": "benchmark-reference-agent",
+            "agent_mode": "deterministic",
             "provider_type": "deterministic",
             "model": "reference-agent-v1",
             "prompt_version": "deterministic-policy-v1",
@@ -317,12 +367,14 @@ def _agent_identity(container: Container, agent: str) -> dict[str, Any]:
             "LLM_BASE_URL, and LLM_MODEL (for example LM Studio at http://localhost:1234/v1)"
         )
     settings = container.settings.llm
+    credulous = agent == "llm_credulous"
     return {
         "kind": "llm",
-        "agent_id": "benchmark-llm-agent",
+        "agent_id": "benchmark-llm-agent-credulous" if credulous else "benchmark-llm-agent",
+        "agent_mode": "credulous" if credulous else "verifying",
         "provider_type": str(getattr(provider, "provider_type", settings.provider)),
         "model": str(getattr(provider, "model", "") or settings.model),
-        "prompt_version": PROMPT_VERSION,
+        "prompt_version": PROMPT_VERSION + ("-credulous" if credulous else ""),
         "temperature": float(getattr(provider, "temperature", settings.temperature)),
         "max_tool_calls": 6,
         "capabilities": provider.capabilities.to_dict(),
@@ -352,10 +404,11 @@ def _checkpoint_signature(
     max_tool_calls: int,
     identity: dict[str, Any],
     container: Container,
+    fixture_count: int = 2000,
 ) -> dict[str, Any]:
     """Identity that must match before resuming an append-only checkpoint."""
     return {
-        "runner_version": 2,
+        "runner_version": 3,
         "suite": suite,
         "split": split,
         "dataset_hash": dataset_hash,
@@ -363,6 +416,7 @@ def _checkpoint_signature(
         "agent": agent,
         "seed": seed,
         "max_tool_calls": max_tool_calls,
+        "fixture_count": fixture_count,
         "model": identity["model"],
         "provider_type": identity["provider_type"],
         "prompt_version": identity["prompt_version"],
@@ -456,6 +510,29 @@ def _sort_rows(rows: list[dict[str, Any]], tasks: list[BenchmarkTask]) -> None:
             baseline_order.get(row["baseline"], len(baseline_order)),
             task_order.get(row["task_id"], len(task_order)),
         )
+    )
+
+
+def _task_error(task: BenchmarkTask) -> Mapping[str, str]:
+    if task.suite == "v3":
+        from recap.environments.v3_api import v3_family_error
+
+        return v3_family_error(task.failure_mode)
+    return family_error(task.failure_mode)
+
+
+def _task_environment(task: BenchmarkTask) -> PaginatedApiEnvironment:
+    if task.suite == "v3":
+        from recap.environments.v3_api import V3Environment
+
+        return V3Environment(
+            version=task.environment_version,
+            failure_family=task.failure_mode,
+            tenant=task.tenant,
+            schema_variant=task.schema_variant,
+        )
+    return PaginatedApiEnvironment(
+        version=task.environment_version, failure_family=task.failure_mode
     )
 
 
@@ -599,6 +676,67 @@ def _promote_seed_memory(
         return services.promotion.promote(refreshed)
 
 
+def _build_retrieval_context(
+    task: BenchmarkTask,
+    workspace_id: str,
+    fingerprint: Any,
+    *,
+    baseline: str,
+    error_type: str,
+    error_code: str,
+    error_message: str,
+) -> RetrievalContext:
+    """Build the retrieval request without leaking the gold family label in v3.
+
+    Pure retrieval baselines receive only the natural-language query. The policy
+    baseline may receive the live tool-schema hashes, but never the task family,
+    gold memory ids, or a hidden drift label.
+    """
+    if task.suite != "v3":
+        return RetrievalContext(
+            workspace_id=workspace_id,
+            query=task.instruction,
+            task_family=task.failure_mode,
+            environment_id=fingerprint.environment_id,
+            environment_fingerprint=fingerprint.fingerprint,
+            environment_version=fingerprint.environment_version,
+            environment_type=fingerprint.environment_type,
+            tool_names=["list_records"],
+            tool_versions=fingerprint.tool_versions,
+            tool_schema_fingerprints=fingerprint.tool_schema_hashes,
+            error_type=error_type,
+            error_code=error_code,
+            error_message=error_message,
+            state={"tool_schema_fingerprints": fingerprint.tool_schema_hashes},
+        )
+
+    pure_baselines = {"bm25", "vector", "hybrid_rrf", "hybrid_rerank"}
+    query = task.retrieval_query or task.instruction
+    if baseline in pure_baselines:
+        return RetrievalContext(workspace_id=workspace_id, query=query)
+    silent = task.silent_drift
+    environment = _task_environment(task)
+    return RetrievalContext(
+        workspace_id=workspace_id,
+        query=query,
+        task_family="",
+        environment_id=fingerprint.environment_id,
+        environment_fingerprint=fingerprint.fingerprint,
+        environment_version=fingerprint.environment_version,
+        environment_type=fingerprint.environment_type,
+        tool_names=["list_records"],
+        tool_versions=fingerprint.tool_versions,
+        tool_schema_fingerprints=fingerprint.tool_schema_hashes,
+        schema_path_hashes=getattr(environment, "schema_path_hashes", lambda: {})(),
+        error_type="" if silent else error_type,
+        error_code="" if silent else error_code,
+        error_message="" if silent else error_message,
+        state={
+            "tool_schema_fingerprints": fingerprint.tool_schema_hashes,
+        },
+    )
+
+
 def _run_task(
     container: Container,
     workspace_id: str,
@@ -611,12 +749,10 @@ def _run_task(
     seed: int = 1,
     max_tool_calls: int = 6,
 ) -> dict[str, Any]:
-    environment = PaginatedApiEnvironment(
-        version=task.environment_version, failure_family=task.failure_mode
-    )
+    environment = _task_environment(task)
     fingerprint = environment.fingerprint()
     identity = _agent_identity(container, agent)
-    failure = family_error(task.failure_mode)
+    failure = _task_error(task)
     config_snapshot = {
         "baseline": baseline,
         "agent_kind": agent,
@@ -659,41 +795,57 @@ def _run_task(
     error_type = failure["error_type"]
     request: RetrievalRequest | None = None
     decision = None
+    rejections: list[dict[str, str]] = []
     if mode is not None:
         with container.services() as services:
+            context = _build_retrieval_context(
+                task,
+                workspace_id,
+                fingerprint,
+                baseline=baseline,
+                error_type=error_type,
+                error_code=error_code,
+                error_message=error_message,
+            )
             request = RetrievalRequest(
-                context=RetrievalContext(
-                    workspace_id=workspace_id,
-                    query=task.instruction,
-                    task_family=task.failure_mode,
-                    environment_id=fingerprint.environment_id,
-                    environment_fingerprint=fingerprint.fingerprint,
-                    environment_version=fingerprint.environment_version,
-                    environment_type=fingerprint.environment_type,
-                    tool_names=["list_records"],
-                    tool_versions=fingerprint.tool_versions,
-                    tool_schema_fingerprints=fingerprint.tool_schema_hashes,
-                    error_type=error_type,
-                    error_code=error_code,
-                    error_message=error_message,
-                    state={"tool_schema_fingerprints": fingerprint.tool_schema_hashes},
-                ),
+                context=context,
                 mode=mode,
                 chunk_strategy=chunk_strategy or "event_aware",
-                final_k=3,
+                # v3 has exactly one gold memory per scenario; selecting a
+                # bundle would let a deterministic agent apply a decoy first.
+                final_k=1 if task.suite == "v3" else 3,
                 run_id=run.id,
             )
             decision = services.recall.retrieve(request)
             status = decision.status.value
             ranked_ids = [candidate.memory_id for candidate in decision.candidates]
             selected_ids = [memory.memory_id for memory in decision.selected_memories]
+            rejections = [
+                {
+                    "memory_id": rejected.memory_id,
+                    "reason": rejected.reason,
+                    "detail": rejected.detail,
+                }
+                for rejected in decision.rejected_candidates
+            ]
             if baseline == "hybrid_rrf_version_filter":
                 allowed = {
                     memory.id
                     for memory in services.memories.list_memories(
-                        workspace_id, status=MemoryStatus.ACTIVE, limit=100
+                        workspace_id, status=MemoryStatus.ACTIVE, limit=10_000
                     )
                     if memory.environment_id == fingerprint.environment_id
+                }
+                ranked_ids = [memory_id for memory_id in ranked_ids if memory_id in allowed]
+                selected_ids = [memory_id for memory_id in selected_ids if memory_id in allowed]
+                status = "selected" if selected_ids else "no_safe_memory"
+            elif baseline == "fingerprint_filter_oracle":
+                allowed = {
+                    memory.id
+                    for memory in services.memories.list_memories(
+                        workspace_id, status=MemoryStatus.ACTIVE, limit=10_000
+                    )
+                    if memory.environment_fingerprint == fingerprint.fingerprint
                 }
                 ranked_ids = [memory_id for memory_id in ranked_ids if memory_id in allowed]
                 selected_ids = [memory_id for memory_id in selected_ids if memory_id in allowed]
@@ -707,7 +859,7 @@ def _run_task(
     recorded_memory: Any | None = None
     agent_error: str | None = None
     if agent == "reference":
-        reference = ReferenceAgent()
+        reference = ReferenceAgent(tenant=task.tenant)
         if decision_memory is not None:
             from recap.domain.retrieval import CandidateEvaluation
             from recap.recall.engine import _to_selected
@@ -729,7 +881,11 @@ def _run_task(
         if decision_memory is not None:
             recorded_memory = MemoryAdvisory.from_memory(decision_memory)
         try:
-            result = LlmAgent(provider).run(
+            result = LlmAgent(
+                provider,
+                tenant=task.tenant,
+                mode="credulous" if agent == "llm_credulous" else "verifying",
+            ).run(
                 environment,
                 memory=recorded_memory,
                 max_tool_calls=max_tool_calls,
@@ -763,7 +919,7 @@ def _run_task(
         result,
         metadata=metadata,
         memory=recorded_memory,
-        memory_source="llm_advisory" if agent == "llm" else "retrieval_selection",
+        memory_source="llm_advisory" if agent.startswith("llm") else "retrieval_selection",
     )
     relevant = _relevant_ids(container, workspace_id, task)
     incompatible_selected = _count_incompatible_selected(
@@ -779,7 +935,14 @@ def _run_task(
     hard_negative_outranked_correct = first_wrong_index is not None and (
         first_relevant_index is None or first_wrong_index < first_relevant_index
     )
-    false_abstention = mode is RetrievalMode.OUTCOME_AWARE and bool(relevant) and not selected_ids
+    selected_gold = bool(set(selected_ids) & relevant)
+    abstained = not selected_ids
+    false_abstention = bool(
+        mode is not None and task.should_select and relevant and not selected_ids
+    )
+    selection_precision = (
+        len(set(selected_ids) & relevant) / len(selected_ids) if selected_ids else None
+    )
     with container.services() as services:
         recorded = services.recorder.get_run(run_id)
         events = services.runs.list_events(run_id)
@@ -808,6 +971,11 @@ def _run_task(
         "task_id": task.task_id,
         "task_family": task.task_family,
         "failure_family": task.failure_mode,
+        "scenario_id": task.scenario_id or task.task_id,
+        "tier": task.tier,
+        "should_select": task.should_select,
+        "silent_drift": task.silent_drift,
+        "gold_memory_ids": list(task.gold_memory_ids),
         "baseline": baseline,
         "split": task.split,
         "environment_version": task.environment_version,
@@ -820,6 +988,7 @@ def _run_task(
         "memory_snapshot_id": recorded.memory_snapshot_id,
         "retrieval_status": status,
         "selected_memory_ids": selected_ids,
+        "retrieval_rejections": rejections,
         "relevant_memory_ids": sorted(relevant),
         "recall_at_3": recall_at_k(relevant, ranked_ids, 3),
         "mrr": reciprocal_rank(relevant, ranked_ids),
@@ -842,6 +1011,10 @@ def _run_task(
         "hard_negative_selected": bool(wrong_selected),
         "hard_negative_outranked_correct": hard_negative_outranked_correct,
         "false_abstention": false_abstention,
+        "abstained": abstained,
+        "selected_gold": selected_gold,
+        "selection_precision": selection_precision,
+        "selection_recall": 1.0 if selected_gold else 0.0,
         "retrieval_latency_ms": (
             round(decision.total_latency_ms, 3) if decision is not None else None
         ),
@@ -874,14 +1047,12 @@ def _count_incompatible_selected(
         return 0
     from recap.recall.applicability import combine_compatibility, evaluate_applicability
 
-    environment = PaginatedApiEnvironment(
-        version=task.environment_version, failure_family=task.failure_mode
-    )
+    environment = _task_environment(task)
     fingerprint = environment.fingerprint()
     context = RetrievalContext(
         workspace_id=workspace_id,
         query=task.instruction,
-        task_family=task.failure_mode,
+        task_family="" if task.suite == "v3" else task.failure_mode,
         environment_id=fingerprint.environment_id,
         environment_fingerprint=fingerprint.fingerprint,
         environment_version=fingerprint.environment_version,
@@ -889,7 +1060,10 @@ def _count_incompatible_selected(
         tool_names=["list_records"],
         tool_versions=fingerprint.tool_versions,
         tool_schema_fingerprints=fingerprint.tool_schema_hashes,
-        error_type=family_error(task.failure_mode)["error_type"],
+        schema_path_hashes=environment.schema_path_hashes()
+        if hasattr(environment, "schema_path_hashes")
+        else {},
+        error_type=_task_error(task)["error_type"],
         error_code=error_code,
         state={"tool_schema_fingerprints": fingerprint.tool_schema_hashes},
     )
@@ -901,7 +1075,11 @@ def _count_incompatible_selected(
                 continue
             compatibility, _ = combine_compatibility(memory, context, None)
             applicability = evaluate_applicability(memory, context)
-            schema_ok = all(
+            # Field-scoped memories are audited by their relevant paths. The
+            # whole-schema check is only a fallback when a memory has no path
+            # evidence; otherwise irrelevant drift would be misreported as
+            # incompatible.
+            schema_ok = bool(memory.content.schema_path_hashes) or all(
                 context.tool_schema_fingerprints.get(tool) == expected
                 for tool, expected in memory.content.tool_schema_fingerprints.items()
                 if tool in context.tool_schema_fingerprints
@@ -916,13 +1094,15 @@ def _count_incompatible_selected(
 
 
 def _relevant_ids(container: Container, workspace_id: str, task: BenchmarkTask) -> set[str]:
+    if task.suite == "v3":
+        return set(task.gold_memory_ids)
     environment = PaginatedApiEnvironment(
         version=task.environment_version, failure_family=task.failure_mode
     )
     expected_environment = environment.fingerprint().environment_id
     with container.services() as services:
         memories = services.memories.list_memories(
-            workspace_id, status=MemoryStatus.ACTIVE, limit=100
+            workspace_id, status=MemoryStatus.ACTIVE, limit=10_000
         )
     return {memory.id for memory in memories if memory.environment_id == expected_environment}
 
@@ -946,6 +1126,66 @@ def _summarize(per_task: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         baseline: _summarize_rows([row for row in per_task if row["baseline"] == baseline])
         for baseline in baselines
+    }
+
+
+def _non_discrimination_warnings(summary: dict[str, Any]) -> list[str]:
+    """Warn when two baselines produce identical results on every reported metric.
+
+    Identical rows usually mean a configuration bug, not a real tie. The guard
+    names the pair instead of silently presenting it as evidence.
+    """
+    metric_keys = (
+        "task_success_rate",
+        "recall_at_3",
+        "mrr",
+        "harmful_transfer_rate",
+        "hard_negative_outrank_rate",
+        "selection_precision",
+        "selection_recall",
+        "false_abstention_rate",
+    )
+    warnings: list[str] = []
+    names = sorted(summary)
+    for index, left in enumerate(names):
+        for right in names[index + 1 :]:
+            left_values = tuple(summary[left].get(key) for key in metric_keys)
+            right_values = tuple(summary[right].get(key) for key in metric_keys)
+            if left_values == right_values:
+                warnings.append(
+                    f"baselines {left!r} and {right!r} have identical reported metrics; "
+                    "check that their retrieval configuration actually differs"
+                )
+    return warnings
+
+
+def _v3_acceptance(per_task: list[dict[str, Any]], split: str) -> dict[str, Any] | None:
+    """Deterministic acceptance gate for the v3 Tier C no-memory requirement."""
+    rows = [
+        row
+        for row in per_task
+        if row.get("baseline") == "no_memory"
+        and row.get("tier") == "C"
+        and row.get("split") == split
+        and not str(row.get("outcome", "")).startswith("provider_")
+    ]
+    if not rows:
+        return None
+    successes = sum(1 for row in rows if row.get("task_success"))
+    rate = successes / len(rows)
+    return {
+        "gate": "tier_c_no_memory_success_rate",
+        "split": split,
+        "tier": "C",
+        "n_tasks": len(rows),
+        "successes": successes,
+        "success_rate": rate,
+        "threshold": 0.5,
+        "passed": rate <= 0.5,
+        "note": (
+            "If this fails, redesign the tasks; do not report the suite as evidence "
+            "that memory is required."
+        ),
     }
 
 
@@ -975,9 +1215,24 @@ def _summarize_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
     )
     successes = [1.0 if row["task_success"] else 0.0 for row in completed]
     lower, upper = bootstrap_ci(successes)
+    cluster_lower, cluster_upper = cluster_bootstrap_ci(completed, value_key="task_success")
+    selectable = [
+        row
+        for row in completed
+        if row.get("should_select", True) and row.get("retrieval_status") != "not_retrieved"
+    ]
+    abstention_cases = [row for row in completed if not row.get("should_select", True)]
+    abstained = [row for row in completed if row.get("abstained")]
+    selection_precisions = [
+        float(row["selection_precision"])
+        for row in completed
+        if row.get("selection_precision") is not None
+    ]
     return {
         "tasks": len(rows),
         "completed_tasks": len(completed),
+        "n_scenarios": len({row.get("scenario_id", row["task_id"]) for row in completed}),
+        "n_runs": len(completed),
         "provider_timeout_count": provider_timeouts,
         "provider_error_count": provider_errors,
         "provider_infrastructure_rate": (
@@ -985,6 +1240,20 @@ def _summarize_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
         ),
         "task_success_rate": mean(successes),
         "task_success_ci95": [lower, upper],
+        "task_success_cluster_ci95": [cluster_lower, cluster_upper],
+        "selection_precision": mean(selection_precisions),
+        "selection_recall": mean([1.0 if row.get("selected_gold") else 0.0 for row in selectable]),
+        "false_abstention_rate": mean(
+            [1.0 if row.get("false_abstention") else 0.0 for row in selectable]
+        ),
+        "abstention_precision": (
+            mean([1.0 if not row.get("should_select", True) else 0.0 for row in abstained])
+            if abstained
+            else 1.0
+        ),
+        "abstention_recall": mean(
+            [1.0 if row.get("abstained") else 0.0 for row in abstention_cases]
+        ),
         "mean_tool_calls": mean([row["tool_calls"] for row in completed]),
         "mean_retries": mean([row["retries"] for row in completed]),
         "mean_provider_retries": mean([row.get("provider_retries", 0) for row in completed]),
@@ -1001,7 +1270,6 @@ def _summarize_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "hard_negative_outrank_rate": mean(
             [1.0 if row["hard_negative_outranked_correct"] else 0.0 for row in rows]
         ),
-        "false_abstention_rate": mean([1.0 if row["false_abstention"] else 0.0 for row in rows]),
         "total_incompatible_selected": sum(row["incompatible_selected"] for row in rows),
     }
 
@@ -1150,6 +1418,41 @@ def _render_markdown(payload: dict[str, Any]) -> str:
             "",
             "Provider timeouts and provider errors are infrastructure outcomes. They are excluded "
             "from the success-rate denominator and reported separately below.",
+            "",
+            "## Selection, abstention, and tiers",
+            "",
+            "| baseline | n scenarios | n runs | selection precision | selection recall | "
+            "abstention precision | abstention recall | false abstention | cluster 95% CI |",
+            "|---|---|---|---|---|---|---|---|---|",
+        ]
+    )
+    for baseline, stats in payload["summary"].items():
+        lines.append(
+            f"| {baseline} | {stats.get('n_scenarios', stats['tasks'])} | "
+            f"{stats.get('n_runs', stats['completed_tasks'])} | "
+            f"{stats.get('selection_precision', 0.0):.3f} | "
+            f"{stats.get('selection_recall', 0.0):.3f} | "
+            f"{stats.get('abstention_precision', 0.0):.3f} | "
+            f"{stats.get('abstention_recall', 0.0):.3f} | "
+            f"{stats.get('false_abstention_rate', 0.0):.3f} | "
+            f"[{stats.get('task_success_cluster_ci95', [0.0, 0.0])[0]:.3f}, "
+            f"{stats.get('task_success_cluster_ci95', [0.0, 0.0])[1]:.3f}] |"
+        )
+    acceptance = payload.get("acceptance")
+    if acceptance:
+        lines.extend(
+            [
+                "",
+                f"**v3 acceptance gate:** Tier {acceptance['tier']} `no_memory` success "
+                f"{acceptance['successes']}/{acceptance['n_tasks']} "
+                f"({acceptance['success_rate']:.3f}); threshold <= {acceptance['threshold']:.2f}; "
+                f"{'PASS' if acceptance['passed'] else 'FAIL'}.",
+            ]
+        )
+    for warning_text in payload.get("warnings") or []:
+        lines.append(f"\n> Warning: {warning_text}")
+    lines.extend(
+        [
             "",
             "## Inference reliability",
             "",

@@ -284,13 +284,15 @@ MemoryShiftService.on_incompatible_environment(memory, environment)
 See the README capability table and `docs/evidence/phase1-summary.md` for the
 evidence-backed list. The architecturally significant gaps are:
 
-- no always-on scheduler: the outbox worker (`recap search drain`) is pull-based and
-  revalidation jobs are processed on demand
+- no always-on scheduler for revalidation jobs; the outbox has an explicit daemon
+  (`recap search worker`) but no scheduler for drift-triggered revalidation
 - run-level snapshots are enforced only when retrieval carries a `run_id`; the benchmark
   currently relies on a read-only workspace rather than creating a run per task
-- the deterministic reference agent still drives the reproducible demo and benchmark; the
-  configured `llm` role now drives a separate tool-using agent (`recap agent run`), but the
-  benchmark has not been run with it
+- the deterministic reference agent still drives the reproducible demo and headline
+  benchmark; the configured `llm` role drives separate live v2/v3 runs, which are reported
+  with their exact model and timeouts but are not part of CI
 - live-provider acceptance requires an operator-configured endpoint and is not exercised by CI
-- benchmark reports currently use deterministic/hashing components, not real-model numbers
-- no authentication layer; `workspace_id` is a data boundary, not an identity
+- benchmark reports mix deterministic and live artifacts; provenance is recorded per report,
+  and the deterministic headline must not be cited as a live-model number
+- API auth is an optional shared key; `workspace_id` remains a data boundary, not a verified
+  identity, and there is no RBAC or rate limiting

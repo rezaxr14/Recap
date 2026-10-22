@@ -29,6 +29,7 @@ class RetrievalContext(BaseModel):
     tool_names: list[str] = Field(default_factory=list)
     tool_versions: dict[str, str] = Field(default_factory=dict)
     tool_schema_fingerprints: dict[str, str] = Field(default_factory=dict)
+    schema_path_hashes: dict[str, str] = Field(default_factory=dict)
     error_type: str = ""
     error_code: str = ""
     error_message: str = ""

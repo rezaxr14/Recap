@@ -54,6 +54,9 @@ class MemoryContent(BaseModel):
     tool_names: list[str] = Field(default_factory=list)
     tool_versions: dict[str, str] = Field(default_factory=dict)
     tool_schema_fingerprints: dict[str, str] = Field(default_factory=dict)
+    # Field-scoped compatibility: hashes of only the schema paths this strategy
+    # depends on. Empty means "fall back to the whole tool-schema hash".
+    schema_path_hashes: dict[str, str] = Field(default_factory=dict)
     environment_constraints: dict[str, str] = Field(default_factory=dict)
     environment_type: str = ""
     preconditions: list[Predicate] = Field(default_factory=list)

@@ -54,6 +54,14 @@ remaining failure is model/provider behavior, not a hidden unit-test result. A f
 try the configured `llama-3.2-3b-instruct` role or a smaller repair schema before treating LLM
 repair generation as production-ready.
 
+> **Superseded for the exact Phase 2.3 configuration:** after adding streaming, per-phase
+> deadlines, bounded format retries, operator aliases, and stricter prompt guidance, the same
+> local gemma model passed 4/4 repair-generation runs (schema, static, and mock-sandbox). The
+> negative result above is kept as historical evidence; see
+> [`phase2-inference-reliability.md`](phase2-inference-reliability.md) and
+> `phase2-repair-generator-gemma-final.json` for the superseding run. This is still a small
+> single-model acceptance run, not a general model-quality claim.
+
 ## Index generation rebuild
 
 Implementation: `recap search reindex --to-generation vN`.

@@ -46,6 +46,12 @@ class AgentRunResult:
     input_tokens: int = 0
     output_tokens: int = 0
     duration_ms: int = 0
+    # Provider-call accounting is separate from tool retries. A timeout or
+    # rate-limit must not be silently reported as a model reasoning failure.
+    provider_attempts: int = 0
+    provider_retries: int = 0
+    first_token_ms: float | None = None
+    provider_error_type: str | None = None
 
 
 class ReferenceAgent:

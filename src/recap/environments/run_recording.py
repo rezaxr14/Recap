@@ -143,6 +143,9 @@ def complete_recorded_run(
                 "model_turns": agent_result.model_turns,
                 "input_tokens": agent_result.input_tokens,
                 "output_tokens": agent_result.output_tokens,
+                "provider_attempts": agent_result.provider_attempts,
+                "provider_retries": agent_result.provider_retries,
+                "first_token_ms": agent_result.first_token_ms,
             },
         )
         memory_id = _memory_id(memory)

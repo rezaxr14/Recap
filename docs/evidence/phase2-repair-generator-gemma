@@ -1,0 +1,104 @@
+{
+  "generated_at": "2026-10-22T00:26:31.074178+00:00",
+  "kind": "live_repair_generator_acceptance",
+  "model": {
+    "provider": "openai_compatible",
+    "model_id": "gemma-4-e4b-uncensored-hauhaucs-aggressive",
+    "base_url": "http://localhost:1234/v1",
+    "generator": "llm",
+    "max_attempts": 2
+  },
+  "runs": 4,
+  "generation": {
+    "schema_successes": 0,
+    "attempts": 8,
+    "retries": 4,
+    "format_failures": 8,
+    "schema_success_rate": 0.0,
+    "format_failure_rate": 1.0,
+    "provider_errors": 4,
+    "provider_error_breakdown": {
+      "ValidationError": 4
+    }
+  },
+  "candidates": {
+    "count": 0,
+    "candidate_rate": 0.0,
+    "static_passed": 0,
+    "static_pass_rate": 0.0,
+    "sandbox_passed": 0,
+    "sandbox_pass_rate": 0.0,
+    "end_to_end_pass_rate": 0.0
+  },
+  "elapsed_ms": 385826,
+  "results": [
+    {
+      "workspace_id": "repair-acceptance-2dff027202",
+      "environment_version": "1",
+      "run_id": "run_5310b60b79164c2ea464ece7dafc11f2",
+      "generation_error": "ValidationError: invalid candidate schema after 2 attempt(s): 4 validation errors for CandidateDraft\npreconditions.0.operator\n  Value error, unsupported predicate operator: 'equals' [type=value_error, input_value='equals', input_type=str]\n    For further information visit https://errors.pydantic.dev/2.13/v/value_error\npreconditions.1.operator\n  Value error, unsupported predicate operator: 'equals' [type=value_error, input_value='equals', input_type=str]\n    For further information visit https://errors.pydantic.dev/2.13/v/value_error\npostconditions.0.operator\n  Value error, unsupported predicate operator: 'not_equals' [type=value_error, input_value='not_equals', input_type=str]\n    For further information visit https://errors.pydantic.dev/2.13/v/value_error\npostconditions.1.operator\n  Value error, unsupported predicate operator: 'equals' [type=value_error, input_value='equals', input_type=str]\n    For further information visit https://errors.pydantic.dev/2.13/v/value_error",
+      "candidates": 0,
+      "static_passed": 0,
+      "sandbox_passed": 0,
+      "validation_checks": [],
+      "generation": {
+        "calls": 1,
+        "attempts": 2,
+        "format_failures": 2,
+        "successes": 0,
+        "last_error": "4 validation errors for CandidateDraft\npreconditions.0.operator\n  Value error, unsupported predicate operator: 'equals' [type=value_error, input_value='equals', input_type=str]\n    For further information visit https://errors.pydantic.dev/2.13/v/value_error\npreconditions.1.operator\n  Value error, unsupported predicate operator: 'equals' [type=value_error, input_value='equals', input_type=str]\n    For further information visit https://errors.pydantic.dev/2.13/v/value_error\npostconditions.0.operator\n  Value error, unsupported predicate operator: 'not_equals' [type=value_error, input_value='not_equals', input_type=str]\n    For further information visit https://errors.pydantic.dev/2.13/v/value_error\npostconditions.1.operator\n  Value error, unsupported predicate operator: 'equals' [type=value_error, input_value='equals', input_type=str]\n    For further information visit https://errors.pydantic.dev/2.13/v/value_error"
+      }
+    },
+    {
+      "workspace_id": "repair-acceptance-6fe739963c",
+      "environment_version": "2",
+      "run_id": "run_f8a07a91b8ec421993d30641aef028e8",
+      "generation_error": "ValidationError: invalid candidate schema after 2 attempt(s): 4 validation errors for CandidateDraft\npreconditions.0.operator\n  Value error, unsupported predicate operator: 'equals' [type=value_error, input_value='equals', input_type=str]\n    For further information visit https://errors.pydantic.dev/2.13/v/value_error\npreconditions.1.operator\n  Value error, unsupported predicate operator: 'equals' [type=value_error, input_value='equals', input_type=str]\n    For further information visit https://errors.pydantic.dev/2.13/v/value_error\npostconditions.0.operator\n  Value error, unsupported predicate operator: 'equals' [type=value_error, input_value='equals', input_type=str]\n    For further information visit https://errors.pydantic.dev/2.13/v/value_error\npostconditions.1.operator\n  Value error, unsupported predicate operator: 'not_equals' [type=value_error, input_value='not_equals', input_type=str]\n    For further information visit https://errors.pydantic.dev/2.13/v/value_error",
+      "candidates": 0,
+      "static_passed": 0,
+      "sandbox_passed": 0,
+      "validation_checks": [],
+      "generation": {
+        "calls": 1,
+        "attempts": 2,
+        "format_failures": 2,
+        "successes": 0,
+        "last_error": "4 validation errors for CandidateDraft\npreconditions.0.operator\n  Value error, unsupported predicate operator: 'equals' [type=value_error, input_value='equals', input_type=str]\n    For further information visit https://errors.pydantic.dev/2.13/v/value_error\npreconditions.1.operator\n  Value error, unsupported predicate operator: 'equals' [type=value_error, input_value='equals', input_type=str]\n    For further information visit https://errors.pydantic.dev/2.13/v/value_error\npostconditions.0.operator\n  Value error, unsupported predicate operator: 'equals' [type=value_error, input_value='equals', input_type=str]\n    For further information visit https://errors.pydantic.dev/2.13/v/value_error\npostconditions.1.operator\n  Value error, unsupported predicate operator: 'not_equals' [type=value_error, input_value='not_equals', input_type=str]\n    For further information visit https://errors.pydantic.dev/2.13/v/value_error"
+      }
+    },
+    {
+      "workspace_id": "repair-acceptance-0867460a81",
+      "environment_version": "1",
+      "run_id": "run_583396c92af84d59a3e9ca9b6a4e96a7",
+      "generation_error": "ValidationError: invalid candidate schema after 2 attempt(s): 4 validation errors for CandidateDraft\npreconditions.0.operator\n  Value error, unsupported predicate operator: 'equals' [type=value_error, input_value='equals', input_type=str]\n    For further information visit https://errors.pydantic.dev/2.13/v/value_error\npreconditions.1.operator\n  Value error, unsupported predicate operator: 'equals' [type=value_error, input_value='equals', input_type=str]\n    For further information visit https://errors.pydantic.dev/2.13/v/value_error\npostconditions.0.operator\n  Value error, unsupported predicate operator: 'equals' [type=value_error, input_value='equals', input_type=str]\n    For further information visit https://errors.pydantic.dev/2.13/v/value_error\npostconditions.1.operator\n  Value error, unsupported predicate operator: 'not_equals' [type=value_error, input_value='not_equals', input_type=str]\n    For further information visit https://errors.pydantic.dev/2.13/v/value_error",
+      "candidates": 0,
+      "static_passed": 0,
+      "sandbox_passed": 0,
+      "validation_checks": [],
+      "generation": {
+        "calls": 1,
+        "attempts": 2,
+        "format_failures": 2,
+        "successes": 0,
+        "last_error": "4 validation errors for CandidateDraft\npreconditions.0.operator\n  Value error, unsupported predicate operator: 'equals' [type=value_error, input_value='equals', input_type=str]\n    For further information visit https://errors.pydantic.dev/2.13/v/value_error\npreconditions.1.operator\n  Value error, unsupported predicate operator: 'equals' [type=value_error, input_value='equals', input_type=str]\n    For further information visit https://errors.pydantic.dev/2.13/v/value_error\npostconditions.0.operator\n  Value error, unsupported predicate operator: 'equals' [type=value_error, input_value='equals', input_type=str]\n    For further information visit https://errors.pydantic.dev/2.13/v/value_error\npostconditions.1.operator\n  Value error, unsupported predicate operator: 'not_equals' [type=value_error, input_value='not_equals', input_type=str]\n    For further information visit https://errors.pydantic.dev/2.13/v/value_error"
+      }
+    },
+    {
+      "workspace_id": "repair-acceptance-b26abab4eb",
+      "environment_version": "2",
+      "run_id": "run_8e87c7fe582045dc80c2792a26a1c28d",
+      "generation_error": "ValidationError: invalid candidate schema after 2 attempt(s): 3 validation errors for CandidateDraft\npreconditions.0.operator\n  Value error, unsupported predicate operator: 'equals' [type=value_error, input_value='equals', input_type=str]\n    For further information visit https://errors.pydantic.dev/2.13/v/value_error\npreconditions.1.operator\n  Value error, unsupported predicate operator: 'equals' [type=value_error, input_value='equals', input_type=str]\n    For further information visit https://errors.pydantic.dev/2.13/v/value_error\npostconditions.0.operator\n  Value error, unsupported predicate operator: 'equals' [type=value_error, input_value='equals', input_type=str]\n    For further information visit https://errors.pydantic.dev/2.13/v/value_error",
+      "candidates": 0,
+      "static_passed": 0,
+      "sandbox_passed": 0,
+      "validation_checks": [],
+      "generation": {
+        "calls": 1,
+        "attempts": 2,
+        "format_failures": 2,
+        "successes": 0,
+        "last_error": "3 validation errors for CandidateDraft\npreconditions.0.operator\n  Value error, unsupported predicate operator: 'equals' [type=value_error, input_value='equals', input_type=str]\n    For further information visit https://errors.pydantic.dev/2.13/v/value_error\npreconditions.1.operator\n  Value error, unsupported predicate operator: 'equals' [type=value_error, input_value='equals', input_type=str]\n    For further information visit https://errors.pydantic.dev/2.13/v/value_error\npostconditions.0.operator\n  Value error, unsupported predicate operator: 'equals' [type=value_error, input_value='equals', input_type=str]\n    For further information visit https://errors.pydantic.dev/2.13/v/value_error"
+      }
+    }
+  ]
+}

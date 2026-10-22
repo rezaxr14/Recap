@@ -52,6 +52,19 @@ All notable changes to this project are documented here. The format follows
 - Phase 3 live-model evidence for the v2 dev and held-out test splits, with exact model,
   prompt, temperature, seed, tool budget, embedding fingerprint, token cost, and a documented
   ceiling effect: `no_memory` succeeds on every task in both splits.
+- SSE streaming for OpenAI-compatible chat, including tool-call delta reassembly, first-token
+  timing, optional usage, clean stream cancellation, and a non-streaming JSON fallback for
+  compatible servers.
+- Per-phase provider deadlines (connect, read, write, pool, overall, no-progress), bounded
+  output, bounded format retries, and configurable local chat concurrency.
+- Provider attempt/retry/TTFT accounting on `ChatResult`, agent runs, persisted run events, and
+  benchmark rows/reports. Provider infrastructure outcomes are excluded from the benchmark
+  success denominator and reported separately.
+- Live repair-generation acceptance evidence at
+  `docs/evidence/phase2-inference-reliability.md`: 4/4 schema-valid candidates, 4/4 static and
+  mock-sandbox passes with the recorded gemma configuration.
+- `ProviderTimeout` (`provider_timeout`, HTTP 504) distinguishes a stalled/timed-out endpoint
+  from an unreachable or rejecting one.
 
 ### Changed
 
@@ -70,6 +83,13 @@ All notable changes to this project are documented here. The format follows
   evidence is now distinguished from CI coverage.
 - Local Compose services now use `restart: "no"` so they do not return at Docker/Windows
   startup; integration runs start them explicitly and stop them afterward.
+- Chat requests stream by default and are serialized per local role. The default agent output
+  cap is 512 tokens; the repair role is capped at 1024.
+- Benchmark resume signatures now include inference settings, so a timeout, streaming, or
+  output-cap change cannot silently reuse rows produced under different settings.
+- Repair generation accepts the unambiguous model aliases `equals`/`not_equals` and normalizes
+  them to `eq`/`neq`; the prompt also states the exact allowed operators, fields, and required
+  schema-fingerprint precondition.
 
 ### Fixed
 
@@ -104,9 +124,13 @@ All notable changes to this project are documented here. The format follows
 - The dev split is intentionally small; the `naive_fixed` vs `event_aware` chunk ablation is
   degenerate until same-environment distractors and paraphrase queries are added.
 - Live model-endpoint tests are opt-in and are not run in CI.
-- Live repair-candidate generation with `gemma-4-e4b-uncensored-hauhaucs-aggressive` produced
-  no schema-valid candidates (provider timeouts/rejections); the deterministic generator is
-  still the default.
+- Live repair-candidate generation with `gemma-4-e4b-uncensored-hauhaucs-aggressive` passed
+  4/4 runs on one local machine after streaming and timeout fixes. This is a small acceptance
+  run, not a multi-model reliability estimate; the deterministic generator is still the
+  default.
+- The streaming endpoint did not report completion-token usage in the doctor probes, so token
+  throughput is reported as `null`; the recommended read timeout shown by `recap doctor
+  --live` is a conservative heuristic.
 - The CrossEncoder reranker is measured for latency, but the current two-task dev split cannot
   support a quality comparison.
 - There is no multi-tenant authentication/RBAC layer; deploy behind your own gateway.

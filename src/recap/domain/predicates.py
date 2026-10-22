@@ -29,6 +29,21 @@ ALLOWED_OPERATORS = {
     "matches",
 }
 
+# Common model-generated synonyms. Accepting an unambiguous alias is safer than
+# rejecting an otherwise valid proposal and asking a slow local model to rewrite
+# the whole object. The canonical form is stored so evaluation stays uniform.
+_OPERATOR_ALIASES = {
+    "equals": "eq",
+    "equal": "eq",
+    "==": "eq",
+    "not_equals": "neq",
+    "not_equal": "neq",
+    "!=": "neq",
+    "not in": "not_in",
+    ">=": "gte",
+    "<=": "lte",
+}
+
 _FIELD_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_.]{0,127}$")
 _VERSION_RE = re.compile(r"^[0-9]+(\.[0-9]+){0,3}$")
 
@@ -53,9 +68,10 @@ class Predicate(BaseModel):
     @field_validator("operator")
     @classmethod
     def _safe_operator(cls, value: str) -> str:
-        if value not in ALLOWED_OPERATORS:
+        normalized = _OPERATOR_ALIASES.get(value.strip().lower(), value.strip().lower())
+        if normalized not in ALLOWED_OPERATORS:
             raise ValueError(f"unsupported predicate operator: {value!r}")
-        return value
+        return normalized
 
     @model_validator(mode="after")
     def _validate_value(self) -> Predicate:

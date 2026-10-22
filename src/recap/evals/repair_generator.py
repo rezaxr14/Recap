@@ -139,6 +139,17 @@ def run_repair_generator_acceptance(
     error_breakdown = Counter(
         item.generation_error.split(":", 1)[0] for item in results if item.generation_error
     )
+    infrastructure_errors = sum(
+        count
+        for error_type, count in error_breakdown.items()
+        if error_type
+        in {
+            "ProviderTimeout",
+            "ProviderUnavailable",
+            "ProviderAuthenticationError",
+            "ProviderResponseError",
+        }
+    )
     report: dict[str, Any] = {
         "generated_at": datetime.now(UTC).isoformat(),
         "kind": "live_repair_generator_acceptance",
@@ -148,6 +159,18 @@ def run_repair_generator_acceptance(
             "base_url": settings.repair_llm.base_url,
             "generator": settings.repair_compiler.generator,
             "max_attempts": settings.repair_compiler.max_candidate_generation_attempts,
+            "inference": {
+                "stream": settings.repair_llm.stream,
+                "max_concurrency": settings.repair_llm.max_concurrency,
+                "max_tokens": settings.repair_llm.max_tokens,
+                "max_retries": settings.repair_llm.max_retries,
+                "connect_timeout_seconds": settings.repair_llm.connect_timeout_seconds,
+                "read_timeout_seconds": settings.repair_llm.effective_read_timeout,
+                "write_timeout_seconds": settings.repair_llm.write_timeout_seconds,
+                "pool_timeout_seconds": settings.repair_llm.pool_timeout_seconds,
+                "overall_timeout_seconds": settings.repair_llm.overall_timeout_seconds,
+                "no_progress_timeout_seconds": settings.repair_llm.no_progress_timeout_seconds,
+            },
         },
         "runs": calls,
         "generation": {
@@ -157,8 +180,22 @@ def run_repair_generator_acceptance(
             "format_failures": format_failures,
             "schema_success_rate": _rate(generation_successes, calls),
             "format_failure_rate": _rate(format_failures, attempts),
-            "provider_errors": sum(error_breakdown.values()),
-            "provider_error_breakdown": dict(sorted(error_breakdown.items())),
+            "provider_errors": infrastructure_errors,
+            "generation_errors": sum(error_breakdown.values()),
+            "generation_error_breakdown": dict(sorted(error_breakdown.items())),
+            # Backwards-compatible alias for older evidence readers. It now
+            # contains only infrastructure/provider failures, not schema errors.
+            "provider_error_breakdown": {
+                error_type: count
+                for error_type, count in sorted(error_breakdown.items())
+                if error_type
+                in {
+                    "ProviderTimeout",
+                    "ProviderUnavailable",
+                    "ProviderAuthenticationError",
+                    "ProviderResponseError",
+                }
+            },
         },
         "candidates": {
             "count": candidates_total,

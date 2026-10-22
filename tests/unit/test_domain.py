@@ -141,6 +141,13 @@ def test_predicate_rejects_unsafe_expression_fields() -> None:
         Predicate(field="a", operator="eval", value="1+1")
 
 
+def test_predicate_normalizes_unambiguous_model_generated_operator_aliases() -> None:
+    assert Predicate(field="a", operator="equals", value=1).operator == "eq"
+    assert Predicate(field="a", operator=" NOT_EQUALS ", value=1).operator == "neq"
+    with pytest.raises(ValueError, match="unsupported predicate operator"):
+        Predicate(field="a", operator="approximately", value=1)
+
+
 # ------------------------------------------------------------------ lifecycle
 def test_memory_transition_table_rejects_illegal_moves() -> None:
     memory = _memory(status=MemoryStatus.DRAFT)

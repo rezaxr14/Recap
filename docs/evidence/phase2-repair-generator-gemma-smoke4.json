@@ -1,0 +1,53 @@
+{
+  "generated_at": "2026-10-22T00:32:26.446855+00:00",
+  "kind": "live_repair_generator_acceptance",
+  "model": {
+    "provider": "openai_compatible",
+    "model_id": "gemma-4-e4b-uncensored-hauhaucs-aggressive",
+    "base_url": "http://localhost:1234/v1",
+    "generator": "llm",
+    "max_attempts": 2
+  },
+  "runs": 1,
+  "generation": {
+    "schema_successes": 0,
+    "attempts": 1,
+    "retries": 0,
+    "format_failures": 0,
+    "schema_success_rate": 0.0,
+    "format_failure_rate": 0.0,
+    "provider_errors": 1,
+    "provider_error_breakdown": {
+      "ProviderResponseError": 1
+    }
+  },
+  "candidates": {
+    "count": 0,
+    "candidate_rate": 0.0,
+    "static_passed": 0,
+    "static_pass_rate": 0.0,
+    "sandbox_passed": 0,
+    "sandbox_pass_rate": 0.0,
+    "end_to_end_pass_rate": 0.0
+  },
+  "elapsed_ms": 46884,
+  "results": [
+    {
+      "workspace_id": "repair-acceptance-f4f880526c",
+      "environment_version": "1",
+      "run_id": "run_c46b9f0ace474198b30baf5fca9ad33d",
+      "generation_error": "ProviderResponseError: provider structured output is not valid JSON",
+      "candidates": 0,
+      "static_passed": 0,
+      "sandbox_passed": 0,
+      "validation_checks": [],
+      "generation": {
+        "calls": 1,
+        "attempts": 1,
+        "format_failures": 0,
+        "successes": 0,
+        "last_error": ""
+      }
+    }
+  ]
+}

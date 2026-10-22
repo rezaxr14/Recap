@@ -44,6 +44,11 @@ embeddings:
   base_url: ""
   api_key: ""
   timeout_seconds: 30.0
+  connect_timeout_seconds: 10.0
+  read_timeout_seconds: 120.0
+  write_timeout_seconds: 30.0
+  pool_timeout_seconds: 30.0
+  overall_timeout_seconds: 300.0
   max_retries: 2
   retry_backoff_seconds: 0.5
   send_dimensions: false
@@ -65,12 +70,25 @@ llm:
   base_url: ""
   api_key: ""
   model: ""
+  # Per-phase timeouts in seconds. A slow local model is not a dead socket:
+  # connect/upload are short, while a long generation gets a generous read and
+  # overall deadline. Streams are cancelled cleanly when no new token arrives
+  # for no_progress_timeout_seconds.
   timeout_seconds: 60.0
+  connect_timeout_seconds: 10.0
+  read_timeout_seconds: 600.0
+  write_timeout_seconds: 30.0
+  pool_timeout_seconds: 30.0
+  overall_timeout_seconds: 900.0
+  no_progress_timeout_seconds: 180.0
   max_retries: 2
   retry_backoff_seconds: 0.5
   temperature: 0.0
-  max_tokens: 0
+  max_tokens: 512
   structured_mode: json_schema
+  stream: true
+  # LM Studio and llama.cpp normally serve one generation at a time.
+  max_concurrency: 1
 
 repair_llm:
   # Optional LLM used only for typed repair-candidate proposals. Output is
@@ -81,12 +99,21 @@ repair_llm:
   base_url: ""
   api_key: ""
   model: ""
-  timeout_seconds: 60.0
+  timeout_seconds: 120.0
+  connect_timeout_seconds: 10.0
+  read_timeout_seconds: 600.0
+  write_timeout_seconds: 30.0
+  pool_timeout_seconds: 30.0
+  overall_timeout_seconds: 1200.0
+  no_progress_timeout_seconds: 240.0
   max_retries: 2
   retry_backoff_seconds: 0.5
   temperature: 0.0
-  max_tokens: 0
+  # Structured repair proposals are larger than a tool call, but still bounded.
+  max_tokens: 1024
   structured_mode: json_schema
+  stream: true
+  max_concurrency: 1
 
 recall:
   default_mode: outcome_aware

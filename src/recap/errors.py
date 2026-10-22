@@ -73,6 +73,13 @@ class ProviderUnavailable(RecapError):
     http_status = 503
 
 
+class ProviderTimeout(ProviderUnavailable):
+    """The provider did not finish, or stopped making progress, within a deadline."""
+
+    code = "provider_timeout"
+    http_status = 504
+
+
 class ProviderAuthenticationError(RecapError):
     """The provider rejected the configured credentials."""
 

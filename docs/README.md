@@ -11,6 +11,7 @@ the code and its tests are authoritative and the document should be fixed in the
 | [`evidence/phase1-summary.md`](evidence/phase1-summary.md) | Evidence-backed implementation state, live-run results, and known limits |
 | [`benchmark-v2.md`](benchmark-v2.md) | Ten-family task suite, hard negatives, fair baselines, leakage checks, and limitations |
 | [`evidence/phase2-summary.md`](evidence/phase2-summary.md) | Measured benchmark v2 dev results and live new-family model runs |
+| [`evidence/phase2-inference-reliability.md`](evidence/phase2-inference-reliability.md) | Streaming/timeout changes, live doctor metrics, and 4/4 repair-generation acceptance |
 | [`evidence/phase3-llm-dev-core/summary.md`](evidence/phase3-llm-dev-core/summary.md) | Live-model benchmark on the v2 dev split, four core baselines, ceiling effect, and limits |
 | [`evidence/phase3-llm-test-core/summary.md`](evidence/phase3-llm-test-core/summary.md) | Live-model benchmark on the held-out v2 test split, four core baselines, and cache caveat |
 | [`architecture.md`](architecture.md) | Components, data flow, and the separation between retrieval and selection |

@@ -130,6 +130,10 @@ class LlmAgent:
             result.model_turns += 1
             result.input_tokens += response.usage.prompt_tokens
             result.output_tokens += response.usage.completion_tokens
+            result.provider_attempts += response.attempts
+            result.provider_retries += response.retries
+            if response.first_token_ms is not None and result.first_token_ms is None:
+                result.first_token_ms = response.first_token_ms
 
             if not response.tool_calls:
                 result.final_error = response.content.strip() or (

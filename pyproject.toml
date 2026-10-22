@@ -82,7 +82,9 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-ra"
+# Unit and integration suites intentionally share a few test basenames. Importlib
+# mode keeps a single full-suite invocation from confusing the two modules.
+addopts = "-ra --import-mode=importlib"
 # Make `tests.*` importable regardless of whether pytest is invoked as a
 # console script or via `python -m pytest`.
 pythonpath = ["."]

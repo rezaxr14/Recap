@@ -19,8 +19,10 @@ from recap.errors import (
     EmbeddingUnavailable,
     ProviderAuthenticationError,
     ProviderResponseError,
+    ProviderTimeout,
     ProviderUnavailable,
 )
+from recap.providers.base import ChatMessage
 from recap.providers.openai_compatible import (
     OpenAICompatibleChatProvider,
     OpenAICompatibleClient,
@@ -35,6 +37,7 @@ def _chat_settings(**overrides: object) -> LlmSettings:
         "provider": "openai_compatible",
         "base_url": "http://provider.test/v1",
         "model": "chat-model",
+        "stream": False,
         "max_retries": 0,
         "retry_backoff_seconds": 0.0,
     }
@@ -478,6 +481,202 @@ def test_transport_error_raises_unavailable() -> None:
     finally:
         client.close()
     assert error.value.details["attempts"] == 1
+
+
+# ----------------------------------------------------------------- streaming
+def _sse(*events: dict[str, object]) -> bytes:
+    body = "".join(f"data: {json.dumps(event)}\n\n" for event in events)
+    return (body + "data: [DONE]\n\n").encode()
+
+
+def _stream_provider(handler: Handler, **settings: object) -> OpenAICompatibleChatProvider:
+    return _provider(handler, stream=True, **settings)
+
+
+def test_streaming_content_usage_and_first_token_are_parsed() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["accept"] == "text/event-stream"
+        payload = json.loads(request.content)
+        assert payload["stream"] is True
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            content=_sse(
+                {
+                    "choices": [
+                        {"delta": {"role": "assistant", "content": "hel"}, "finish_reason": None}
+                    ]
+                },
+                {"choices": [{"delta": {"content": "lo"}, "finish_reason": None}]},
+                {
+                    "choices": [{"delta": {}, "finish_reason": "stop"}],
+                    "usage": {"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7},
+                },
+            ),
+        )
+
+    result = _stream_provider(handler).chat(
+        [ChatMessage(role="user", content="say hi")], max_tokens=16
+    )
+
+    assert result.content == "hello"
+    assert result.tool_calls == []
+    assert result.usage.total_tokens == 7
+    assert result.finish_reason == "stop"
+    assert result.streamed is True
+    assert result.first_token_ms is not None
+    assert result.attempts == 1
+
+
+def test_streaming_tool_call_deltas_are_reassembled() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            content=_sse(
+                {
+                    "choices": [
+                        {
+                            "delta": {
+                                "tool_calls": [
+                                    {
+                                        "index": 0,
+                                        "id": "call_1",
+                                        "type": "function",
+                                        "function": {"name": "list_rec", "arguments": ""},
+                                    }
+                                ]
+                            },
+                            "finish_reason": None,
+                        }
+                    ]
+                },
+                {
+                    "choices": [
+                        {
+                            "delta": {
+                                "tool_calls": [
+                                    {
+                                        "index": 0,
+                                        "function": {"name": "ords", "arguments": '{"tenant":'},
+                                    }
+                                ]
+                            },
+                            "finish_reason": None,
+                        }
+                    ]
+                },
+                {
+                    "choices": [
+                        {
+                            "delta": {
+                                "tool_calls": [{"index": 0, "function": {"arguments": '"acme"}'}}]
+                            },
+                            "finish_reason": "tool_calls",
+                        }
+                    ]
+                },
+            ),
+        )
+
+    result = _stream_provider(handler).chat(
+        [ChatMessage(role="user", content="collect")], max_tokens=64
+    )
+
+    assert len(result.tool_calls) == 1
+    assert result.tool_calls[0].id == "call_1"
+    assert result.tool_calls[0].name == "list_records"
+    assert result.tool_calls[0].arguments == {"tenant": "acme"}
+
+
+def test_stream_that_stalls_is_cancelled_as_a_provider_timeout() -> None:
+    import time
+
+    def body():
+        yield b'data: {"choices":[{"delta":{"content":"a"},"finish_reason":null}]}\n\n'
+        time.sleep(0.05)
+        yield b'data: {"choices":[{"delta":{"content":"b"},"finish_reason":null}]}\n\n'
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, headers={"content-type": "text/event-stream"}, content=body())
+
+    provider = _stream_provider(handler, no_progress_timeout_seconds=0.01)
+    with pytest.raises(ProviderTimeout) as error:
+        provider.chat([ChatMessage(role="user", content="hello")], max_tokens=16)
+    assert "progress" in error.value.message
+
+
+def test_slow_but_progressing_stream_is_not_treated_as_stalled() -> None:
+    import time
+
+    def body():
+        yield b'data: {"choices":[{"delta":{"content":"a"},"finish_reason":null}]}\n\n'
+        time.sleep(0.02)
+        yield b'data: {"choices":[{"delta":{"content":"b"},"finish_reason":"stop"}]}\n\n'
+        yield b"data: [DONE]\n\n"
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, headers={"content-type": "text/event-stream"}, content=body())
+
+    provider = _stream_provider(handler, no_progress_timeout_seconds=0.1)
+    result = provider.chat([ChatMessage(role="user", content="hello")], max_tokens=16)
+    assert result.content == "ab"
+
+
+def test_stream_retries_are_counted_in_the_result() -> None:
+    calls = {"count": 0}
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return httpx.Response(503, json={"error": "busy"})
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            content=_sse({"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]}),
+        )
+
+    provider = _stream_provider(handler, max_retries=1)
+    result = provider.chat([ChatMessage(role="user", content="hello")], max_tokens=16)
+
+    assert result.content == "ok"
+    assert result.attempts == 2
+    assert result.retries == 1
+    assert calls["count"] == 2
+
+
+def test_streaming_accepts_a_single_non_streaming_json_response() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"content-type": "application/json"},
+            json={
+                "choices": [
+                    {
+                        "message": {"role": "assistant", "content": "plain"},
+                        "finish_reason": "stop",
+                    }
+                ]
+            },
+        )
+
+    result = _stream_provider(handler).chat(
+        [ChatMessage(role="user", content="hello")], max_tokens=16
+    )
+    assert result.content == "plain"
+
+
+def test_stream_payload_is_serialized_and_local_inference_is_single_worker() -> None:
+    settings = _chat_settings(stream=True, max_concurrency=1)
+    provider = OpenAICompatibleChatProvider(settings=settings)
+    assert provider.capabilities.streaming is True
+    assert provider.max_concurrency == 1
+    provider.close()
+
+
+def test_stream_no_progress_timeout_must_be_positive() -> None:
+    with pytest.raises(Exception, match="no_progress_timeout_seconds"):
+        _chat_settings(no_progress_timeout_seconds=0)
 
 
 # ------------------------------------------------------------------- config

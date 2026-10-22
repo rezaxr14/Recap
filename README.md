@@ -56,7 +56,7 @@ Elasticsearch 8.19.3 node. There are no stub endpoints in the implemented paths.
 | Static + executing mock-sandbox validators | Working | `tests/unit/test_repair_compiler.py` |
 | Promotion gate (no bypass path) | Working | `tests/unit/test_repair_compiler.py`, `tests/integration/test_api.py` |
 | MemoryShift drift detection + revalidation queue | Working | `tests/integration/test_postgres.py`, demo step 8 |
-| Benchmark v2 (10 failure families, 120 tasks, family-held-out splits) | Implemented; dev split run with real nomic embeddings; test split not yet run | `tests/unit/test_benchmark_v2.py`, `tests/integration/test_benchmark_v2.py`, `docs/benchmark-v2.md`, `docs/evidence/phase2-summary.md` |
+| Benchmark v2 (10 failure families, 120 tasks, family-held-out splits) | Implemented; both dev and held-out test splits run with real nomic embeddings and the live model | `tests/unit/test_benchmark_v2.py`, `tests/integration/test_benchmark_v2.py`, `docs/benchmark-v2.md`, `docs/evidence/phase2-summary.md`, `docs/evidence/phase3-llm-test-core/summary.md` |
 | Benchmark with card + chunk ablations and safety audit | Working (chunk ablation still degenerate on current data) | `recap eval run --suite v2`, `docs/results/2026-10-20-dev.md` |
 | Transactional outbox + retry worker | Working | `tests/unit/test_outbox_worker.py`, `recap search drain` |
 | Explicit memory versions + supersession | Working | `tests/unit/test_memory_versions.py`, `tests/e2e/test_lifecycle.py` |
@@ -66,8 +66,8 @@ Elasticsearch 8.19.3 node. There are no stub endpoints in the implemented paths.
 | Chunk-level retrieval (`*_chunk` modes) with supporting evidence | Working | `tests/integration/test_chunks.py`, `recap eval run` |
 | Content-addressed Postgres embedding cache + usage reporting | Working | `tests/unit/test_embedding_cache.py`, `recap embedding-cache`, `recap eval run` |
 | Versioned index rebuild + atomic alias swap (`search reindex`) | Working | `tests/integration/test_reindex.py`, `recap search reindex` |
-| API-first chat/embedding providers (OpenAI-compatible) | Implemented; live-tested locally against LM Studio (`gemma-4-e4b-uncensored-hauhaucs-aggressive` + `nomic-embed-text-v1.5`), not in CI | `tests/unit/test_providers.py`, opt-in `tests/integration/test_live_providers.py`, `docs/evidence/phase1-live-provider-tests-gemma.txt` |
-| LLM repair-candidate generation with typed validation | Implemented and unit-tested; **live acceptance failed** with gemma (0 schema-valid candidates) | `tests/unit/test_llm_generator.py`, `docs/evidence/phase1-summary.md` |
+| API-first chat/embedding providers (OpenAI-compatible) | Implemented; streaming, per-phase timeouts, bounded retries, and live LM Studio checks (`gemma-4-e4b-uncensored-hauhaucs-aggressive` + `nomic-embed-text-v1.5`); not in CI | `tests/unit/test_providers.py`, opt-in `tests/integration/test_live_providers.py`, `docs/evidence/phase2-inference-reliability.md` |
+| LLM repair-candidate generation with typed validation | Implemented and unit-tested; live acceptance now passes locally (4/4 schema, static, and sandbox) with the exact configuration in the evidence page; deterministic generator remains default | `tests/unit/test_llm_generator.py`, `docs/evidence/phase2-repair-generator-gemma-final.json`, `docs/evidence/phase2-inference-reliability.md` |
 | Real LLM tool-using agent (`recap agent run`) | Implemented; live v1/v2 runs pass locally with gemma, not in CI | `tests/unit/test_llm_agent.py`, `tests/integration/test_llm_agent_recording.py`, `docs/evidence/live-runs/` |
 | End-to-end demo (10 steps) | Working | `recap demo run` |
 
@@ -92,10 +92,16 @@ public record. A local implementation log is intentionally not published.
   distinguish memory policies. `raw_trajectory_rag`, abstention precision/recall, multiple
   paired seeds, and memory-required task families are still missing; do not infer them from
   the reports.
-- **Live LLM repair generation is not working with the selected gemma model.** The acceptance
-  harness produced 0 schema-valid candidates: `json_schema` calls timed out and `json_object`
-  calls were rejected by the provider. The deterministic repair generator remains the default.
-  See `docs/evidence/phase1-summary.md`.
+- **Live LLM repair generation now passes a small local acceptance run, but is not a general
+  reliability claim.** With `gemma-4-e4b-uncensored-hauhaucs-aggressive`, streaming, the
+  timeouts listed in `configs/default.yaml`, and two bounded format attempts, 4/4 runs produced
+  schema-valid candidates that passed static and mock-sandbox validation. That is four runs on
+  one model/machine; the deterministic repair generator remains the default. The Phase 1
+  negative result is kept in `docs/evidence/phase1-summary.md`, and the superseding evidence is
+  in `docs/evidence/phase2-inference-reliability.md`.
+- The local streaming endpoint did not report completion-token usage during the doctor probes,
+  so `recap doctor --live` reports `tokens_per_second=null` rather than estimating it. The
+  recommended read timeouts are conservative heuristics; configure them from observed runs.
 - The **CrossEncoder reranker** is local-only and opt-in. Its real benchmark run records
   latency and provenance, but the two-task dev split cannot show a quality improvement over
   lexical or bi-encoder retrieval.

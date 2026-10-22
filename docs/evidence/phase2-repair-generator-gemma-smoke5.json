@@ -1,0 +1,130 @@
+{
+  "generated_at": "2026-10-22T00:33:41.345955+00:00",
+  "kind": "live_repair_generator_acceptance",
+  "model": {
+    "provider": "openai_compatible",
+    "model_id": "gemma-4-e4b-uncensored-hauhaucs-aggressive",
+    "base_url": "http://localhost:1234/v1",
+    "generator": "llm",
+    "max_attempts": 2
+  },
+  "runs": 1,
+  "generation": {
+    "schema_successes": 1,
+    "attempts": 1,
+    "retries": 0,
+    "format_failures": 0,
+    "schema_success_rate": 1.0,
+    "format_failure_rate": 0.0,
+    "provider_errors": 0,
+    "provider_error_breakdown": {}
+  },
+  "candidates": {
+    "count": 1,
+    "candidate_rate": 1.0,
+    "static_passed": 1,
+    "static_pass_rate": 1.0,
+    "sandbox_passed": 1,
+    "sandbox_pass_rate": 1.0,
+    "end_to_end_pass_rate": 1.0
+  },
+  "elapsed_ms": 44689,
+  "results": [
+    {
+      "workspace_id": "repair-acceptance-f5e0d649c1",
+      "environment_version": "1",
+      "run_id": "run_fd08003b0db14446b1f09b7c8f73b8dc",
+      "generation_error": "",
+      "candidates": 1,
+      "static_passed": 1,
+      "sandbox_passed": 1,
+      "validation_checks": [
+        {
+          "candidate_id": "cand_7ca972b7e4124f1581ed12d040070405",
+          "static": {
+            "status": "passed",
+            "checks": [
+              {
+                "check": "has_source_run",
+                "passed": true,
+                "detail": ""
+              },
+              {
+                "check": "has_evidence",
+                "passed": true,
+                "detail": ""
+              },
+              {
+                "check": "has_preconditions",
+                "passed": true,
+                "detail": ""
+              },
+              {
+                "check": "has_postconditions",
+                "passed": true,
+                "detail": ""
+              },
+              {
+                "check": "actions_allowlisted",
+                "passed": true,
+                "detail": ""
+              },
+              {
+                "check": "no_destructive_actions",
+                "passed": true,
+                "detail": ""
+              },
+              {
+                "check": "no_secret_leakage",
+                "passed": true,
+                "detail": ""
+              },
+              {
+                "check": "bounded_strategy",
+                "passed": true,
+                "detail": ""
+              }
+            ]
+          },
+          "mock_sandbox": {
+            "status": "passed",
+            "checks": [
+              {
+                "check": "failure_reproduced",
+                "passed": true,
+                "detail": "expected INVALID_CURSOR, observed INVALID_CURSOR"
+              },
+              {
+                "check": "preconditions_hold_in_sandbox",
+                "passed": true,
+                "detail": "tool_schema_fingerprints.list_records eq 'sha256:2a18790e9bdfa8b3a2d2a38bee6af3ef1280147471e2aa5d4cbe3f119588736d'; error_code eq 'INVALID_CURSOR'"
+              },
+              {
+                "check": "rejects_mismatched_schema",
+                "passed": true,
+                "detail": "checked against version 2"
+              },
+              {
+                "check": "strategy_executed",
+                "passed": true,
+                "detail": "collected 7/7 records"
+              },
+              {
+                "check": "postconditions_satisfied",
+                "passed": true,
+                "detail": "tool_call_succeeded eq True"
+              }
+            ]
+          }
+        }
+      ],
+      "generation": {
+        "calls": 1,
+        "attempts": 1,
+        "format_failures": 0,
+        "successes": 1,
+        "last_error": ""
+      }
+    }
+  ]
+}

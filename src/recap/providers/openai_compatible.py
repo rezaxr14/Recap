@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import threading
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -27,6 +28,7 @@ from recap.errors import (
     EmbeddingUnavailable,
     ProviderAuthenticationError,
     ProviderResponseError,
+    ProviderTimeout,
     ProviderUnavailable,
 )
 from recap.logging import get_logger
@@ -103,6 +105,13 @@ class OpenAICompatibleClient:
         base_url: str,
         api_key: str = "",
         timeout_seconds: float = 30.0,
+        connect_timeout_seconds: float = 10.0,
+        read_timeout_seconds: float | None = None,
+        write_timeout_seconds: float = 30.0,
+        pool_timeout_seconds: float = 30.0,
+        overall_timeout_seconds: float = 300.0,
+        no_progress_timeout_seconds: float = 120.0,
+        stream: bool = False,
         max_retries: int = 2,
         retry_backoff_seconds: float = 0.5,
         transport: httpx.BaseTransport | None = None,
@@ -114,13 +123,41 @@ class OpenAICompatibleClient:
         self.base_url = _normalize_base_url(base_url)
         self.max_retries = max_retries
         self.retry_backoff_seconds = max(0.0, retry_backoff_seconds)
+        self.stream = stream
+        self.read_timeout_seconds = (
+            timeout_seconds if read_timeout_seconds is None else read_timeout_seconds
+        )
+        if self.read_timeout_seconds <= 0:
+            raise ConfigurationError("provider read_timeout_seconds must be > 0")
+        self.connect_timeout_seconds = connect_timeout_seconds
+        self.write_timeout_seconds = write_timeout_seconds
+        self.pool_timeout_seconds = pool_timeout_seconds
+        self.overall_timeout_seconds = overall_timeout_seconds
+        self.no_progress_timeout_seconds = no_progress_timeout_seconds
+        for name, value in (
+            ("connect_timeout_seconds", connect_timeout_seconds),
+            ("write_timeout_seconds", write_timeout_seconds),
+            ("pool_timeout_seconds", pool_timeout_seconds),
+            ("overall_timeout_seconds", overall_timeout_seconds),
+            ("no_progress_timeout_seconds", no_progress_timeout_seconds),
+        ):
+            if value <= 0:
+                raise ConfigurationError(f"provider {name} must be > 0")
+        self.last_attempts = 0
+        self.last_retries = 0
+        self.last_first_token_ms: float | None = None
         headers = {"Accept": "application/json", "Content-Type": "application/json"}
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
         self._client = httpx.Client(
             base_url=self.base_url,
             headers=headers,
-            timeout=httpx.Timeout(timeout_seconds),
+            timeout=httpx.Timeout(
+                connect=connect_timeout_seconds,
+                read=self.read_timeout_seconds,
+                write=write_timeout_seconds,
+                pool=pool_timeout_seconds,
+            ),
             transport=transport,
         )
 
@@ -136,10 +173,22 @@ class OpenAICompatibleClient:
     # ------------------------------------------------------------- transport
     def _request(self, method: str, path: str, *, json_body: dict[str, Any] | None = None) -> Any:
         last_error: Exception | None = None
+        self.last_first_token_ms = None
+        self.last_attempts = 0
         for attempt in range(self.max_retries + 1):
+            self.last_attempts = attempt + 1
             started = time.perf_counter()
+            # For a non-streaming call the read timeout is also the best
+            # available wall-clock guard: a server that trickles bytes forever
+            # must not be allowed to outlive the overall call budget.
+            timeout = httpx.Timeout(
+                connect=self.connect_timeout_seconds,
+                read=min(self.read_timeout_seconds, self.overall_timeout_seconds),
+                write=self.write_timeout_seconds,
+                pool=self.pool_timeout_seconds,
+            )
             try:
-                response = self._client.request(method, path, json=json_body)
+                response = self._client.request(method, path, json=json_body, timeout=timeout)
             except httpx.TimeoutException as exc:
                 last_error = exc
                 logger.warning(
@@ -179,23 +228,262 @@ class OpenAICompatibleClient:
                     continue
                 self._raise_for_status(response)
                 try:
-                    return response.json()
+                    payload = response.json()
                 except ValueError as exc:
                     raise ProviderResponseError(
                         "provider returned a non-JSON response",
                         details={"status": response.status_code, "body": _body_snippet(response)},
                     ) from exc
+                self.last_retries = self.last_attempts - 1
+                return payload
             if attempt < self.max_retries:
                 self._sleep_before_retry(attempt, None)
-        raise ProviderUnavailable(
-            "provider is unreachable or kept failing",
-            details={
-                "base_url": redact_url(self.base_url),
-                "path": path,
-                "attempts": self.max_retries + 1,
-                "error": type(last_error).__name__ if last_error else "unknown",
-            },
+        self.last_retries = max(0, self.last_attempts - 1)
+        details = {
+            "base_url": redact_url(self.base_url),
+            "path": path,
+            "attempts": self.last_attempts,
+            "error": type(last_error).__name__ if last_error else "unknown",
+        }
+        if isinstance(last_error, httpx.TimeoutException):
+            raise ProviderTimeout(
+                "provider did not complete the request within its timeout budget",
+                details=details,
+            )
+        raise ProviderUnavailable("provider is unreachable or kept failing", details=details)
+
+    def _stream_timeout(self) -> httpx.Timeout:
+        """Per-read deadline for SSE plus a wall-clock overall deadline.
+
+        ``httpx`` applies its read timeout between chunks, so using the
+        no-progress cap there lets a stalled stream fail promptly instead of
+        waiting for the much longer full-response timeout. The loop in
+        ``_consume_stream`` additionally enforces the overall deadline.
+        """
+        read = min(
+            self.read_timeout_seconds,
+            self.overall_timeout_seconds,
+            self.no_progress_timeout_seconds,
         )
+        return httpx.Timeout(
+            connect=self.connect_timeout_seconds,
+            read=read,
+            write=self.write_timeout_seconds,
+            pool=self.pool_timeout_seconds,
+        )
+
+    def _stream_chat(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Consume an OpenAI-compatible SSE stream, including tool-call deltas.
+
+        The response context manager closes the connection on every exit path,
+        which cancels a local generation cleanly when a deadline or caller
+        exception stops consumption.
+        """
+        last_error: Exception | None = None
+        self.last_first_token_ms = None
+        self.last_attempts = 0
+        for attempt in range(self.max_retries + 1):
+            self.last_attempts = attempt + 1
+            started = time.perf_counter()
+            try:
+                with self._client.stream(
+                    "POST",
+                    "chat/completions",
+                    json=payload,
+                    headers={"Accept": "text/event-stream"},
+                    timeout=self._stream_timeout(),
+                ) as response:
+                    if response.status_code >= 400:
+                        # Error bodies are small JSON/text payloads. Read them so
+                        # the normal status mapping can include a useful snippet.
+                        response.read()
+                        if response.status_code in RETRYABLE_STATUS and attempt < self.max_retries:
+                            self._sleep_before_retry(attempt, response)
+                            continue
+                        self._raise_for_status(response)
+                    result = self._consume_stream(response)
+                    elapsed_ms = (time.perf_counter() - started) * 1000.0
+                    logger.info(
+                        "provider stream completed",
+                        extra={
+                            "event": "provider_stream",
+                            "status": response.status_code,
+                            "latency_ms": round(elapsed_ms, 2),
+                            "attempt": attempt + 1,
+                        },
+                    )
+                    self.last_retries = self.last_attempts - 1
+                    return result
+            except ProviderTimeout:
+                raise
+            except httpx.TimeoutException as exc:
+                last_error = exc
+                logger.warning(
+                    "provider stream timed out or stalled",
+                    extra={
+                        "event": "provider_timeout",
+                        "path": "chat/completions",
+                        "attempt": attempt + 1,
+                        "base_url": redact_url(self.base_url),
+                    },
+                )
+            except httpx.TransportError as exc:
+                last_error = exc
+                logger.warning(
+                    "provider stream transport error",
+                    extra={
+                        "event": "provider_transport_error",
+                        "path": "chat/completions",
+                        "attempt": attempt + 1,
+                        "error": type(exc).__name__,
+                    },
+                )
+            if attempt < self.max_retries:
+                self._sleep_before_retry(attempt, None)
+        self.last_retries = max(0, self.last_attempts - 1)
+        details = {
+            "base_url": redact_url(self.base_url),
+            "path": "chat/completions",
+            "attempts": self.last_attempts,
+            "stream": True,
+            "no_progress_timeout_seconds": self.no_progress_timeout_seconds,
+            "overall_timeout_seconds": self.overall_timeout_seconds,
+            "error": type(last_error).__name__ if last_error else "unknown",
+        }
+        if isinstance(last_error, httpx.TimeoutException):
+            raise ProviderTimeout(
+                "provider stream stalled or exceeded its timeout budget",
+                details=details,
+            )
+        raise ProviderUnavailable("provider stream is unreachable or kept failing", details=details)
+
+    def _consume_stream(self, response: httpx.Response) -> dict[str, Any]:
+        started = time.perf_counter()
+        last_activity = started
+        first_token_ms: float | None = None
+        content_parts: list[str] = []
+        tool_calls: dict[int, dict[str, Any]] = {}
+        total_usage: dict[str, Any] = {}
+        finish_reason = ""
+        saw_payload = False
+
+        for line in response.iter_lines():
+            now = time.perf_counter()
+            elapsed = now - started
+            if elapsed > self.overall_timeout_seconds:
+                raise ProviderTimeout(
+                    "provider stream exceeded the overall call deadline",
+                    details={
+                        "elapsed_seconds": round(elapsed, 3),
+                        "overall_timeout_seconds": self.overall_timeout_seconds,
+                        "stream": True,
+                    },
+                )
+            if now - last_activity > self.no_progress_timeout_seconds:
+                raise ProviderTimeout(
+                    "provider stream produced no progress before the deadline",
+                    details={
+                        "idle_seconds": round(now - last_activity, 3),
+                        "no_progress_timeout_seconds": self.no_progress_timeout_seconds,
+                        "stream": True,
+                    },
+                )
+            if not line:
+                continue
+            # SSE comments are keepalives and count as progress.
+            if line.startswith(":"):
+                last_activity = now
+                continue
+            data = line[5:].strip() if line.startswith("data:") else line.strip()
+            if not data:
+                last_activity = now
+                continue
+            if data == "[DONE]":
+                break
+            try:
+                event = json.loads(data)
+            except json.JSONDecodeError:
+                # Ignore malformed keepalive/event lines but keep the deadline
+                # accounting honest; a stream of garbage will eventually stall.
+                last_activity = now
+                continue
+            if not isinstance(event, dict):
+                last_activity = now
+                continue
+            saw_payload = True
+            last_activity = now
+            usage = event.get("usage")
+            if isinstance(usage, dict):
+                total_usage.update(usage)
+            choices = event.get("choices")
+            if not isinstance(choices, list):
+                continue
+            for choice in choices:
+                if not isinstance(choice, dict):
+                    continue
+                # Some compatible servers answer a stream request with one
+                # non-streaming object. Accept both ``delta`` and ``message``.
+                delta = choice.get("delta")
+                if not isinstance(delta, dict):
+                    delta = choice.get("message") if isinstance(choice.get("message"), dict) else {}
+                if not delta:
+                    if choice.get("finish_reason"):
+                        finish_reason = str(choice["finish_reason"])
+                    continue
+                text = delta.get("content")
+                if isinstance(text, str) and text:
+                    content_parts.append(text)
+                    if first_token_ms is None:
+                        first_token_ms = (time.perf_counter() - started) * 1000.0
+                raw_calls = delta.get("tool_calls")
+                if isinstance(raw_calls, list):
+                    for position, raw_call in enumerate(raw_calls):
+                        if not isinstance(raw_call, dict):
+                            continue
+                        index = raw_call.get("index", position)
+                        if not isinstance(index, int):
+                            index = position
+                        entry = tool_calls.setdefault(
+                            index,
+                            {
+                                "id": "",
+                                "type": "function",
+                                "function": {"name": "", "arguments": ""},
+                            },
+                        )
+                        call_id = raw_call.get("id")
+                        if isinstance(call_id, str) and call_id:
+                            entry["id"] = call_id
+                        function = raw_call.get("function")
+                        if isinstance(function, dict):
+                            name = function.get("name")
+                            if isinstance(name, str) and name:
+                                entry["function"]["name"] += name
+                            arguments = function.get("arguments")
+                            if isinstance(arguments, str):
+                                entry["function"]["arguments"] += arguments
+                            elif isinstance(arguments, dict):
+                                entry["function"]["arguments"] = json.dumps(
+                                    arguments, separators=(",", ":")
+                                )
+                        if first_token_ms is None:
+                            first_token_ms = (time.perf_counter() - started) * 1000.0
+                if choice.get("finish_reason"):
+                    finish_reason = str(choice["finish_reason"])
+
+        if not saw_payload:
+            raise ProviderResponseError("provider stream ended without any SSE payload")
+        message: dict[str, Any] = {
+            "role": "assistant",
+            "content": "".join(content_parts) if content_parts else None,
+        }
+        if tool_calls:
+            message["tool_calls"] = [tool_calls[index] for index in sorted(tool_calls)]
+        self.last_first_token_ms = first_token_ms
+        return {
+            "choices": [{"message": message, "finish_reason": finish_reason}],
+            "usage": total_usage,
+        }
 
     def _sleep_before_retry(self, attempt: int, response: httpx.Response | None) -> None:
         delay = self.retry_backoff_seconds * (2**attempt)
@@ -278,7 +566,13 @@ class OpenAICompatibleClient:
             payload["max_tokens"] = max_tokens
         if response_format is not None:
             payload["response_format"] = response_format
-        result = self._request("POST", "chat/completions", json_body=payload)
+        if self.stream:
+            payload["stream"] = True
+        result = (
+            self._stream_chat(payload)
+            if self.stream
+            else self._request("POST", "chat/completions", json_body=payload)
+        )
         if not isinstance(result, dict):
             raise ProviderResponseError("provider chat response is not an object")
         return result
@@ -344,10 +638,23 @@ class OpenAICompatibleChatProvider:
         self.temperature = settings.temperature
         self.max_tokens = settings.max_tokens
         self.structured_mode = settings.structured_mode
+        self.read_timeout_seconds = settings.effective_read_timeout
+        self.overall_timeout_seconds = settings.overall_timeout_seconds
+        self.no_progress_timeout_seconds = settings.no_progress_timeout_seconds
+        self.stream = settings.stream
+        self.max_concurrency = settings.max_concurrency
+        self._semaphore = threading.Semaphore(settings.max_concurrency)
         self._client = OpenAICompatibleClient(
             base_url=settings.base_url,
             api_key=settings.api_key,
             timeout_seconds=settings.timeout_seconds,
+            connect_timeout_seconds=settings.connect_timeout_seconds,
+            read_timeout_seconds=settings.effective_read_timeout,
+            write_timeout_seconds=settings.write_timeout_seconds,
+            pool_timeout_seconds=settings.pool_timeout_seconds,
+            overall_timeout_seconds=settings.overall_timeout_seconds,
+            no_progress_timeout_seconds=settings.no_progress_timeout_seconds,
+            stream=settings.stream,
             max_retries=settings.max_retries,
             retry_backoff_seconds=settings.retry_backoff_seconds,
             transport=transport,
@@ -358,7 +665,7 @@ class OpenAICompatibleChatProvider:
             chat=True,
             tool_calling=True,
             structured_output=True,
-            streaming=False,
+            streaming=settings.stream,
             notes=(
                 f"role={role}",
                 "capabilities are declared by the adapter; model-specific support must be "
@@ -401,13 +708,14 @@ class OpenAICompatibleChatProvider:
         max_tokens: int | None = None,
     ) -> ChatResult:
         started = time.perf_counter()
-        payload = self._client.chat(
-            model=self.model,
-            messages=[message.to_wire() for message in messages],
-            tools=tools,
-            temperature=self.temperature if temperature is None else temperature,
-            max_tokens=self.max_tokens if max_tokens is None else max_tokens,
-        )
+        with self._semaphore:
+            payload = self._client.chat(
+                model=self.model,
+                messages=[message.to_wire() for message in messages],
+                tools=tools,
+                temperature=self.temperature if temperature is None else temperature,
+                max_tokens=self.max_tokens if max_tokens is None else max_tokens,
+            )
         message, usage, finish_reason = self._parse_choice(payload)
         tool_calls = self._parse_tool_calls(message)
         content = message.get("content")
@@ -425,6 +733,10 @@ class OpenAICompatibleChatProvider:
             usage=usage,
             latency_ms=(time.perf_counter() - started) * 1000.0,
             finish_reason=str(finish_reason),
+            attempts=self._client.last_attempts,
+            retries=self._client.last_retries,
+            first_token_ms=self._client.last_first_token_ms,
+            streamed=self.stream,
         )
 
     def generate_structured(
@@ -445,16 +757,17 @@ class OpenAICompatibleChatProvider:
             }
         else:
             response_format = {"type": "json_object"}
-        payload = self._client.chat(
-            model=self.model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            temperature=self.temperature,
-            max_tokens=self.max_tokens,
-            response_format=response_format,
-        )
+        with self._semaphore:
+            payload = self._client.chat(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+                response_format=response_format,
+            )
         message, _usage, finish_reason = self._parse_choice(payload)
         if finish_reason == "length":
             raise ProviderResponseError(
@@ -555,6 +868,13 @@ class OpenAICompatibleEmbeddingProvider:
             base_url=settings.base_url,
             api_key=settings.api_key,
             timeout_seconds=settings.timeout_seconds,
+            connect_timeout_seconds=settings.connect_timeout_seconds,
+            read_timeout_seconds=settings.effective_read_timeout,
+            write_timeout_seconds=settings.write_timeout_seconds,
+            pool_timeout_seconds=settings.pool_timeout_seconds,
+            overall_timeout_seconds=settings.overall_timeout_seconds,
+            no_progress_timeout_seconds=settings.overall_timeout_seconds,
+            stream=False,
             max_retries=settings.max_retries,
             retry_backoff_seconds=settings.retry_backoff_seconds,
             transport=transport,

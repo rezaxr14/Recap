@@ -37,6 +37,12 @@ Structured generation supports two explicit modes:
 There is no implicit downgrade between them. If the endpoint rejects the configured mode,
 the request fails with a `provider_response_error`.
 
+Repair generation classifies invalid JSON and truncated structured output as **format
+failures** and retries them within the configured candidate-generation attempt budget. Endpoint
+outages, authentication failures, and timeouts remain provider/infrastructure failures and are
+reported separately. Model-generated predicate aliases `equals`/`not_equals` are normalized to
+`eq`/`neq`; unknown operators are rejected.
+
 ## Environment variables
 
 Unprefixed names are the primary interface; `RECAP_`-prefixed aliases remain for older
@@ -53,7 +59,12 @@ deployments and take precedence.
 | `EMBEDDING_MODEL_VERSION` | Operator-supplied version string |
 | `EMBEDDING_DIMENSIONS` | Vector dimension; also sets `elasticsearch.vector_dimension` unless that is set explicitly |
 | `EMBEDDING_BATCH_SIZE` | Inputs per request |
-| `EMBEDDING_TIMEOUT_SECONDS` | Per-request timeout |
+| `EMBEDDING_TIMEOUT_SECONDS` | Legacy single timeout; still the fallback for the read phase |
+| `EMBEDDING_CONNECT_TIMEOUT_SECONDS` | TCP/TLS connection deadline |
+| `EMBEDDING_READ_TIMEOUT_SECONDS` | Response-read deadline (`0` uses `EMBEDDING_TIMEOUT_SECONDS`) |
+| `EMBEDDING_WRITE_TIMEOUT_SECONDS` | Request-upload deadline |
+| `EMBEDDING_POOL_TIMEOUT_SECONDS` | Connection-pool wait deadline |
+| `EMBEDDING_OVERALL_TIMEOUT_SECONDS` | Overall request budget |
 | `EMBEDDING_MAX_RETRIES` | Retries for 429/5xx/transport errors |
 | `EMBEDDING_SEND_DIMENSIONS` | Send the optional `dimensions` request field |
 | `EMBEDDING_MODEL_PATH` | Existing local directory for `sentence-transformers` |
@@ -66,13 +77,44 @@ deployments and take precedence.
 Use the same suffixes for each role:
 
 ```
-LLM_PROVIDER LLM_BASE_URL LLM_API_KEY LLM_MODEL LLM_TIMEOUT_SECONDS
-LLM_MAX_RETRIES LLM_TEMPERATURE LLM_MAX_TOKENS LLM_STRUCTURED_MODE
+LLM_PROVIDER LLM_BASE_URL LLM_API_KEY LLM_MODEL
+LLM_CONNECT_TIMEOUT_SECONDS LLM_READ_TIMEOUT_SECONDS LLM_WRITE_TIMEOUT_SECONDS
+LLM_POOL_TIMEOUT_SECONDS LLM_OVERALL_TIMEOUT_SECONDS LLM_NO_PROGRESS_TIMEOUT_SECONDS
+LLM_STREAM LLM_MAX_CONCURRENCY LLM_MAX_TOKENS LLM_MAX_RETRIES
+LLM_TEMPERATURE LLM_STRUCTURED_MODE
 
 REPAIR_LLM_PROVIDER REPAIR_LLM_BASE_URL REPAIR_LLM_API_KEY REPAIR_LLM_MODEL
-REPAIR_LLM_TIMEOUT_SECONDS REPAIR_LLM_MAX_RETRIES REPAIR_LLM_TEMPERATURE
-REPAIR_LLM_MAX_TOKENS REPAIR_LLM_STRUCTURED_MODE
+REPAIR_LLM_CONNECT_TIMEOUT_SECONDS REPAIR_LLM_READ_TIMEOUT_SECONDS
+REPAIR_LLM_WRITE_TIMEOUT_SECONDS REPAIR_LLM_POOL_TIMEOUT_SECONDS
+REPAIR_LLM_OVERALL_TIMEOUT_SECONDS REPAIR_LLM_NO_PROGRESS_TIMEOUT_SECONDS
+REPAIR_LLM_STREAM REPAIR_LLM_MAX_CONCURRENCY REPAIR_LLM_MAX_TOKENS
+REPAIR_LLM_MAX_RETRIES REPAIR_LLM_TEMPERATURE REPAIR_LLM_STRUCTURED_MODE
 ```
+
+`LLM_TIMEOUT_SECONDS` and `REPAIR_LLM_TIMEOUT_SECONDS` remain as legacy fallbacks. They are
+used only when the corresponding `*_READ_TIMEOUT_SECONDS` is left at `0`.
+
+### Streaming and deadlines
+
+Chat calls stream by default. The adapter consumes SSE, reassembles tool-call deltas, and
+records the time to the first content/tool token. A stream is cancelled cleanly when:
+
+- no new SSE line arrives within `*_NO_PROGRESS_TIMEOUT_SECONDS`;
+- the whole call exceeds `*_OVERALL_TIMEOUT_SECONDS`; or
+- the HTTP read deadline is exceeded.
+
+These cases raise `ProviderTimeout` (`provider_timeout`, HTTP 504), separate from an unreachable
+endpoint (`provider_unavailable`) or an authentication/response error. Transport status 408,
+425, 429, and 5xx responses are retried up to `*_MAX_RETRIES`.
+
+`*_MAX_TOKENS` is mandatory and bounded (default 512 for the agent role, 1024 for repair).
+`*_MAX_CONCURRENCY` defaults to `1` because LM Studio/llama.cpp normally serve one generation at
+a time; queueing several requests in the runtime makes healthy latency look like a model
+failure. Set it higher only when the endpoint is known to batch.
+
+`recap doctor --live` prints the observed elapsed time, first-token time, attempt/retry counts,
+whether the endpoint reported token usage, and the configured deadlines. It does not invent a
+tokens-per-second value when usage is absent.
 
 `provider` is `disabled` or `openai_compatible`. Select the LLM repair generator with
 `REPAIR_GENERATOR=llm` (or `repair_compiler.generator: llm`). Startup fails if that generator

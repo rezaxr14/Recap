@@ -82,6 +82,13 @@ class ChatResult:
     usage: Usage = field(default_factory=Usage)
     latency_ms: float = 0.0
     finish_reason: str = ""
+    # Provider-call accounting. ``attempts`` includes the successful attempt;
+    # ``retries`` is attempts minus one. Both are persisted with agent runs so a
+    # flaky endpoint cannot be mistaken for a model-quality result.
+    attempts: int = 1
+    retries: int = 0
+    first_token_ms: float | None = None
+    streamed: bool = False
 
 
 class ChatProvider(Protocol):

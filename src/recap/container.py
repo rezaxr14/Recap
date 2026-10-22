@@ -6,6 +6,7 @@ the same semantics.
 
 from __future__ import annotations
 
+import time
 from collections.abc import Iterator
 from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
@@ -175,17 +176,54 @@ class Container:
                         "error": f"{type(exc).__name__}: {exc}",
                     }
                 if live:
+                    settings = (
+                        self.settings.llm if role == "agent_llm" else self.settings.repair_llm
+                    )
+                    started = time.perf_counter()
                     try:
                         reply = provider.chat([_probe_message()], max_tokens=16)
+                        elapsed = max(time.perf_counter() - started, 1e-9)
+                        completion_tokens = reply.usage.completion_tokens
+                        tokens_per_second = (
+                            round(completion_tokens / elapsed, 3) if completion_tokens > 0 else None
+                        )
+                        recommended = max(
+                            30.0,
+                            min(
+                                1800.0,
+                                round(
+                                    2.0
+                                    * elapsed
+                                    * (max(settings.max_tokens, 16) / max(1, completion_tokens)),
+                                    1,
+                                ),
+                            ),
+                        )
                         role_result["live_chat"] = {
                             "status": "ok",
                             "content_length": len(reply.content),
                             "tool_calls": len(reply.tool_calls),
+                            "elapsed_ms": round(elapsed * 1000.0, 3),
+                            "completion_tokens": completion_tokens,
+                            "usage_reported": completion_tokens > 0,
+                            "tokens_per_second": tokens_per_second,
+                            "time_to_first_token_ms": reply.first_token_ms,
+                            "streamed": reply.streamed,
+                            "provider_attempts": reply.attempts,
+                            "provider_retries": reply.retries,
+                            "configured_read_timeout_seconds": settings.effective_read_timeout,
+                            "configured_overall_timeout_seconds": settings.overall_timeout_seconds,
+                            "recommended_read_timeout_seconds": recommended,
                         }
                     except Exception as exc:  # health boundary
                         role_result["live_chat"] = {
                             "status": "error",
                             "error": f"{type(exc).__name__}: {exc}",
+                            "elapsed_ms": round(
+                                max(time.perf_counter() - started, 0.0) * 1000.0, 3
+                            ),
+                            "configured_read_timeout_seconds": settings.effective_read_timeout,
+                            "configured_overall_timeout_seconds": settings.overall_timeout_seconds,
                         }
             results[role] = role_result
         embedding_health = getattr(self.embeddings, "health", None)
@@ -204,19 +242,29 @@ class Container:
             embedding_result = {"status": "unknown"}
             results["embeddings"] = embedding_result
         if live:
+            started = time.perf_counter()
             try:
                 vector = self.embeddings.embed_query("recap health probe")  # type: ignore[attr-defined]
+                elapsed = max(time.perf_counter() - started, 1e-9)
                 embedding_result["live_embedding"] = {
                     "status": "ok"
                     if len(vector) == self.settings.embeddings.dimension
                     else "error",
                     "dimension": len(vector),
                     "expected": self.settings.embeddings.dimension,
+                    "elapsed_ms": round(elapsed * 1000.0, 3),
+                    "configured_read_timeout_seconds": (
+                        self.settings.embeddings.effective_read_timeout
+                    ),
+                    "recommended_read_timeout_seconds": max(
+                        10.0, min(600.0, round(elapsed * 10.0, 1))
+                    ),
                 }
             except Exception as exc:  # health boundary
                 embedding_result["live_embedding"] = {
                     "status": "error",
                     "error": f"{type(exc).__name__}: {exc}",
+                    "elapsed_ms": round(max(time.perf_counter() - started, 0.0) * 1000.0, 3),
                 }
         return results
 

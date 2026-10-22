@@ -78,7 +78,16 @@ class EmbeddingSettings(_SettingsModel):
     batch_size: int = 32
     base_url: str = ""
     api_key: str = ""
+    # ``timeout_seconds`` is the legacy single-knob fallback. The per-phase
+    # timeouts below make a slow local model distinguishable from a dead socket:
+    # connecting, uploading a prompt, and waiting for the first/last token have
+    # very different healthy durations.
     timeout_seconds: float = 30.0
+    connect_timeout_seconds: float = 10.0
+    read_timeout_seconds: float = 0.0  # 0 -> use timeout_seconds
+    write_timeout_seconds: float = 30.0
+    pool_timeout_seconds: float = 30.0
+    overall_timeout_seconds: float = 300.0
     max_retries: int = 2
     retry_backoff_seconds: float = 0.5
     send_dimensions: bool = False
@@ -109,6 +118,26 @@ class EmbeddingSettings(_SettingsModel):
             )
         return value
 
+    @property
+    def effective_read_timeout(self) -> float:
+        return self.read_timeout_seconds or self.timeout_seconds
+
+    @model_validator(mode="after")
+    def _timeouts(self) -> EmbeddingSettings:
+        values = {
+            "timeout_seconds": self.timeout_seconds,
+            "connect_timeout_seconds": self.connect_timeout_seconds,
+            "write_timeout_seconds": self.write_timeout_seconds,
+            "pool_timeout_seconds": self.pool_timeout_seconds,
+            "overall_timeout_seconds": self.overall_timeout_seconds,
+        }
+        for name, value in values.items():
+            if value <= 0:
+                raise ValueError(f"embeddings.{name} must be > 0")
+        if self.read_timeout_seconds < 0:
+            raise ValueError("embeddings.read_timeout_seconds must be >= 0")
+        return self
+
 
 class LlmSettings(_SettingsModel):
     """One chat/completions role (agent or repair compiler)."""
@@ -117,12 +146,27 @@ class LlmSettings(_SettingsModel):
     base_url: str = ""
     api_key: str = ""
     model: str = ""
+    # Legacy fallback used only when ``read_timeout_seconds`` is left at zero.
     timeout_seconds: float = 60.0
+    connect_timeout_seconds: float = 10.0
+    read_timeout_seconds: float = 0.0
+    write_timeout_seconds: float = 30.0
+    pool_timeout_seconds: float = 30.0
+    # Hard wall-clock cap for one model call, independent of per-read progress.
+    overall_timeout_seconds: float = 900.0
+    # A stream that produces no bytes for this long is treated as stalled.
+    no_progress_timeout_seconds: float = 180.0
     max_retries: int = 2
     retry_backoff_seconds: float = 0.5
     temperature: float = 0.0
-    max_tokens: int = 0
+    # Bounded output is required: an unbounded local model can otherwise consume
+    # the entire context window or hang while generating a runaway response.
+    max_tokens: int = 512
     structured_mode: str = "json_schema"
+    stream: bool = True
+    # Local runtimes usually serve one generation at a time. Serializing calls
+    # avoids queueing timeouts that look like model failures.
+    max_concurrency: int = 1
 
     @field_validator("provider")
     @classmethod
@@ -137,6 +181,31 @@ class LlmSettings(_SettingsModel):
         if value not in {"json_schema", "json_object"}:
             raise ValueError("structured_mode must be json_schema|json_object")
         return value
+
+    @property
+    def effective_read_timeout(self) -> float:
+        return self.read_timeout_seconds or self.timeout_seconds
+
+    @model_validator(mode="after")
+    def _inference_limits(self) -> LlmSettings:
+        values = {
+            "timeout_seconds": self.timeout_seconds,
+            "connect_timeout_seconds": self.connect_timeout_seconds,
+            "write_timeout_seconds": self.write_timeout_seconds,
+            "pool_timeout_seconds": self.pool_timeout_seconds,
+            "overall_timeout_seconds": self.overall_timeout_seconds,
+            "no_progress_timeout_seconds": self.no_progress_timeout_seconds,
+        }
+        for name, value in values.items():
+            if value <= 0:
+                raise ValueError(f"llm.{name} must be > 0")
+        if self.read_timeout_seconds < 0:
+            raise ValueError("llm.read_timeout_seconds must be >= 0")
+        if self.max_tokens < 1:
+            raise ValueError("llm.max_tokens must be >= 1 (bounded output is required)")
+        if not 1 <= self.max_concurrency <= 32:
+            raise ValueError("llm.max_concurrency must be within [1, 32]")
+        return self
 
 
 class RecallSettings(_SettingsModel):
@@ -412,6 +481,11 @@ def _apply_env_overrides(raw: dict[str, Any]) -> dict[str, Any]:
         ("EMBEDDING_DIMENSIONS", "embeddings", "dimension", "int"),
         ("EMBEDDING_BATCH_SIZE", "embeddings", "batch_size", "int"),
         ("EMBEDDING_TIMEOUT_SECONDS", "embeddings", "timeout_seconds", "float"),
+        ("EMBEDDING_CONNECT_TIMEOUT_SECONDS", "embeddings", "connect_timeout_seconds", "float"),
+        ("EMBEDDING_READ_TIMEOUT_SECONDS", "embeddings", "read_timeout_seconds", "float"),
+        ("EMBEDDING_WRITE_TIMEOUT_SECONDS", "embeddings", "write_timeout_seconds", "float"),
+        ("EMBEDDING_POOL_TIMEOUT_SECONDS", "embeddings", "pool_timeout_seconds", "float"),
+        ("EMBEDDING_OVERALL_TIMEOUT_SECONDS", "embeddings", "overall_timeout_seconds", "float"),
         ("EMBEDDING_MAX_RETRIES", "embeddings", "max_retries", "int"),
         ("EMBEDDING_SEND_DIMENSIONS", "embeddings", "send_dimensions", "bool"),
         ("EMBEDDING_MODEL_PATH", "embeddings", "model_path", "str"),
@@ -430,6 +504,14 @@ def _apply_env_overrides(raw: dict[str, Any]) -> dict[str, Any]:
         ("LLM_API_KEY", "llm", "api_key", "str"),
         ("LLM_MODEL", "llm", "model", "str"),
         ("LLM_TIMEOUT_SECONDS", "llm", "timeout_seconds", "float"),
+        ("LLM_CONNECT_TIMEOUT_SECONDS", "llm", "connect_timeout_seconds", "float"),
+        ("LLM_READ_TIMEOUT_SECONDS", "llm", "read_timeout_seconds", "float"),
+        ("LLM_WRITE_TIMEOUT_SECONDS", "llm", "write_timeout_seconds", "float"),
+        ("LLM_POOL_TIMEOUT_SECONDS", "llm", "pool_timeout_seconds", "float"),
+        ("LLM_OVERALL_TIMEOUT_SECONDS", "llm", "overall_timeout_seconds", "float"),
+        ("LLM_NO_PROGRESS_TIMEOUT_SECONDS", "llm", "no_progress_timeout_seconds", "float"),
+        ("LLM_STREAM", "llm", "stream", "bool"),
+        ("LLM_MAX_CONCURRENCY", "llm", "max_concurrency", "int"),
         ("LLM_MAX_RETRIES", "llm", "max_retries", "int"),
         ("LLM_TEMPERATURE", "llm", "temperature", "float"),
         ("LLM_MAX_TOKENS", "llm", "max_tokens", "int"),
@@ -441,6 +523,29 @@ def _apply_env_overrides(raw: dict[str, Any]) -> dict[str, Any]:
         ("REPAIR_LLM_API_KEY", "repair_llm", "api_key", "str"),
         ("REPAIR_LLM_MODEL", "repair_llm", "model", "str"),
         ("REPAIR_LLM_TIMEOUT_SECONDS", "repair_llm", "timeout_seconds", "float"),
+        (
+            "REPAIR_LLM_CONNECT_TIMEOUT_SECONDS",
+            "repair_llm",
+            "connect_timeout_seconds",
+            "float",
+        ),
+        ("REPAIR_LLM_READ_TIMEOUT_SECONDS", "repair_llm", "read_timeout_seconds", "float"),
+        ("REPAIR_LLM_WRITE_TIMEOUT_SECONDS", "repair_llm", "write_timeout_seconds", "float"),
+        ("REPAIR_LLM_POOL_TIMEOUT_SECONDS", "repair_llm", "pool_timeout_seconds", "float"),
+        (
+            "REPAIR_LLM_OVERALL_TIMEOUT_SECONDS",
+            "repair_llm",
+            "overall_timeout_seconds",
+            "float",
+        ),
+        (
+            "REPAIR_LLM_NO_PROGRESS_TIMEOUT_SECONDS",
+            "repair_llm",
+            "no_progress_timeout_seconds",
+            "float",
+        ),
+        ("REPAIR_LLM_STREAM", "repair_llm", "stream", "bool"),
+        ("REPAIR_LLM_MAX_CONCURRENCY", "repair_llm", "max_concurrency", "int"),
         ("REPAIR_LLM_MAX_RETRIES", "repair_llm", "max_retries", "int"),
         ("REPAIR_LLM_TEMPERATURE", "repair_llm", "temperature", "float"),
         ("REPAIR_LLM_MAX_TOKENS", "repair_llm", "max_tokens", "int"),

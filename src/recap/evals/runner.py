@@ -31,7 +31,13 @@ from recap.environments.run_recording import (
     complete_recorded_run,
     start_recorded_run,
 )
-from recap.errors import ConfigurationError
+from recap.errors import (
+    ConfigurationError,
+    ProviderAuthenticationError,
+    ProviderResponseError,
+    ProviderTimeout,
+    ProviderUnavailable,
+)
 from recap.evals.datasets import (
     FAMILY_SPLITS,
     BenchmarkTask,
@@ -240,6 +246,7 @@ def run_benchmark(
                 "temperature": identity["temperature"],
                 "max_tool_calls": max_tool_calls,
                 "seed": seed,
+                "inference": identity.get("inference"),
                 "environment": "mock-api-failure-families",
                 "suite": suite,
                 "failure_families": sorted({task.failure_mode for task in tasks}),
@@ -301,6 +308,7 @@ def _agent_identity(container: Container, agent: str) -> dict[str, Any]:
             "prompt_version": "deterministic-policy-v1",
             "temperature": 0.0,
             "max_tool_calls": 6,
+            "inference": None,
         }
     provider = container.llm
     if provider is None:
@@ -318,6 +326,18 @@ def _agent_identity(container: Container, agent: str) -> dict[str, Any]:
         "temperature": float(getattr(provider, "temperature", settings.temperature)),
         "max_tool_calls": 6,
         "capabilities": provider.capabilities.to_dict(),
+        "inference": {
+            "stream": settings.stream,
+            "max_concurrency": settings.max_concurrency,
+            "max_tokens": settings.max_tokens,
+            "connect_timeout_seconds": settings.connect_timeout_seconds,
+            "read_timeout_seconds": settings.effective_read_timeout,
+            "write_timeout_seconds": settings.write_timeout_seconds,
+            "pool_timeout_seconds": settings.pool_timeout_seconds,
+            "overall_timeout_seconds": settings.overall_timeout_seconds,
+            "no_progress_timeout_seconds": settings.no_progress_timeout_seconds,
+            "max_retries": settings.max_retries,
+        },
     }
 
 
@@ -346,6 +366,7 @@ def _checkpoint_signature(
         "model": identity["model"],
         "provider_type": identity["provider_type"],
         "prompt_version": identity["prompt_version"],
+        "inference": identity.get("inference"),
         "embedding_model": getattr(container.embeddings, "model_id", ""),
         "embedding_fingerprint": getattr(container.embeddings, "embedding_fingerprint", ""),
         "vector_dimension": container.settings.elasticsearch.vector_dimension,
@@ -720,7 +741,20 @@ def _run_task(
                 baseline,
             )
             agent_error = f"{type(exc).__name__}: {exc}"
-            result = AgentRunResult(success=False, final_error=agent_error)
+            provider_error_type = "agent_error"
+            if isinstance(exc, ProviderTimeout):
+                provider_error_type = "provider_timeout"
+            elif isinstance(exc, ProviderAuthenticationError):
+                provider_error_type = "provider_auth_error"
+            elif isinstance(exc, ProviderUnavailable):
+                provider_error_type = "provider_unavailable"
+            elif isinstance(exc, ProviderResponseError):
+                provider_error_type = "provider_response_error"
+            result = AgentRunResult(
+                success=False,
+                final_error=agent_error,
+                provider_error_type=provider_error_type,
+            )
 
     run_id = complete_recorded_run(
         container,
@@ -764,6 +798,12 @@ def _run_task(
         value = finished.payload_redacted.get("error")
         error = str(value) if value else None
     success = recorded.status == RunStatus.SUCCEEDED
+    if result.provider_error_type:
+        outcome = result.provider_error_type
+    elif success:
+        outcome = "success"
+    else:
+        outcome = "task_failure"
     return {
         "task_id": task.task_id,
         "task_family": task.task_family,
@@ -790,6 +830,11 @@ def _run_task(
         "input_tokens": recorded.input_tokens,
         "output_tokens": recorded.output_tokens,
         "duration_ms": recorded.duration_ms,
+        "provider_attempts": result.provider_attempts,
+        "provider_retries": result.provider_retries,
+        "first_token_ms": result.first_token_ms,
+        "outcome": outcome,
+        "provider_error_type": result.provider_error_type,
         "agent_error": agent_error,
         "used_memory_id": used_memory_id,
         "harmful_transfer": bool(used_memory_id and not success),
@@ -913,14 +958,36 @@ def _summarize_by_family(per_task: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def _summarize_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    successes = [1.0 if row["task_success"] else 0.0 for row in rows]
+    # Provider outages are infrastructure outcomes, not task failures. Report
+    # both denominators explicitly so a flaky endpoint cannot depress (or
+    # flatter) the model-quality number.
+    completed = [row for row in rows if not str(row.get("outcome", "")).startswith("provider_")]
+    if not completed:
+        # Older checkpoints do not carry ``outcome``; fall back to the persisted
+        # task_success flag rather than dropping every row.
+        completed = rows
+    provider_timeouts = sum(1 for row in rows if row.get("outcome") == "provider_timeout")
+    provider_errors = sum(
+        1
+        for row in rows
+        if str(row.get("outcome", "")).startswith("provider_")
+        and row.get("outcome") != "provider_timeout"
+    )
+    successes = [1.0 if row["task_success"] else 0.0 for row in completed]
     lower, upper = bootstrap_ci(successes)
     return {
         "tasks": len(rows),
+        "completed_tasks": len(completed),
+        "provider_timeout_count": provider_timeouts,
+        "provider_error_count": provider_errors,
+        "provider_infrastructure_rate": (
+            (provider_timeouts + provider_errors) / len(rows) if rows else 0.0
+        ),
         "task_success_rate": mean(successes),
         "task_success_ci95": [lower, upper],
-        "mean_tool_calls": mean([row["tool_calls"] for row in rows]),
-        "mean_retries": mean([row["retries"] for row in rows]),
+        "mean_tool_calls": mean([row["tool_calls"] for row in completed]),
+        "mean_retries": mean([row["retries"] for row in completed]),
+        "mean_provider_retries": mean([row.get("provider_retries", 0) for row in completed]),
         "recall_at_3": mean([row["recall_at_3"] for row in rows]),
         "mrr": mean([row["mrr"] for row in rows]),
         "ndcg_at_3": mean([row["ndcg_at_3"] for row in rows]),
@@ -983,6 +1050,9 @@ def _summarize_performance(per_task: list[dict[str, Any]]) -> dict[str, Any]:
         for row in rows:
             for stage, value in (row.get("retrieval_stage_latency_ms") or {}).items():
                 stages.setdefault(stage, []).append(float(value))
+        first_tokens = [
+            float(row["first_token_ms"]) for row in rows if row.get("first_token_ms") is not None
+        ]
         result[baseline] = {
             "retrieval_tasks": len(latencies),
             "retrieval_latency_p50_ms": (
@@ -991,6 +1061,14 @@ def _summarize_performance(per_task: list[dict[str, Any]]) -> dict[str, Any]:
             "retrieval_latency_p95_ms": (
                 round(percentile(latencies, 95.0), 3) if latencies else None
             ),
+            "first_token_tasks": len(first_tokens),
+            "first_token_p50_ms": (
+                round(percentile(first_tokens, 50.0), 3) if first_tokens else None
+            ),
+            "first_token_p95_ms": (
+                round(percentile(first_tokens, 95.0), 3) if first_tokens else None
+            ),
+            "provider_retries_total": sum(int(row.get("provider_retries", 0)) for row in rows),
             "stage_latency_p50_ms": {
                 stage: round(percentile(values, 50.0), 3)
                 for stage, values in sorted(stages.items())
@@ -1026,7 +1104,8 @@ def _render_markdown(payload: dict[str, Any]) -> str:
     )
     warning = (
         "> Deterministic mock environment with a real configured chat model. Model behavior "
-        "is measured, not assumed; provider failures are recorded as failed runs."
+        "is measured, not assumed; provider timeouts/errors are recorded as infrastructure "
+        "outcomes, separate from task failures."
         if is_llm
         else (
             "> Deterministic mock environment and deterministic reference agent. These numbers "
@@ -1068,8 +1147,23 @@ def _render_markdown(payload: dict[str, Any]) -> str:
             "`incompatible selection` is an independent safety audit: selected memories are "
             "re-evaluated after the fact against the task's schema and preconditions. It never "
             "influences selection, so it cannot flatter any baseline.",
+            "",
+            "Provider timeouts and provider errors are infrastructure outcomes. They are excluded "
+            "from the success-rate denominator and reported separately below.",
+            "",
+            "## Inference reliability",
+            "",
+            "| baseline | attempts | completed | provider timeouts | provider errors | "
+            "mean provider retries |",
+            "|---|---|---|---|---|---|",
         ]
     )
+    for baseline, stats in payload["summary"].items():
+        lines.append(
+            f"| {baseline} | {stats['tasks']} | {stats['completed_tasks']} | "
+            f"{stats['provider_timeout_count']} | {stats['provider_error_count']} | "
+            f"{stats['mean_provider_retries']:.3f} |"
+        )
     by_family = payload.get("by_task_family") or {}
     if by_family:
         lines.extend(

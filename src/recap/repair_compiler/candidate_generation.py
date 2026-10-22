@@ -22,7 +22,7 @@ from recap.domain.predicates import Predicate
 from recap.domain.repairs import DiagnosisHypothesis, FailureWindow, RepairCandidate
 from recap.domain.runs import RunEvent
 from recap.domain.strategies import RepairStrategy, StrategyAction
-from recap.errors import ValidationError
+from recap.errors import ProviderResponseError, ValidationError
 
 
 class CandidateDraft(BaseModel):
@@ -556,7 +556,18 @@ class LLMCandidateGenerator:
             "Propose one minimal, typed recovery strategy for the failure below.\n"
             "Return only a JSON object matching the provided schema.\n"
             "Cite only event ids that appear in the evidence. Do not invent observations, "
-            "do not claim that validation passed, and do not use destructive actions.\n\n"
+            "do not claim that validation passed, and do not use destructive actions.\n"
+            "Precondition and postcondition operators must be exactly one of: "
+            "eq, neq, in, not_in, exists, not_exists, version_gte, version_lt, gte, lte, "
+            "contains, matches. Use eq/neq, never equals/not_equals.\n"
+            "Use only these precondition fields: error_code, environment_version, "
+            "tool_schema_fingerprints.list_records. Use only records_collected (gte an "
+            "integer) or tool_call_succeeded (eq true) as a postcondition field. Do not "
+            "invent dotted paths such as list_records.cursor or tool_call_failed.error_code.\n"
+            "Every candidate MUST include a precondition with field "
+            "'tool_schema_fingerprints.list_records', operator 'eq', and the exact "
+            "environment.tool_schema_hashes.list_records value shown below; this is how "
+            "the validator rejects the strategy on a different schema version.\n\n"
             f"Failure window:\n{json.dumps(window.model_dump(mode='json'), default=str, indent=2)}\n\n"
             f"Environment:\n{json.dumps(environment, default=str, indent=2)}\n\n"
             f"Evidence events (already redacted):\n"
@@ -574,17 +585,27 @@ class LLMCandidateGenerator:
                     "single JSON object that matches it exactly. Validation error summary:\n"
                     f"{last_error[:1000]}"
                 )
-            raw = self.provider.generate_structured(
-                system_prompt=(
-                    "You are RepairCompiler. You propose a single recovery hypothesis from "
-                    "execution evidence. The proposal is untrusted until it is independently "
-                    "validated by running it in an approved environment. Use only allowlisted "
-                    "typed actions and cite real evidence event ids. Return only JSON that "
-                    "matches the supplied schema."
-                ),
-                user_prompt=user_prompt,
-                schema=schema,
-            )
+            try:
+                raw = self.provider.generate_structured(
+                    system_prompt=(
+                        "You are RepairCompiler. You propose a single recovery hypothesis from "
+                        "execution evidence. The proposal is untrusted until it is independently "
+                        "validated by running it in an approved environment. Use only allowlisted "
+                        "typed actions and cite real evidence event ids. Return only JSON that "
+                        "matches the supplied schema."
+                    ),
+                    user_prompt=user_prompt,
+                    schema=schema,
+                )
+            except ProviderResponseError as exc:
+                # Invalid JSON and truncated output are format failures, not
+                # endpoint outages. Retry within the same bounded budget and
+                # keep the two categories separate in the acceptance report.
+                preview = str(exc.details.get("preview", ""))
+                last_error = f"{exc.message}: {preview}" if preview else exc.message
+                self.stats.format_failures += 1
+                self.stats.last_error = last_error
+                continue
             try:
                 draft = CandidateDraft.model_validate(raw)
             except PydanticValidationError as exc:

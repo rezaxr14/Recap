@@ -1,7 +1,9 @@
 # Phase 4 Ask endpoint evidence
 
-This page records the verification for `POST /api/v1/ask`. It is coverage evidence, not a
-live-model answer-quality evaluation.
+This page records the original coverage verification for `POST /api/v1/ask`. It is coverage
+evidence, not a live-model answer-quality evaluation. The follow-up 40-question mini-eval is
+recorded in [`phase4-ask-mini-eval.md`](phase4-ask-mini-eval.md) (deterministic) and
+[`phase4-ask-mini-eval-live-qwen.md`](phase4-ask-mini-eval-live-qwen.md) (live `qwen3.5-4b`).
 
 ## Command
 

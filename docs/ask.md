@@ -35,8 +35,9 @@ LLM call.
 | `llm` | configured agent LLM (`llm` provider role) writes a short answer from the supplied evidence | yes |
 
 `extractive` is the CI-tested path. `llm` is implemented and unit/integration-tested with a
-scripted provider, but no live-model Ask evaluation has been run. Its confidence field is
-not calibrated and is never used instead of citation verification.
+scripted provider, and a separate 40-question mini-eval has now been run with the live LM
+Studio model `qwen3.5-4b`; that is live-model evidence, not a CI test. Its confidence field
+is not calibrated and is never used instead of citation verification.
 
 If `mode=llm` is requested without a configured provider, the endpoint fails with
 `configuration_error`; it never silently falls back to the extractive answer.
@@ -74,10 +75,55 @@ Verification proves **source grounding of the quote**, not that the answer is a 
 correct interpretation of the evidence. A quote can be real while the surrounding sentence is
 misleading; this is a known limitation, not something an LLM-as-judge would fix.
 
+## Mini-eval
+
+`scripts/ask_eval.py` seeds a unique workspace with ten memories (seven active, one suspect,
+one quarantined, one retired), ten failed runs with one event each, and forty questions:
+thirty answerable from one gold source and ten unanswerable controls. It reports citation
+precision/recall, quote-verification failures, answer-token accuracy, status handling, latency,
+and duplicate citations. It deletes the workspace afterward unless `--keep` is passed.
+
+```powershell
+# Deterministic extractive headline
+.venv\Scripts\python.exe scripts\ask_eval.py --mode extractive
+
+# Live model evidence (LM Studio; exact model and timeouts are recorded)
+.venv\Scripts\python.exe scripts\ask_eval.py --mode llm `
+  --base-url http://localhost:1234/v1 --model qwen3.5-4b `
+  --timeout 120 --max-tokens 512 --structured-mode json_schema `
+  --markdown docs/evidence/phase4-ask-mini-eval-live-qwen.md
+```
+
+Measured on 2026-10-23 against live PostgreSQL 17 and Elasticsearch 8.19.3, hashing 256-d
+embeddings, one source per question:
+
+| Mode | Answerable status | Unanswerable status | Citation P/R | Answer tokens | Quote failures | Median latency |
+|---|---:|---:|---:|---:|---:|---:|
+| `extractive` (deterministic) | 30/30 | 10/10 | 1.000 / 1.000 | 30/30 | 0 | 141.7 ms |
+| `qwen3.5-4b` (live) | 30/30 | 10/10 | 1.000 / 1.000 | 30/30 | 0 | 7152.5 ms |
+
+The fixture is deliberately answerable by construction: every answerable question contains a
+unique token/marker pair. It validates retrieval plumbing and the citation contract, not
+open-domain recall. Run-history identity is checked through the verified run citation; the
+answer-token check there only requires the requested `failed` status. The live model returned
+duplicate citations for the same source in 10 of
+30 answerable cases; set-based precision/recall does not change, but duplicate links are an
+output-quality limitation. This is one 40-question synthetic fixture on one local model and
+machine, with temperature 0, `json_schema`, 512 max tokens, and a 120 s overall/read timeout.
+It is not a general answer-quality claim.
+
+Evidence:
+[`evidence/phase4-ask-mini-eval.md`](evidence/phase4-ask-mini-eval.md) (deterministic) and
+[`evidence/phase4-ask-mini-eval-live-qwen.md`](evidence/phase4-ask-mini-eval-live-qwen.md)
+(live), including the full per-question table. The script also writes raw JSON under
+`benchmark/reports/` (ignored by default).
+
 ## Tests and evidence
 
 - `tests/unit/test_ask.py`: citation existence, whitespace normalization, case-sensitive quote
   matching.
+- `tests/unit/test_ask_eval.py`: mini-eval case shape, citation scoring, unanswerable
+  handling, and API-key redaction in the recorded command (no services required).
 - `tests/integration/test_ask.py` (real Postgres + Elasticsearch): memory answer, named-run
   answer, quarantined-memory supplement, unanswerable refusal, missing-provider failure, and
   LLM fabricated-quote downgrade/valid-quote acceptance with a scripted provider.
@@ -86,6 +132,8 @@ misleading; this is a known limitation, not something an LLM-as-judge would fix.
 $env:RECAP_RUN_INTEGRATION='1'
 .venv\Scripts\python.exe -m pytest -q tests\unit\test_ask.py tests\integration\test_ask.py --run-integration
 # 10 passed
+.venv\Scripts\python.exe -m pytest -q tests\unit\test_ask_eval.py
+# 4 passed
 ```
 
 No claim is made that this endpoint improves answer accuracy. It demonstrates grounded

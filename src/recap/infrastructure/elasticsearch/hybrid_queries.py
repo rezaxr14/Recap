@@ -9,7 +9,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from recap.infrastructure.elasticsearch.mappings import LEXICAL_FIELDS
+from recap.infrastructure.elasticsearch.mappings import (
+    IDENTIFIER_LEXICAL_FIELDS,
+    LEXICAL_FIELDS,
+    PURE_LEXICAL_FIELDS,
+)
 
 ALLOWED_STATUSES_OPERATIONAL = ["active"]
 ALLOWED_STATUSES_WITH_SUSPECT = ["active", "suspect"]
@@ -48,20 +52,25 @@ def build_lexical_query(
     tool_names: list[str] | None = None,
     failure_code: str | None = None,
     size: int = 30,
+    pure: bool = False,
+    identifier_analysis: bool = False,
 ) -> dict[str, Any]:
+    fields = dict(PURE_LEXICAL_FIELDS if pure else LEXICAL_FIELDS)
+    if identifier_analysis:
+        fields.update(IDENTIFIER_LEXICAL_FIELDS)
     should: list[dict[str, Any]] = []
     if query.strip():
         should.append(
             {
                 "multi_match": {
                     "query": query,
-                    "fields": [f"{field}^{boost}" for field, boost in LEXICAL_FIELDS.items()],
+                    "fields": [f"{field}^{boost}" for field, boost in fields.items()],
                     "type": "best_fields",
                     "operator": "or",
                 }
             }
         )
-    if failure_signature.strip():
+    if failure_signature.strip() and not pure:
         should.append(
             {
                 "match_phrase": {
@@ -75,12 +84,14 @@ def build_lexical_query(
         )
     if not should:
         should.append({"match_all": {"boost": 0.1}})
-    # Soft relevance boosts; these never exclude candidates.
-    if failure_code:
+    # Soft relevance boosts; these never exclude candidates. A pure retrieval
+    # ablation receives only the natural-language query, so metadata signals are
+    # not allowed to leak into its ranking.
+    if failure_code and not pure:
         should.append({"term": {"failure_code": {"value": failure_code, "boost": 2.0}}})
-    if task_family:
+    if task_family and not pure:
         should.append({"term": {"task_families": {"value": task_family, "boost": 1.2}}})
-    if tool_names:
+    if tool_names and not pure:
         should.append({"terms": {"tool_names": tool_names, "boost": 1.1}})
     return {
         "size": size,
@@ -179,33 +190,55 @@ def build_es_rrf_query(
     workspace_id: str,
     allowed_statuses: list[str],
     failure_signature: str = "",
+    environment_fingerprint: str | None = None,
+    environment_id: str | None = None,
+    task_family: str | None = None,
+    tool_names: list[str] | None = None,
+    failure_code: str | None = None,
     size: int = 30,
     rank_constant: int = 60,
+    num_candidates: int = 200,
+    pure: bool = False,
+    identifier_analysis: bool = False,
 ) -> dict[str, Any]:
     """Native Elasticsearch RRF retriever (8.14+ syntax).
 
-    Kept for benchmark comparison against the application-side fallback.
+    ``knn`` is a retriever in its own right; wrapping it in ``standard`` (as an
+    earlier draft did) sends a query clause where the query DSL expects one and
+    Elasticsearch rejects the request. The native path is license-gated in some
+    distributions, so callers must surface the failure instead of silently
+    falling back to application-side fusion.
     """
     lexical = build_lexical_query(
         query=query,
         workspace_id=workspace_id,
         allowed_statuses=allowed_statuses,
         failure_signature=failure_signature,
+        environment_fingerprint=environment_fingerprint,
+        environment_id=environment_id,
+        task_family=task_family,
+        tool_names=tool_names,
+        failure_code=failure_code,
         size=size,
+        pure=pure,
+        identifier_analysis=identifier_analysis,
     )
     vector = build_vector_query(
         embedding=embedding,
         workspace_id=workspace_id,
         allowed_statuses=allowed_statuses,
         size=size,
+        num_candidates=num_candidates,
     )
     return {
         "size": size,
+        "track_total_hits": False,
+        "_source": lexical["_source"],
         "retriever": {
             "rrf": {
                 "retrievers": [
                     {"standard": {"query": lexical["query"]}},
-                    {"standard": {"query": vector["knn"]}},
+                    {"knn": vector["knn"]},
                 ],
                 "rank_constant": rank_constant,
             }

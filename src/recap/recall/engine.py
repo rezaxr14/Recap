@@ -509,6 +509,12 @@ class RecallEngine:
                 "mode": str(request.mode),
                 "policy_version": POLICY_VERSION,
                 "rrf_k": self.settings.elasticsearch.rrf_k,
+                "hybrid_strategy": self.settings.elasticsearch.hybrid_strategy,
+                "identifier_analysis": self.settings.elasticsearch.identifier_analysis,
+                "knn_num_candidates": self.settings.elasticsearch.knn_num_candidates,
+                "dense_vector_quantization": (
+                    self.settings.elasticsearch.dense_vector_quantization
+                ),
                 "embedding_model_id": self.embeddings.model_id,
                 "no_safe_memory_threshold": self.settings.recall.no_safe_memory_threshold,
                 "rerank_applied": rerank_applied,

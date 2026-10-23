@@ -13,6 +13,16 @@ from __future__ import annotations
 
 from typing import Any
 
+# Identifier-aware analysis. The default analyzer keeps ``INVALID_CURSOR`` as a
+# single token, so a prose query such as "invalid cursor" cannot match the code.
+# This analyzer also emits the delimited parts (``invalid``, ``cursor``) and
+# keeps the original token, which lets identifiers match natural language
+# without changing the stored value.
+IDENTIFIER_ANALYZER = "recap_identifier"
+IDENTIFIER_FILTER = "recap_identifier_delimiters"
+IDENTIFIER_SUBFIELD = "identifier"
+IDENTIFIER_TEXT_FIELDS = ("title", "summary", "failure_signature", "failure_code")
+
 MEMORY_PROPERTIES: dict[str, Any] = {
     "memory_id": {"type": "keyword"},
     "memory_version": {"type": "integer"},
@@ -67,28 +77,99 @@ LEXICAL_FIELDS: dict[str, float] = {
     "limitations_text": 0.5,
 }
 
+# Ablation fields with every boost removed. Used to measure the analyzer and
+# fusion layers without the metadata boosts that make v2 retrieval look easy.
+PURE_LEXICAL_FIELDS: dict[str, float] = {
+    "title": 1.0,
+    "summary": 1.0,
+    "strategy_text": 1.0,
+    "preconditions_text": 1.0,
+    "postconditions_text": 1.0,
+    "limitations_text": 1.0,
+}
+
+IDENTIFIER_LEXICAL_FIELDS: dict[str, float] = {
+    f"{field}.{IDENTIFIER_SUBFIELD}": 1.0 for field in IDENTIFIER_TEXT_FIELDS
+}
+
+DENSE_VECTOR_INDEX_TYPES = ("hnsw", "int8_hnsw")
+
+
+def _identifier_analysis() -> dict[str, Any]:
+    return {
+        "analysis": {
+            "filter": {
+                IDENTIFIER_FILTER: {
+                    "type": "word_delimiter_graph",
+                    "generate_word_parts": True,
+                    "generate_number_parts": True,
+                    "split_on_case_change": True,
+                    "split_on_numerics": True,
+                    "preserve_original": True,
+                    "stem_english_possessive": False,
+                }
+            },
+            "analyzer": {
+                IDENTIFIER_ANALYZER: {
+                    "type": "custom",
+                    "tokenizer": "standard",
+                    "filter": [IDENTIFIER_FILTER, "lowercase"],
+                }
+            },
+        }
+    }
+
+
+def _identifier_properties() -> dict[str, Any]:
+    properties = dict(MEMORY_PROPERTIES)
+    for field in IDENTIFIER_TEXT_FIELDS:
+        spec = dict(properties[field])
+        fields = dict(spec.get("fields") or {})
+        fields[IDENTIFIER_SUBFIELD] = {
+            "type": "text",
+            "analyzer": IDENTIFIER_ANALYZER,
+        }
+        spec["fields"] = fields
+        properties[field] = spec
+    return properties
+
 
 def memory_index_body(
     *,
     dimension: int,
     number_of_shards: int = 1,
     meta: dict[str, Any] | None = None,
+    identifier_analysis: bool = False,
+    dense_vector_type: str = "hnsw",
 ) -> dict[str, Any]:
-    properties = dict(MEMORY_PROPERTIES)
+    if dense_vector_type not in DENSE_VECTOR_INDEX_TYPES:
+        raise ValueError(
+            f"dense_vector_type must be one of {DENSE_VECTOR_INDEX_TYPES}, "
+            f"got {dense_vector_type!r}"
+        )
+    properties = _identifier_properties() if identifier_analysis else dict(MEMORY_PROPERTIES)
     properties["content_embedding"] = {
         "type": "dense_vector",
         "dims": dimension,
         "index": True,
         "similarity": "cosine",
-        "index_options": {"type": "hnsw", "m": 16, "ef_construction": 100},
+        "index_options": {
+            "type": dense_vector_type,
+            "m": 16,
+            "ef_construction": 100,
+        },
     }
     mappings: dict[str, Any] = {
         "dynamic": "strict",
         "properties": properties,
+        # The vector is an index structure, not document content. Keeping a copy
+        # in _source roughly doubles index size and hides any quantization win,
+        # and no read path needs it (search returns metadata, not embeddings).
+        "_source": {"excludes": ["content_embedding"]},
     }
     if meta:
         mappings["_meta"] = dict(meta)
-    return {
+    body: dict[str, Any] = {
         "settings": {
             "number_of_shards": number_of_shards,
             "number_of_replicas": 0,
@@ -96,6 +177,9 @@ def memory_index_body(
         },
         "mappings": mappings,
     }
+    if identifier_analysis:
+        body["settings"].update(_identifier_analysis())
+    return body
 
 
 # ------------------------------------------------------------------- chunks

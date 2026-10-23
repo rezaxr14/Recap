@@ -23,6 +23,8 @@ from recap.errors import ConfigurationError, SearchUnavailable
 from recap.infrastructure.elasticsearch.client import TRANSPORT_ERRORS
 from recap.infrastructure.elasticsearch.mappings import (
     CHUNK_PROPERTIES,
+    IDENTIFIER_SUBFIELD,
+    IDENTIFIER_TEXT_FIELDS,
     chunk_index_body,
     memory_index_body,
 )
@@ -90,6 +92,8 @@ class IndexManager:
             "embedding_fingerprint": self.embedding_fingerprint,
             "vector_dimension": self.settings.vector_dimension,
             "index_generation": self.settings.index_generation,
+            "identifier_analysis": self.settings.identifier_analysis,
+            "dense_vector_quantization": self.settings.dense_vector_quantization,
         }
 
     def active_index_name(self) -> str | None:
@@ -140,6 +144,8 @@ class IndexManager:
             body=memory_index_body(
                 dimension=self.settings.vector_dimension,
                 meta=self.memory_meta(),
+                identifier_analysis=self.settings.identifier_analysis,
+                dense_vector_type=self.settings.dense_vector_index_type,
             ),
             read_alias=self.read_alias,
             write_alias=self.write_alias,
@@ -196,6 +202,37 @@ class IndexManager:
                     "index_fingerprint": existing_fingerprint,
                     "configured_fingerprint": self.embedding_fingerprint,
                     "action": "run `recap search reindex --to-generation vN`",
+                },
+            )
+        if self.settings.identifier_analysis:
+            missing = [
+                field
+                for field in IDENTIFIER_TEXT_FIELDS
+                if IDENTIFIER_SUBFIELD not in ((properties.get(field) or {}).get("fields") or {})
+            ]
+            if missing:
+                raise ConfigurationError(
+                    "identifier_analysis is enabled but the memory index has no "
+                    "identifier subfields",
+                    details={
+                        "index": index,
+                        "missing_subfields": missing,
+                        "action": (
+                            "bump elasticsearch.index_generation and run "
+                            "`recap search reindex --to-generation vN`; the analyzer "
+                            "cannot be added to an existing mapping in place"
+                        ),
+                    },
+                )
+        existing_quantization = str(meta.get("dense_vector_quantization") or "none")
+        if existing_quantization != self.settings.dense_vector_quantization:
+            raise ConfigurationError(
+                "memory index was built with a different dense-vector quantization",
+                details={
+                    "index": index,
+                    "index_quantization": existing_quantization,
+                    "configured_quantization": self.settings.dense_vector_quantization,
+                    "action": "bump elasticsearch.index_generation and reindex",
                 },
             )
 

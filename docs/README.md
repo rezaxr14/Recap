@@ -13,6 +13,9 @@ the code and its tests are authoritative and the document should be fixed in the
 | [`evidence/phase3b-v3-deterministic-test.md`](evidence/phase3b-v3-deterministic-test.md) | Exact deterministic command, environment, matrix, and retained failures |
 | [`evidence/phase3b-v3-live-test.md`](evidence/phase3b-v3-live-test.md) | Exact live model, inference timeouts, nomic embedder, aggregate/selectable results, and execution-failure audit |
 | [`evidence/phase4-scale-100k.md`](evidence/phase4-scale-100k.md) | 100,000-document Elasticsearch index/query latency, deterministic and live-embedding configurations, and scope caveats |
+| [`evidence/phase4-retrieval-depth.md`](evidence/phase4-retrieval-depth.md) | 10k-document retrieval-depth harness: identifier analyzer, pre-filtered kNN candidates, app vs native RRF, and quantization |
+| [`evidence/phase4-ask-mini-eval.md`](evidence/phase4-ask-mini-eval.md) | Deterministic 40-question Ask mini-eval: citation precision/recall, quote verification, and answerable/unanswerable handling |
+| [`evidence/phase4-ask-mini-eval-live-qwen.md`](evidence/phase4-ask-mini-eval-live-qwen.md) | Live `qwen3.5-4b` Ask mini-eval with exact model, endpoint, timeouts, latency, and duplicate-citation note |
 | [`../web/README.md`](../web/README.md) | Static recorder-replay app: export, serve, deploy, provenance, and honesty rules |
 | [`evidence/phase1-summary.md`](evidence/phase1-summary.md) | Evidence-backed implementation state, live-run results, and known limits |
 | [`benchmark-v2.md`](benchmark-v2.md) | Legacy ceiling/regression suite: ten families, hard negatives, fair baselines, leakage checks, and limitations |

@@ -27,7 +27,21 @@ All notable changes to this project are documented here. The format follows
 - Grounded Q&A at `POST /api/v1/ask`: hybrid memory retrieval plus bounded run/event history,
   an extractive default and an optional configured-LLM answerer, strict source-id and
   verbatim-quote verification, and explicit `insufficient_evidence` downgrade on any
-  unverifiable citation. No live-model Ask evaluation is claimed.
+  unverifiable citation.
+- `scripts/ask_eval.py`: a 40-question Ask mini-eval over a seeded workspace (10 memories,
+  10 failed runs, 30 answerable + 10 unanswerable), reporting citation precision/recall,
+  quote failures, answer-token accuracy, status handling, duplicate citations, and latency.
+  Deterministic extractive evidence and a separate live `qwen3.5-4b` LM Studio run are under
+  `docs/evidence/phase4-ask-mini-eval*.md`, with full per-question tables and raw JSON under
+  `benchmark/reports/` (ignored by default). The fixture is answerable by construction and is
+  not an open-domain QA benchmark.
+- Phase 4.2 Elasticsearch depth: `scripts/retrieval_depth.py`, opt-in identifier
+  analyzer/subfields, pure-BM25 comparison mode, pre-filtered kNN `num_candidates`, native RRF
+  retriever support with fail-closed license handling, `int8_hnsw` quantization, and
+  `_source` exclusion for stored vectors. Measured on a 10,005-document v3 corpus with three
+  repeats; evidence in `docs/evidence/phase4-retrieval-depth.md`.
+- Unit coverage for the new mapping/query options in `tests/unit/test_es_queries.py`, plus
+  integration coverage for the identifier analyzer and native-RRF fail-closed path.
 - Optional shared `RECAP_API_KEY` and `RECAP_CORS_ORIGINS` settings. Health endpoints stay
   public; application routes accept `X-API-Key`; auth uses a constant-time comparison.
 - API auth tests covering public health, missing/wrong key rejection, and local no-key mode.
@@ -94,6 +108,16 @@ All notable changes to this project are documented here. The format follows
 - Benchmark v3 is the current suite. Its deterministic headline uses a 256-d hashing embedder
   and synthetic decoys; the live run uses nomic 768-d and a dedicated `recap-v3-live` prefix
   and aliases, so the two vector spaces cannot be mixed.
+- New indices exclude `content_embedding` from `_source`; the vector remains an index
+  structure, not document content. Existing indices keep their old shape until reindexed.
+- `hybrid_strategy=app_rrf` remains the production default. Native Elasticsearch RRF is
+  unavailable on the Basic license measured here (HTTP 403) and the `es_rrf` option fails
+  closed rather than silently falling back.
+- `identifier_analysis`, `dense_vector_quantization`, and larger `knn_num_candidates` values
+  are opt-in. On the measured 10k corpus, identifier subfields improved identifier-probe MRR
+  but not natural-language recall; `int8_hnsw` lost recall and was larger on disk;
+  `num_candidates=200` remains the default pending a 100k sweep. Enabling analyzer or
+  quantization changes requires a new index generation.
 - v3 memory ids are workspace-namespaced, preventing primary-key collisions when benchmarks
   share one Postgres database.
 - Compose now packages `api` as a normal service and adds a separate `worker`; local services

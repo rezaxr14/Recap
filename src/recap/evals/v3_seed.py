@@ -272,19 +272,19 @@ def _decoy_memories(workspace_id: str, container: Container, count: int) -> list
     return memories
 
 
-def seed_v3_workspace(
+def build_v3_corpus(
     container: Container,
     workspace_id: str,
     tasks: list[BenchmarkTask],
     *,
     fixture_count: int = 2000,
-) -> dict[str, Any]:
-    """Create gold memories and bulk decoys, then index them in one batch.
+) -> tuple[list[ExperienceMemory], list[BenchmarkTask], dict[str, str]]:
+    """Build the in-memory v3 corpus without touching Postgres or Elasticsearch.
 
     Memory ids are namespaced by workspace. Postgres uses a global primary key
     for ``memories.id``, so two benchmark processes sharing one database would
     otherwise collide on the deterministic fixture ids even though their
-    workspaces are different.
+    workspaces are different. Gold tasks are returned with their ids remapped.
     """
     import hashlib
 
@@ -311,9 +311,10 @@ def seed_v3_workspace(
         memory.workspace_id = workspace_id
         gold.append(memory)
 
+    updated_tasks = list(tasks)
     for index, task in enumerate(tasks):
         if task.gold_memory_ids:
-            tasks[index] = replace(
+            updated_tasks[index] = replace(
                 task,
                 gold_memory_ids=tuple(
                     id_map.get(memory_id, memory_id) for memory_id in task.gold_memory_ids
@@ -325,7 +326,24 @@ def seed_v3_workspace(
         memory.id = scoped(memory.id)
         memory.family_id = memory.id
         memory.retrieval_document_id = f"{memory.id}:v{memory.memory_version}"
-    all_memories = gold + decoys
+    return gold + decoys, updated_tasks, id_map
+
+
+def seed_v3_workspace(
+    container: Container,
+    workspace_id: str,
+    tasks: list[BenchmarkTask],
+    *,
+    fixture_count: int = 2000,
+) -> dict[str, Any]:
+    """Create gold memories and bulk decoys, then index them in one batch."""
+    all_memories, updated_tasks, id_map = build_v3_corpus(
+        container, workspace_id, tasks, fixture_count=fixture_count
+    )
+    # The runner and its per-task rows use the remapped gold ids. Preserve the
+    # historical in-place contract so callers cannot accidentally keep the
+    # unscoped ids after seeding.
+    tasks[:] = updated_tasks
     from recap.domain.memories import build_embedding_text
     from recap.infrastructure.db.repositories import ensure_workspace
 
@@ -339,8 +357,8 @@ def seed_v3_workspace(
     )
     container.search_repository.bulk_index(list(zip(all_memories, embeddings, strict=True)))
     return {
-        "gold_memories": len(gold),
-        "synthetic_fixtures": len(decoys),
+        "gold_memories": len(id_map),
+        "synthetic_fixtures": fixture_count,
         "total": len(all_memories),
         "provenance": "real_gold_synthetic_decoys",
     }

@@ -59,6 +59,13 @@ class ElasticsearchSettings(_SettingsModel):
     vector_dimension: int = 256
     hybrid_strategy: str = "app_rrf"
     rrf_k: int = 60
+    # Identifier-aware subfields (``INVALID_CURSOR`` <-> "invalid cursor").
+    # Opt-in because an existing index must be rebuilt into a new generation
+    # before the subfields exist; enabling it against an old mapping is a
+    # configuration error, not a silent query failure.
+    identifier_analysis: bool = False
+    knn_num_candidates: int = 200
+    dense_vector_quantization: str = "none"
 
     @field_validator("hybrid_strategy")
     @classmethod
@@ -66,6 +73,24 @@ class ElasticsearchSettings(_SettingsModel):
         if value not in {"app_rrf", "es_rrf"}:
             raise ValueError("hybrid_strategy must be 'app_rrf' or 'es_rrf'")
         return value
+
+    @field_validator("dense_vector_quantization")
+    @classmethod
+    def _known_quantization(cls, value: str) -> str:
+        if value not in {"none", "int8_hnsw"}:
+            raise ValueError("dense_vector_quantization must be 'none' or 'int8_hnsw'")
+        return value
+
+    @field_validator("knn_num_candidates")
+    @classmethod
+    def _known_num_candidates(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("knn_num_candidates must be >= 1")
+        return value
+
+    @property
+    def dense_vector_index_type(self) -> str:
+        return "hnsw" if self.dense_vector_quantization == "none" else "int8_hnsw"
 
     @property
     def write_index(self) -> str:
@@ -574,6 +599,14 @@ def _apply_env_overrides(raw: dict[str, Any]) -> dict[str, Any]:
         ("RECAP_INDEX_GENERATION", "elasticsearch", "index_generation", "int"),
         ("ELASTICSEARCH_INDEX_PREFIX", "elasticsearch", "index_prefix", "str"),
         ("RECAP_INDEX_PREFIX", "elasticsearch", "index_prefix", "str"),
+        ("ELASTICSEARCH_IDENTIFIER_ANALYSIS", "elasticsearch", "identifier_analysis", "bool"),
+        ("ELASTICSEARCH_KNN_NUM_CANDIDATES", "elasticsearch", "knn_num_candidates", "int"),
+        (
+            "ELASTICSEARCH_DENSE_VECTOR_QUANTIZATION",
+            "elasticsearch",
+            "dense_vector_quantization",
+            "str",
+        ),
         ("ELASTICSEARCH_MEMORIES_READ_ALIAS", "elasticsearch", "memories_read_alias", "str"),
         ("ELASTICSEARCH_MEMORIES_WRITE_ALIAS", "elasticsearch", "memories_write_alias", "str"),
         ("ELASTICSEARCH_CHUNKS_READ_ALIAS", "elasticsearch", "chunks_read_alias", "str"),

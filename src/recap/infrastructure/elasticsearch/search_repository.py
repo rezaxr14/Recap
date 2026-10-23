@@ -18,6 +18,7 @@ from recap.domain.retrieval import RetrievalContext
 from recap.errors import SearchUnavailable
 from recap.infrastructure.elasticsearch.client import TRANSPORT_ERRORS
 from recap.infrastructure.elasticsearch.hybrid_queries import (
+    build_es_rrf_query,
     build_lexical_query,
     build_vector_query,
 )
@@ -184,6 +185,7 @@ class ElasticsearchMemoryRepository:
             tool_names=context.tool_names or None,
             failure_code=context.error_code or None,
             size=candidate_k,
+            identifier_analysis=self.settings.identifier_analysis,
         )
         try:
             if mode == "vector":
@@ -201,6 +203,7 @@ class ElasticsearchMemoryRepository:
                         tool_names=context.tool_names or None,
                         failure_code=context.error_code or None,
                         size=candidate_k,
+                        num_candidates=self.settings.knn_num_candidates,
                     ),
                 )
                 branch = _collect_branch(dict(response), "vector", hits)
@@ -210,28 +213,53 @@ class ElasticsearchMemoryRepository:
                 branch = _collect_branch(dict(response), "bm25", hits)
                 branches["bm25"] = branch
             elif mode == "hybrid_rrf":
-                lexical_response = self.client.search(index=index, **lexical_query)
-                lexical_branch = _collect_branch(dict(lexical_response), "bm25", hits)
-                branches["bm25"] = lexical_branch
-                if embedding is None:
-                    degraded = True
-                    warnings.append("embedding unavailable; returning BM25-only results")
-                else:
-                    vector_response = self.client.search(
+                if self.settings.hybrid_strategy == "es_rrf" and embedding is not None:
+                    native_response = self.client.search(
                         index=index,
-                        **build_vector_query(
+                        **build_es_rrf_query(
+                            query=context.query,
                             embedding=list(embedding),
                             workspace_id=context.workspace_id,
                             allowed_statuses=allowed,
+                            failure_signature=context.failure_signature,
                             environment_fingerprint=context.environment_fingerprint or None,
                             environment_id=context.environment_id or None,
                             task_family=context.task_family or None,
                             tool_names=context.tool_names or None,
                             failure_code=context.error_code or None,
                             size=candidate_k,
+                            rank_constant=self.settings.rrf_k,
+                            num_candidates=self.settings.knn_num_candidates,
+                            identifier_analysis=self.settings.identifier_analysis,
                         ),
                     )
-                    branches["vector"] = _collect_branch(dict(vector_response), "vector", hits)
+                    branches["native_rrf"] = _collect_branch(
+                        dict(native_response), "native_rrf", hits
+                    )
+                else:
+                    lexical_response = self.client.search(index=index, **lexical_query)
+                    lexical_branch = _collect_branch(dict(lexical_response), "bm25", hits)
+                    branches["bm25"] = lexical_branch
+                    if embedding is None:
+                        degraded = True
+                        warnings.append("embedding unavailable; returning BM25-only results")
+                    else:
+                        vector_response = self.client.search(
+                            index=index,
+                            **build_vector_query(
+                                embedding=list(embedding),
+                                workspace_id=context.workspace_id,
+                                allowed_statuses=allowed,
+                                environment_fingerprint=context.environment_fingerprint or None,
+                                environment_id=context.environment_id or None,
+                                task_family=context.task_family or None,
+                                tool_names=context.tool_names or None,
+                                failure_code=context.error_code or None,
+                                size=candidate_k,
+                                num_candidates=self.settings.knn_num_candidates,
+                            ),
+                        )
+                        branches["vector"] = _collect_branch(dict(vector_response), "vector", hits)
             elif mode in {"hybrid_rerank", "outcome_aware"}:
                 lexical_response = self.client.search(index=index, **lexical_query)
                 branches["bm25"] = _collect_branch(dict(lexical_response), "bm25", hits)
@@ -251,6 +279,7 @@ class ElasticsearchMemoryRepository:
                             tool_names=context.tool_names or None,
                             failure_code=context.error_code or None,
                             size=candidate_k,
+                            num_candidates=self.settings.knn_num_candidates,
                         ),
                     )
                     branches["vector"] = _collect_branch(dict(vector_response), "vector", hits)
@@ -258,7 +287,10 @@ class ElasticsearchMemoryRepository:
                 raise SearchUnavailable(f"unsupported retrieval mode: {mode}")
         except TRANSPORT_ERRORS as exc:
             raise SearchUnavailable("Elasticsearch unavailable during search") from exc
-        except es_exceptions.RequestError as exc:
+        except es_exceptions.ApiError as exc:
+            # Includes RequestError and AuthorizationException. A native RRF
+            # request rejected by the licence must surface as unavailable, never
+            # as an empty result or a silent application-side fallback.
             raise SearchUnavailable(
                 "Elasticsearch rejected the query",
                 details={"error": str(exc.info) if hasattr(exc, "info") else str(exc)},

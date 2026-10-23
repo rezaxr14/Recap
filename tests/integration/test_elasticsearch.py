@@ -15,8 +15,11 @@ from elasticsearch import Elasticsearch
 from tests.support import context_for, make_memory
 
 from recap.domain.enums import MemoryStatus, RetrievalMode
+from recap.domain.memories import build_embedding_text, build_search_document
 from recap.domain.retrieval import RetrievalRequest
 from recap.errors import SearchUnavailable
+from recap.infrastructure.elasticsearch.hybrid_queries import build_lexical_query
+from recap.infrastructure.elasticsearch.mappings import memory_index_body
 from recap.infrastructure.elasticsearch.search_repository import (
     ElasticsearchMemoryRepository,
 )
@@ -47,12 +50,15 @@ def test_index_document_shape_is_strict_and_explicit(container, workspace_id: st
     assert source["workspace_id"] == workspace_id
     assert source["status"] == "active"
     assert source["failure_code"] == "INVALID_CURSOR"
-    assert len(source["content_embedding"]) == 256
+    # The vector is an index structure, not document content: it is excluded
+    # from _source so the index does not store it twice.
+    assert "content_embedding" not in source
     assert "api_key" not in source and "authorization" not in source
 
     mapping = container.es_client.indices.get_mapping(index=container.index_manager.write_index)
     properties = next(iter(mapping.values()))["mappings"]["properties"]
     assert next(iter(mapping.values()))["mappings"]["dynamic"] == "strict"
+    assert next(iter(mapping.values()))["mappings"]["_source"]["excludes"] == ["content_embedding"]
     assert properties["content_embedding"]["type"] == "dense_vector"
     assert properties["content_embedding"]["dims"] == 256
     assert properties["failure_signature"]["fields"]["keyword"]["type"] == "keyword"
@@ -214,6 +220,84 @@ def test_retired_memory_is_not_returned(container, workspace_id: str) -> None:
             )
         )
     assert decision.candidates == []
+
+
+def test_identifier_analyzer_matches_prose_against_an_error_code(
+    container, workspace_id: str
+) -> None:
+    memory = make_memory(
+        container,
+        workspace_id=workspace_id,
+        title="Recover from INVALID_CURSOR",
+        summary="Restart from page one.",
+        failure_signature="ValidationError|INVALID_CURSOR|list_records",
+        failure_code="INVALID_CURSOR",
+        environment_version="1",
+    )
+    document = build_search_document(memory)
+    document["content_embedding"] = container.embeddings.embed_documents(  # type: ignore[attr-defined]
+        [build_embedding_text(memory)]
+    )[0]
+    doc_id = f"{memory.id}:v1"
+    suffix = uuid.uuid4().hex[:8]
+    standard = f"recap-test-ident-standard-{suffix}"
+    identifier = f"recap-test-ident-analyzer-{suffix}"
+    dimension = container.settings.elasticsearch.vector_dimension
+    try:
+        for index, enabled in ((standard, False), (identifier, True)):
+            container.es_client.indices.create(
+                index=index,
+                **memory_index_body(dimension=dimension, identifier_analysis=enabled),
+            )
+            container.es_client.index(index=index, id=doc_id, document=document, refresh="wait_for")
+
+        def search(index: str, enabled: bool) -> list[str]:
+            response = container.es_client.search(
+                index=index,
+                **build_lexical_query(
+                    query="invalid cursor",
+                    workspace_id=workspace_id,
+                    allowed_statuses=["active"],
+                    pure=True,
+                    identifier_analysis=enabled,
+                ),
+            )
+            return [str(hit["_id"]) for hit in response["hits"]["hits"]]
+
+        assert doc_id not in search(standard, False)
+        assert doc_id in search(identifier, True)
+
+        standard_tokens = container.es_client.indices.analyze(
+            index=standard, field="failure_signature", text="INVALID_CURSOR"
+        )["tokens"]
+        identifier_tokens = container.es_client.indices.analyze(
+            index=identifier, field="failure_signature.identifier", text="INVALID_CURSOR"
+        )["tokens"]
+        assert [token["token"] for token in standard_tokens] == ["invalid_cursor"]
+        assert {"invalid_cursor", "invalid", "cursor"} <= {
+            token["token"] for token in identifier_tokens
+        }
+    finally:
+        for index in (standard, identifier):
+            container.es_client.indices.delete(index=index, ignore_unavailable=True)
+
+
+def test_native_rrf_failure_is_reported_not_silently_degraded(container, workspace_id: str) -> None:
+    license_type = container.es_client.license.get().get("license", {}).get("type")
+    if license_type != "basic":
+        pytest.skip("this test asserts the Basic-licence RRF failure")
+    settings = container.settings.elasticsearch.model_copy(deep=True)
+    settings.hybrid_strategy = "es_rrf"
+    repository = ElasticsearchMemoryRepository(container.es_client, settings)
+    embedding = container.embeddings.embed_query("invalid pagination cursor")  # type: ignore[attr-defined]
+    with pytest.raises(SearchUnavailable) as excinfo:
+        repository.search(
+            context=context_for(workspace_id=workspace_id, environment_version="1"),
+            mode="hybrid_rrf",
+            candidate_k=5,
+            embedding=embedding,
+        )
+    assert "license" in str(excinfo.value.details).lower()
 
 
 # ------------------------------------------------------------------ aliases

@@ -61,12 +61,15 @@ def live_settings(request: pytest.FixtureRequest) -> Settings:
     settings = base.model_copy(deep=True)
     settings.storage.postgres_url = TEST_DATABASE_URL
     settings.elasticsearch.url = TEST_ES_URL
-    settings.elasticsearch.index_prefix = "recap-test"
+    # Versioned test prefix: a mapping change (for example the identifier
+    # subfields or the _source vector exclusion) must land in a fresh index, and
+    # a leftover local test index must not decide what the suite measures.
+    settings.elasticsearch.index_prefix = "recap-test-es2"
     settings.elasticsearch.index_generation = 1
-    settings.elasticsearch.memories_read_alias = "recap-test-memories-read"
-    settings.elasticsearch.memories_write_alias = "recap-test-memories-write"
-    settings.elasticsearch.chunks_read_alias = "recap-test-chunks-read"
-    settings.elasticsearch.chunks_write_alias = "recap-test-chunks-write"
+    settings.elasticsearch.memories_read_alias = "recap-test-es2-memories-read"
+    settings.elasticsearch.memories_write_alias = "recap-test-es2-memories-write"
+    settings.elasticsearch.chunks_read_alias = "recap-test-es2-chunks-read"
+    settings.elasticsearch.chunks_write_alias = "recap-test-es2-chunks-write"
     settings.elasticsearch.chunks_index_generation = 2
     return settings
 

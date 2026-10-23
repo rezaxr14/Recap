@@ -22,6 +22,20 @@ elasticsearch:
   vector_dimension: 256
   hybrid_strategy: app_rrf
   rrf_k: 60
+  # Opt-in identifier subfields (INVALID_CURSOR <-> "invalid cursor"). Enabling
+  # this against an existing index is a hard configuration error: bump
+  # index_generation and reindex, because mappings cannot gain subfields in place.
+  # Measured on the v3 depth harness: no natural-language recall change, better
+  # identifier-probe MRR; see docs/evidence/phase4-retrieval-depth.md.
+  identifier_analysis: false
+  # Per-shard kNN candidate pool. 200 is the value used in the 100k latency run.
+  # The 10k depth harness found a small recall@3 gain at 500 with flat search
+  # latency, but changing the default needs a 100k sweep first.
+  knn_num_candidates: 200
+  # none | int8_hnsw. int8 reduces search memory but Elasticsearch keeps raw
+  # float vectors on disk (~25% overhead) and it lost recall in the measured run,
+  # so it is off by default and requires a new index generation.
+  dense_vector_quantization: none
 
 embeddings:
   # RECAP is API-first. Production semantic retrieval requires:

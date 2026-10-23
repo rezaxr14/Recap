@@ -35,6 +35,19 @@ and records both.
 The failure signature is a normalized `ErrorType|CODE|tool` string, so exact-failure
 matching dominates when present.
 
+For ablations, `build_lexical_query(..., pure=True)` uses equal-weight text fields and
+disables the exact-signature phrase and metadata boosts. This is the mode used by
+`scripts/retrieval_depth.py`; it keeps a retrieval comparison from quietly winning on
+metadata that a natural-language query would not have.
+
+Identifier analysis is opt-in (`ELASTICSEARCH_IDENTIFIER_ANALYSIS=true`). It adds a
+`recap_identifier` subfield to `title`, `summary`, `failure_signature`, and `failure_code`,
+built with `word_delimiter_graph`, case-change splitting, and `preserve_original`. That lets
+a prose query such as `invalid cursor` match `INVALID_CURSOR` without changing the stored
+value. The analyzer cannot be added to an existing mapping in place: enabling it against an
+old index raises `ConfigurationError` and requires a new generation plus
+`recap search reindex`.
+
 ### 2.2 Dense vector
 
 `knn` over `content_embedding` (cosine, HNSW; dimension comes from
@@ -52,6 +65,17 @@ exist; downloads are disabled.
 Changing the model or dimension requires a new index generation and a full reconcile. A
 mismatch fails before the index is created or written; vectors are never truncated or padded.
 
+kNN pre-filters on `workspace_id` and the allowed statuses **inside** the `knn` query. The
+pre-filter is not a post-processing step: a foreign-workspace vector is never a candidate.
+`elasticsearch.knn_num_candidates` controls the per-shard candidate pool (default 200). The
+mapping also excludes `content_embedding` from `_source`: the vector is an index structure,
+not document content, and keeping a second copy only inflates the store.
+
+`elasticsearch.dense_vector_quantization` is `none` (float32 `hnsw`) by default or
+`int8_hnsw`. Elasticsearch retains the raw float vectors on disk for rescoring and future
+quantization changes, so `int8` is a **search-memory** option, not a disk-size win. It also
+changes ranking, so it requires a new index generation and its own recall measurement.
+
 ### 2.3 Hybrid fusion
 
 Default: application-side Reciprocal Rank Fusion.
@@ -64,9 +88,14 @@ RRF is used rather than score normalization because BM25 scores and cosine simil
 not comparable and their distributions shift per query. Rank-based fusion needs no
 calibration.
 
-Native Elasticsearch RRF (`es_rrf`) is implemented in the DSL and selectable via
-`elasticsearch.hybrid_strategy`, but is not the default: the application-side path gives
-per-branch ranks and scores that are persisted in the decision record.
+Native Elasticsearch RRF (`es_rrf`) is implemented as an `rrf` retriever with `standard` and
+`knn` children and selectable via `elasticsearch.hybrid_strategy`. It is not the default for
+two reasons: the application-side path persists per-branch ranks and scores, and native RRF
+is licence-gated. On the measured Basic 8.19.3 node it returned
+`403 security_exception: current license is non-compliant for [Reciprocal Rank Fusion (RRF)]`.
+The configured path fails closed with `SearchUnavailable`; it never silently switches to
+application-side fusion. `app_rrf` therefore remains the only usable fusion path in this
+deployment.
 
 ### 2.4 Reranking (`hybrid_rerank`)
 
@@ -123,6 +152,43 @@ degenerate and is not presented as evidence of a chunking win.
 
 There is no silent fallback: if the chunk index is empty or unavailable, chunk retrieval
 reports a degraded/empty result rather than returning card hits under a chunk label.
+
+### 2.6 Measured depth (Phase 4.2)
+
+`scripts/retrieval_depth.py` builds the v3 gold memories and 10,000 decoys in memory, indexes
+them into temporary indices, and measures each retrieval layer against live Elasticsearch.
+The run below used the deterministic hashing embedder (256-d), not the live nomic model; it is
+an Elasticsearch-mechanics measurement, not a semantic-quality claim. Full provenance, raw
+numbers, and limitations: [`docs/evidence/phase4-retrieval-depth.md`](evidence/phase4-retrieval-depth.md).
+
+The table reports means over three repeats; the evidence page keeps the min-max range. HNSW is
+approximate, so a few candidate counts return slightly different rankings on repeated queries.
+
+| Experiment | Measured result |
+|---|---|
+| Identifier analyzer, 33 v3 natural-language queries | Recall@3 `0.818 -> 0.818`, MRR `0.500 -> 0.500` |
+| Identifier analyzer, 10 diagnostic identifier probes | MRR `0.933 -> 1.000`; recall@3 `1.000` both |
+| Pre-filtered kNN, `num_candidates` 50/100/200/500/1000 | `200`: recall@3 `0.394`; `500`: `0.424`; `1000`: `0.424`; search p50 ~`50 ms` throughout |
+| Application RRF | recall@3 `0.556`, recall@10 `1.000`, MRR `0.472`, p50 `130 ms` |
+| Native ES RRF | not usable: Basic licence `403` |
+| float32 `hnsw` vector branch | recall@3 `0.404`, MRR `0.322`, index `21.7 MB` |
+| `int8_hnsw` vector branch | recall@3 `0.212`, MRR `0.106`, index `24.2 MB` |
+
+The decisions follow the measurements rather than the feature list:
+
+- `app_rrf` stays the default. Native RRF cannot run on this licence; the flag fails closed
+  instead of falling back.
+- `knn_num_candidates=200` stays the default. On this 10k corpus, 500 gave slightly better
+  recall@3 (`0.424` vs `0.394`) with flat search latency, but 200 is the value used in the
+  100k latency run. Changing it needs a 100k sweep, not an inference from a 10k index.
+- `identifier_analysis` stays **off by default**. It is a precision tool for identifier-heavy
+  queries and needs a new index generation; it did not lift v3 natural-language recall.
+- `dense_vector_quantization=none` stays the default. `int8_hnsw` lost recall and is *larger*
+  on disk here because Elasticsearch retains raw float vectors for rescoring; it is a
+  search-memory trade-off, not a free win.
+
+These defaults are a negative result about feature maximalism, not a claim that the features
+are useless. Each is implemented, tested, and selectable with an explicit reindex path.
 
 ## 3. Hard filters
 

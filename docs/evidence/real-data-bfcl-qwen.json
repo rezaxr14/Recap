@@ -1,0 +1,360 @@
+{
+  "generated_at": "2026-10-30T08:03:36.926354+00:00",
+  "dataset": "gorilla-llm/Berkeley-Function-Calling-Leaderboard (BFCL v3)",
+  "source_hashes": {
+    "BFCL_v3_simple.json": "fbc37b2ad252bf9af985582e0e07b456173fe627d957491472ea9cef5fb83158",
+    "possible_answer/BFCL_v3_simple.json": "2911a2bc00df82c4f999ffa64fedb0164cb88e96212ffa5972087eb91fd496ee",
+    "BFCL_v3_exec_simple.json": "120eb383a8ec801b47e56d7337b61158944ae35b935c86e8d846948fa27215f6",
+    "BFCL_v3_irrelevance.json": "975f51c51f688649fd190078efd87081241e0a326f9114a2ea3c1ca2440d8690"
+  },
+  "labeled_tasks": 500,
+  "control_tasks": 240,
+  "dev_labeled": 264,
+  "test_labeled": 236,
+  "function_pool": 630,
+  "top_k": 10,
+  "bootstrap_resamples": 2000,
+  "rng_seed": 20261030,
+  "embedding": {
+    "provider": "sentence-transformers",
+    "model": "Qwen3-Embedding-0.6B",
+    "dimension": 1024
+  },
+  "rrf_k": 60,
+  "selected_variant": "vector",
+  "selection_rule": "highest dev hit@1, tie-broken by dev MRR; test never used",
+  "results": {
+    "bm25": {
+      "dev": {
+        "n_labeled": 264,
+        "n_controls": 124,
+        "hit_at_1": 0.5984848484848485,
+        "hit_at_1_ci95": [
+          0.5416666666666666,
+          0.6553977272727267
+        ],
+        "hit_at_3": 0.7689393939393939,
+        "hit_at_3_ci95": [
+          0.7159090909090909,
+          0.8181818181818182
+        ],
+        "hit_at_5": 0.8409090909090909,
+        "hit_at_5_ci95": [
+          0.7954545454545454,
+          0.8863636363636364
+        ],
+        "reciprocal_rank": 0.696804353054353,
+        "reciprocal_rank_ci95": [
+          0.6474821503727753,
+          0.744233893999519
+        ],
+        "auc_vs_irrelevance": 0.897146871945259,
+        "auc_vs_irrelevance_ci95": [
+          0.8559651454056696,
+          0.9323115224828934
+        ]
+      },
+      "test": {
+        "n_labeled": 236,
+        "n_controls": 116,
+        "hit_at_1": 0.6101694915254238,
+        "hit_at_1_ci95": [
+          0.5507415254237288,
+          0.6694915254237288
+        ],
+        "hit_at_3": 0.7584745762711864,
+        "hit_at_3_ci95": [
+          0.7033898305084746,
+          0.8094279661016943
+        ],
+        "hit_at_5": 0.8305084745762712,
+        "hit_at_5_ci95": [
+          0.7796610169491526,
+          0.8771186440677966
+        ],
+        "reciprocal_rank": 0.6995510492332526,
+        "reciprocal_rank_ci95": [
+          0.6483068082458971,
+          0.7486258239171375
+        ],
+        "auc_vs_irrelevance": 0.9097384570426651,
+        "auc_vs_irrelevance_ci95": [
+          0.8723316043249562,
+          0.941759661747516
+        ]
+      },
+      "abstention": {
+        "threshold": 4.70259459,
+        "test_labeled_coverage": 0.9364406779661016,
+        "test_control_abstention": 0.7413793103448276
+      }
+    },
+    "vector": {
+      "dev": {
+        "n_labeled": 264,
+        "n_controls": 124,
+        "hit_at_1": 0.75,
+        "hit_at_1_ci95": [
+          0.696969696969697,
+          0.803030303030303
+        ],
+        "hit_at_3": 0.9318181818181818,
+        "hit_at_3_ci95": [
+          0.9015151515151515,
+          0.9621212121212122
+        ],
+        "hit_at_5": 0.9659090909090909,
+        "hit_at_5_ci95": [
+          0.9431818181818182,
+          0.9848484848484849
+        ],
+        "reciprocal_rank": 0.8485675204425203,
+        "reciprocal_rank_ci95": [
+          0.8145315882034632,
+          0.8825907888407889
+        ],
+        "auc_vs_irrelevance": 0.9028592375366569,
+        "auc_vs_irrelevance_ci95": [
+          0.8714565004887586,
+          0.9316669721407624
+        ]
+      },
+      "test": {
+        "n_labeled": 236,
+        "n_controls": 116,
+        "hit_at_1": 0.7542372881355932,
+        "hit_at_1_ci95": [
+          0.6991525423728814,
+          0.809322033898305
+        ],
+        "hit_at_3": 0.9533898305084746,
+        "hit_at_3_ci95": [
+          0.923728813559322,
+          0.9788135593220338
+        ],
+        "hit_at_5": 0.9872881355932204,
+        "hit_at_5_ci95": [
+          0.9703389830508474,
+          1.0
+        ],
+        "reciprocal_rank": 0.8531073446327683,
+        "reciprocal_rank_ci95": [
+          0.8185019420903955,
+          0.8857353460451978
+        ],
+        "auc_vs_irrelevance": 0.9147793687901812,
+        "auc_vs_irrelevance_ci95": [
+          0.8839485315604909,
+          0.9408706531268264
+        ]
+      },
+      "abstention": {
+        "threshold": 0.5348076164446541,
+        "test_labeled_coverage": 0.9533898305084746,
+        "test_control_abstention": 0.6293103448275862
+      }
+    },
+    "hybrid_rrf_w1": {
+      "dev": {
+        "n_labeled": 264,
+        "n_controls": 124,
+        "hit_at_1": 0.7083333333333334,
+        "hit_at_1_ci95": [
+          0.6515151515151515,
+          0.7613636363636364
+        ],
+        "hit_at_3": 0.9053030303030303,
+        "hit_at_3_ci95": [
+          0.8674242424242424,
+          0.9356060606060606
+        ],
+        "hit_at_5": 0.9393939393939394,
+        "hit_at_5_ci95": [
+          0.9090909090909091,
+          0.9659090909090909
+        ],
+        "reciprocal_rank": 0.810147607022607,
+        "reciprocal_rank_ci95": [
+          0.7750414487133237,
+          0.8468147622053872
+        ],
+        "auc_vs_irrelevance": 0.8683406647116324,
+        "auc_vs_irrelevance_ci95": [
+          0.8246223576490713,
+          0.9079228525171066
+        ]
+      },
+      "test": {
+        "n_labeled": 236,
+        "n_controls": 116,
+        "hit_at_1": 0.6949152542372882,
+        "hit_at_1_ci95": [
+          0.635593220338983,
+          0.75
+        ],
+        "hit_at_3": 0.8898305084745762,
+        "hit_at_3_ci95": [
+          0.847457627118644,
+          0.9279661016949152
+        ],
+        "hit_at_5": 0.9661016949152542,
+        "hit_at_5_ci95": [
+          0.940677966101695,
+          0.9872881355932204
+        ],
+        "reciprocal_rank": 0.803346112456282,
+        "reciprocal_rank_ci95": [
+          0.7622663606403013,
+          0.8401598231100349
+        ],
+        "auc_vs_irrelevance": 0.9150715955581531,
+        "auc_vs_irrelevance_ci95": [
+          0.8788879858270018,
+          0.9499954339567505
+        ]
+      },
+      "abstention": {
+        "threshold": 0.016129032258064516,
+        "test_labeled_coverage": 0.9703389830508474,
+        "test_control_abstention": 0.7327586206896551
+      }
+    },
+    "hybrid_rrf_w2": {
+      "dev": {
+        "n_labeled": 264,
+        "n_controls": 124,
+        "hit_at_1": 0.7196969696969697,
+        "hit_at_1_ci95": [
+          0.6628787878787878,
+          0.7727272727272727
+        ],
+        "hit_at_3": 0.9166666666666666,
+        "hit_at_3_ci95": [
+          0.8825757575757576,
+          0.9470643939393935
+        ],
+        "hit_at_5": 0.9393939393939394,
+        "hit_at_5_ci95": [
+          0.9090909090909091,
+          0.9659090909090909
+        ],
+        "reciprocal_rank": 0.8226506132756133,
+        "reciprocal_rank_ci95": [
+          0.7876474567099566,
+          0.8556049332611833
+        ],
+        "auc_vs_irrelevance": 0.871868890518084,
+        "auc_vs_irrelevance_ci95": [
+          0.8275728555718475,
+          0.9133396719208211
+        ]
+      },
+      "test": {
+        "n_labeled": 236,
+        "n_controls": 116,
+        "hit_at_1": 0.7076271186440678,
+        "hit_at_1_ci95": [
+          0.652542372881356,
+          0.7669491525423728
+        ],
+        "hit_at_3": 0.902542372881356,
+        "hit_at_3_ci95": [
+          0.864406779661017,
+          0.9365466101694909
+        ],
+        "hit_at_5": 0.9830508474576272,
+        "hit_at_5_ci95": [
+          0.9661016949152542,
+          0.9957627118644068
+        ],
+        "reciprocal_rank": 0.8156191148775893,
+        "reciprocal_rank_ci95": [
+          0.7768929496233522,
+          0.8551577212806026
+        ],
+        "auc_vs_irrelevance": 0.9150533313851549,
+        "auc_vs_irrelevance_ci95": [
+          0.8775533313851548,
+          0.9507817066043249
+        ]
+      },
+      "abstention": {
+        "threshold": 0.03225806451612903,
+        "test_labeled_coverage": 0.9703389830508474,
+        "test_control_abstention": 0.7327586206896551
+      }
+    },
+    "hybrid_rrf_w3": {
+      "dev": {
+        "n_labeled": 264,
+        "n_controls": 124,
+        "hit_at_1": 0.7045454545454546,
+        "hit_at_1_ci95": [
+          0.6515151515151515,
+          0.7613636363636364
+        ],
+        "hit_at_3": 0.9166666666666666,
+        "hit_at_3_ci95": [
+          0.8825757575757576,
+          0.946969696969697
+        ],
+        "hit_at_5": 0.9393939393939394,
+        "hit_at_5_ci95": [
+          0.9090909090909091,
+          0.9696969696969697
+        ],
+        "reciprocal_rank": 0.8155167748917749,
+        "reciprocal_rank_ci95": [
+          0.7796086985930736,
+          0.8495393668831169
+        ],
+        "auc_vs_irrelevance": 0.8727547653958945,
+        "auc_vs_irrelevance_ci95": [
+          0.8293079484359727,
+          0.9128593139051808
+        ]
+      },
+      "test": {
+        "n_labeled": 236,
+        "n_controls": 116,
+        "hit_at_1": 0.711864406779661,
+        "hit_at_1_ci95": [
+          0.652542372881356,
+          0.7669491525423728
+        ],
+        "hit_at_3": 0.9067796610169492,
+        "hit_at_3_ci95": [
+          0.8686440677966102,
+          0.9449152542372882
+        ],
+        "hit_at_5": 0.9830508474576272,
+        "hit_at_5_ci95": [
+          0.9661016949152542,
+          0.9957627118644068
+        ],
+        "reciprocal_rank": 0.8173846516007532,
+        "reciprocal_rank_ci95": [
+          0.77920756826742,
+          0.8556567796610169
+        ],
+        "auc_vs_irrelevance": 0.9143592928112215,
+        "auc_vs_irrelevance_ci95": [
+          0.8762931034482758,
+          0.9491899839275277
+        ]
+      },
+      "abstention": {
+        "threshold": 0.04838709677419355,
+        "test_labeled_coverage": 0.9703389830508474,
+        "test_control_abstention": 0.7327586206896551
+      }
+    }
+  },
+  "limits": [
+    "Function-pool retrieval, not end-to-end function-call execution.",
+    "The pool is the 630 unique functions present in these BFCL files; it is not the full BFCL function universe.",
+    "Irrelevance controls score only the single function each task offers. That matches BFCL's definition (the provided function does not apply), but it is a matched single-candidate comparison, not a 630-way pool ranking.",
+    "BM25 scores are query-length sensitive, so its control AUC is a weaker diagnostic than the cosine and RRF ones.",
+    "The Qwen embedder is used without its recommended query instruction prefix, so its numbers are a lower bound for that model."
+  ]
+}

@@ -18,7 +18,14 @@ apply.** A memory that is textually similar can be stale, schema-incompatible, o
 verified track record. RECAP separates retrieval from selection so it can say *no safe
 memory* instead of confidently returning the wrong one.
 
-**Explore the recorded runs:** the recruiter-facing replay app in [`web/`](web/) is a
+The first real-data measurements are in
+[`docs/evidence/real-data-bfcl-qwen.md`](docs/evidence/real-data-bfcl-qwen.md) and
+[`docs/evidence/real-data-bfcl-transfer-qwen.md`](docs/evidence/real-data-bfcl-transfer-qwen.md):
+630 real BFCL functions, 500 labeled queries, and 48 paired failure-transfer scenarios. They
+show the retrieval core working, and they show that our current equal-weight RRF is
+*below* dense-only on real data.
+
+**Explore the recorded runs:** the static replay app in [`web/`](web/) is a
 no-build static page. It shows a silent-drift contrast, the v3 acceptance gate, the full
 baseline matrix, rejected candidates with reasons, and a report-grounded Q&A. The provenance
 bar separates deterministic evidence from live-model evidence. Run it with
@@ -44,7 +51,7 @@ a deterministic mock environment. Neither is a general LLM-capability claim. See
 | **Search** | Elasticsearch 8.19: BM25, dense vectors, hybrid RRF, card and chunk indices |
 | **Interfaces** | `recap` CLI, FastAPI HTTP API, Python package, static replay web app |
 | **Stack** | Python 3.12, FastAPI, SQLAlchemy 2, Alembic, Pydantic 2, Docker Compose |
-| **Verification** | `311 passed, 1 skipped` locally with `--run-integration`; real-service integration tests; benchmark reproducibility gate |
+| **Verification** | CI runs lint, typecheck, unit tests, and real-service integration tests on every push — [CI status](https://github.com/rezaxr14/Recap/actions/workflows/ci.yml); benchmark reproducibility gate |
 
 ---
 
@@ -67,7 +74,8 @@ Elasticsearch 8.19.3 node. There are no stub endpoints in the implemented paths.
 | Static + executing mock-sandbox validators | Working | `tests/unit/test_repair_compiler.py` |
 | Promotion gate (no bypass path) | Working | `tests/unit/test_repair_compiler.py`, `tests/integration/test_api.py` |
 | MemoryShift drift detection + revalidation queue | Working | `tests/integration/test_postgres.py`, demo step 8 |
-| Benchmark v3 (memory-required tiers, silent drift, 2,000 decoys, field-scoped compatibility) | Implemented; held-out deterministic matrix and dedicated integration smoke pass; live-model run recorded separately | `tests/unit/test_benchmark_v3.py`, `tests/integration/test_benchmark_v3.py`, `docs/benchmark-v3.md`, `docs/results-v3.md`, `docs/evidence/phase3b-v3-deterministic-test.md`, `docs/evidence/phase3b-v3-live-test.md` |
+| Real-data evaluation on BFCL v3 (630 real functions; 500 labeled queries; 240 irrelevance controls; 48 paired drift scenarios) | Working; retrieval and failure-memory transfer measured with Qwen3-Embedding-0.6B, committed JSON + reports | `scripts/bfcl_retrieval.py`, `scripts/bfcl_memory_transfer.py`, `docs/evidence/real-data-bfcl-*.md`, `docs/evidence/real-data-bfcl-*.json` |
+| Benchmark v3 (memory-required tiers, silent drift, 2,000 decoys, field-scoped compatibility) | Implemented; synthetic methodology suite retained as an audit trail, not real-data evidence | `tests/unit/test_benchmark_v3.py`, `tests/integration/test_benchmark_v3.py`, `docs/benchmark-v3.md`, `docs/results-v3.md`, `docs/evidence/phase3b-v3-deterministic-test.md` |
 | Benchmark v2 (10 failure families, 120 tasks, family-held-out splits) | Legacy ceiling/regression suite; both dev and held-out test run with real nomic embeddings and the live model | `tests/unit/test_benchmark_v2.py`, `tests/integration/test_benchmark_v2.py`, `docs/benchmark-v2.md`, `docs/evidence/phase2-summary.md`, `docs/evidence/phase3-llm-test-core/summary.md` |
 | Benchmark with card + chunk ablations and safety audit | Working (chunk ablation still degenerate on current data) | `recap eval run --suite v2`, `docs/results/2026-10-20-dev.md` |
 | Transactional outbox + retry worker | Working | `tests/unit/test_outbox_worker.py`, `recap search drain` |
@@ -159,7 +167,59 @@ public record. A local implementation log is intentionally not published.
   measure one configured model in a deterministic mock environment. Neither is a general LLM
   capability claim. Reports and `recap providers` state which mode produced a result.
 
+## Real-data results (BFCL v3)
+
+The numbers below use public, human-authored data from the Berkeley Function Calling
+Leaderboard (BFCL v3): real API schemas, real user requests, real gold arguments. There are
+no synthetic gold fixtures or synthetic decoys in these two experiments. Full protocol,
+provenance, and JSON reports are in
+[`docs/evidence/real-data-bfcl-qwen.md`](docs/evidence/real-data-bfcl-qwen.md) and
+[`docs/evidence/real-data-bfcl-transfer-qwen.md`](docs/evidence/real-data-bfcl-transfer-qwen.md).
+
+### Retrieval over 630 real functions
+
+500 labeled dev/test queries, 630 unique real function schemas, Qwen3-Embedding-0.6B
+(1024-d), dev/test split fixed by hash, RRF weight chosen on dev only. Test results:
+
+| Method | hit@1 (95% CI) | hit@3 | MRR@10 | AUC vs irrelevance | Abstain @95% coverage |
+|---|---:|---:|---:|---:|---:|
+| `bm25` | 0.610 [0.551, 0.669] | 0.758 | 0.700 | 0.910 | 0.741 |
+| `vector` (selected) | **0.754 [0.699, 0.809]** | **0.953** | **0.853** | **0.915** | 0.629 |
+| `hybrid_rrf` (equal weight) | 0.695 [0.636, 0.750] | 0.890 | 0.803 | 0.915 | 0.733 |
+
+The dense retriever wins, and equal-weight RRF is **worse than dense alone** (75.4% → 69.5%
+hit@1). Our current default fusion drags a strong dense model down with weaker lexical
+results. With the lexical hashing embedder the same fusion does help, so the fix is a
+weighted fusion or a reranker, not removing lexical retrieval.
+
+### Failure-memory transfer (48 paired real scenarios)
+
+Each scenario uses two different real queries for the same real function. One required
+parameter is renamed between episodes, the first call fails, the failure and repair are
+stored as one memory among 48, and the second call must be schema-valid. Success is a valid
+call, not a text match.
+
+| Method | Success (95% CI) | Memory hit@1 |
+|---|---:|---:|
+| `no_memory` / `retry_only` | 0.000 [0.000, 0.000] | n/a |
+| `bm25` memory | 0.229 [0.125, 0.333] | 0.167 |
+| `hybrid_rrf` memory | 0.354 [0.229, 0.500] | 0.292 |
+| `vector` memory | **0.938 [0.854, 1.000]** | **0.917** |
+| `function_keyed` (memory addressed by tool name) | 1.000 | n/a |
+| `oracle_memory` | 1.000 | n/a |
+
+The injected failure is scripted; the schemas, queries, and arguments are real BFCL data, and
+the report says so. Function selection is assumed correct, so this isolates memory transfer.
+
 ## Results snapshot (benchmark v3 held-out test)
+
+> **PRELIMINARY — SUPERSEDED METHODOLOGY. DO NOT CITE THESE NUMBERS.**
+> The tables below come from the pre-review v3 suite: filter baselines were
+> post-filters on top-1, the policy arm received gold-family metadata, three
+> Tier C families were solvable without memory, controls entered the headline,
+> and the displayed intervals were task-level. This is retained as an audit
+> trail for the synthetic methodology suite, not as the project's evidence.
+> Use the BFCL results above for real-data claims.
 
 The current suite asks a narrower question than v2: can the policy refuse a memory that is
 relevant but unsafe, and act when a field-scoped strategy is still compatible? These are

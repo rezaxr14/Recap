@@ -21,6 +21,13 @@ python -m http.server 8000 --directory web
 The third input is the live-model run. The exported catalog keeps it selectable but does not
 make it the default; the deterministic test artifact remains the headline.
 
+The real-data page (`real-data.html`) reads copies of the BFCL reports. Copy them first; CI does
+the same on deploy, so `web/data/` is gitignored:
+
+```bash
+mkdir -p web/data && cp docs/evidence/real-data-bfcl-*.json web/data/
+```
+
 Open <http://localhost:8000>. Serving over HTTP is required: the page uses `fetch()`.
 Opening `index.html` from the filesystem will show the explicit “replay data unavailable”
 message instead of silent empty charts.
@@ -28,7 +35,9 @@ message instead of silent empty charts.
 ## Deploy
 
 `web/` is plain HTML/CSS/JS plus `web/replay/*.json`. Any static host works. The repository
-includes a GitHub Pages workflow that publishes the directory on pushes to `main`.
+includes a GitHub Pages workflow that publishes the directory on pushes to `master` or `main`, and when a BFCL report in
+`docs/evidence/` changes. Pages must be enabled once under Settings -> Pages -> Source:
+GitHub Actions; the workflow cannot enable it with the default token.
 No build step and no credentials are required.
 
 If the site is deployed under a subpath, keep the relative URLs intact. The app only fetches

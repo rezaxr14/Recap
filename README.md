@@ -187,10 +187,11 @@ provenance, and JSON reports are in
 | `vector` (selected) | **0.754 [0.699, 0.809]** | **0.953** | **0.853** | **0.915** | 0.629 |
 | `hybrid_rrf` (equal weight) | 0.695 [0.636, 0.750] | 0.890 | 0.803 | 0.915 | 0.733 |
 
-The dense retriever wins, and equal-weight RRF is **worse than dense alone** (75.4% → 69.5%
-hit@1). Our current default fusion drags a strong dense model down with weaker lexical
-results. With the lexical hashing embedder the same fusion does help, so the fix is a
-weighted fusion or a reranker, not removing lexical retrieval.
+The dense retriever wins, and equal-weight RRF is below dense alone (75.4% → 69.5% hit@1; the
+intervals overlap and no paired test has been run yet). Weighting the dense list does not
+close the gap on test: ×2 gives 0.708 and ×3 gives 0.712 against 0.754 for dense. With the
+lexical hashing embedder, equal-weight RRF does help on retrieval (0.640 vs 0.610 BM25 and
+0.487 dense). Whether a better fusion rule or a reranker helps is still open.
 
 ### Failure-memory transfer (48 paired real scenarios)
 
@@ -209,7 +210,17 @@ call, not a text match.
 | `oracle_memory` | 1.000 | n/a |
 
 The injected failure is scripted; the schemas, queries, and arguments are real BFCL data, and
-the report says so. Function selection is assumed correct, so this isolates memory transfer.
+the report says so. Function selection is assumed correct. Read this table with three caveats:
+
+- `function_keyed` equals the oracle. When the tool name is known, a dictionary lookup solves
+  this test by construction, and memory success tracks retrieval hit@1. It measures matching a
+  natural-language query to a function name, not whether a memory is safe to apply.
+- Each memory is one repair sentence with no tool description, and the index uses the default
+  analyzer, so the BM25 and RRF rows are confounded by a starved lexical channel. With the
+  hashing embedder RRF (0.250) is also below dense (0.479). A rerun with identifier-aware
+  analysis is pending; do not cite the RRF row as a general fusion defect.
+- Every memory in the pool is valid for its target, so stale versions, unseen functions and
+  abstention are not exercised. These scripts do not run RECAP's selection policy.
 
 ## Results snapshot (benchmark v3 held-out test)
 

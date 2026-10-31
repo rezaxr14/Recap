@@ -5,6 +5,7 @@ on:
     branches: ["master", "main"]
     paths:
       - "web/**"
+      - "docs/evidence/real-data-bfcl-*.json"
       - ".github/workflows/pages.yml"
   workflow_dispatch:
 
@@ -26,10 +27,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Pages must be enabled once by hand: Settings -> Pages -> Source: GitHub Actions.
+      # configure-pages `enablement` needs a non-GITHUB_TOKEN credential, so it is not used.
       - name: Configure Pages
         uses: actions/configure-pages@v5
-        with:
-          enablement: true
+
+      - name: Sync BFCL reports into the site
+        run: |
+          mkdir -p web/data
+          cp docs/evidence/real-data-bfcl-*.json web/data/
+          test "$(ls web/data/*.json | wc -l)" -ge 4
 
       - name: Upload static site
         uses: actions/upload-pages-artifact@v3

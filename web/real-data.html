@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark light" />
+    <meta name="description" content="RECAP measured on real BFCL v3 data: tool retrieval over 630 functions and failure-memory transfer over 48 paired scenarios." />
+    <title>RECAP — measured on real BFCL data</title>
+    <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="styles.css" />
+    <style>
+      .callouts { display: grid; gap: 12px; margin: 22px 0 0; padding: 0; list-style: none; }
+      .callouts li { padding: 12px 16px; border-left: 3px solid var(--warn); background: var(--warn-soft); border-radius: 0 12px 12px 0; max-width: 78ch; }
+      .callouts li.info { border-color: var(--accent); background: var(--accent-soft); }
+      .controls { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin: 0 0 18px; }
+      td.sel, th.sel { font-weight: 600; color: var(--accent); }
+      .limits { max-width: 78ch; padding-left: 1.2em; }
+    </style>
+  </head>
+  <body>
+    <script>
+      try { const t = localStorage.getItem("recap-theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+    </script>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="site-header">
+      <a class="brand" href="index.html" aria-label="RECAP home"><span class="brand-mark" aria-hidden="true">R</span><span>RECAP</span></a>
+      <nav aria-label="Primary navigation">
+        <a href="#retrieval">Retrieval</a>
+        <a href="#transfer">Failure-memory transfer</a>
+        <a href="#limits">Limits</a>
+        <a href="index.html">Replay (synthetic audit trail)</a>
+      </nav>
+    </header>
+    <div class="provenance" id="provenance" role="status">Loading BFCL reports…</div>
+    <main id="main">
+      <section class="section" style="border-top:0">
+        <div class="section-heading">
+          <h1>Measured on real BFCL v3 data</h1>
+          <p class="section-note">Schemas, queries and gold arguments are real. The only injected element is the parameter rename in the transfer test. Neither experiment runs RECAP’s selection policy yet.</p>
+        </div>
+        <div class="controls">
+          <label for="emb">Embedder</label>
+          <select class="dataset-select" id="emb">
+            <option value="qwen">Qwen3-Embedding-0.6B (1024-d)</option>
+            <option value="hashing">Hashing, lexical (256-d)</option>
+          </select>
+        </div>
+        <ul class="callouts">
+          <li class="info">Retrieval is function selection over 630 real tool schemas. It is a proxy for RECAP, not the selection and safety pipeline.</li>
+          <li>Equal-weight RRF scores below dense on the Qwen run. Weighting the dense list ×2 or ×3 narrows the gap but does not close it.</li>
+        </ul>
+      </section>
+
+      <section class="section" id="retrieval">
+        <div class="section-heading"><h2>Retrieval over 630 real functions</h2><p class="section-note" id="retrieval-note"></p></div>
+        <div class="table-wrap" id="retrieval-table"></div>
+      </section>
+
+      <section class="section" id="transfer">
+        <div class="section-heading"><h2>Failure-memory transfer</h2><p class="section-note" id="transfer-note"></p></div>
+        <div class="table-wrap" id="transfer-table"></div>
+        <ul class="callouts">
+          <li><code>function_keyed</code> equals the oracle: when the tool name is known, a dictionary lookup solves this test by construction. Memory success here tracks retrieval hit@1.</li>
+          <li>Read the BM25 and RRF rows with care. Each memory is one repair sentence with no tool description, so the lexical channel has little to match. A rerun with identifier-aware analysis is pending, and until then these rows do not show a general fusion defect.</li>
+          <li>Every memory in the pool is valid for its target. Stale versions, unseen functions and abstention are not exercised.</li>
+        </ul>
+      </section>
+
+      <section class="section" id="limits">
+        <div class="section-heading"><h2>What this does not prove</h2></div>
+        <ul class="limits" id="limits-list"></ul>
+      </section>
+    </main>
+    <script src="real-data.js"></script>
+  </body>
+</html>

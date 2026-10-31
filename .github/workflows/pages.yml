@@ -25,7 +25,7 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Pages must be enabled once by hand: Settings -> Pages -> Source: GitHub Actions.
       # configure-pages `enablement` needs a non-GITHUB_TOKEN credential, so it is not used.

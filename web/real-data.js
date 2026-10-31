@@ -50,25 +50,56 @@ function provenance(ret, tr) {
   return `BFCL v3 · ${ret.labeled_tasks} labeled queries (dev ${ret.dev_labeled} / test ${ret.test_labeled}) · ${ret.control_tasks} irrelevance controls · ${ret.function_pool} functions · ${tr.scenarios} transfer scenarios · embedder ${e.model} (${e.dimension}-d) · generated ${String(ret.generated_at).slice(0, 10)}`;
 }
 
+function renderDelta(current, previous, kind) {
+  const rows = (kind === "retrieval" ? RETRIEVAL_ROWS : TRANSFER_ROWS)
+    .filter(([k]) => current.results[k] && previous.results[k])
+    .map(([k, label]) => {
+      const now = kind === "retrieval" ? current.results[k].test.hit_at_1 : current.results[k].success_rate;
+      const before = kind === "retrieval" ? previous.results[k].test.hit_at_1 : previous.results[k].success_rate;
+      const delta = now - before;
+      return [esc(label), num(before), num(now), `${delta >= 0 ? "+" : ""}${delta.toFixed(3)}`];
+    });
+  return table(["Method", "v1", "current", "change"], rows);
+}
+
+function pairedNote(report) {
+  const stats = (report.paired_vs_vector || {}).hybrid_rrf_w3_minus_vector;
+  if (!stats) return "";
+  return `Paired bootstrap on the same queries (test): RRF ×3 minus dense = ${stats.observed >= 0 ? "+" : ""}${stats.observed.toFixed(3)} [${stats.cluster_ci95[0].toFixed(3)}, ${stats.cluster_ci95[1].toFixed(3)}]; excludes zero: ${stats.excludes_zero}.`;
+}
+
 async function load(emb) {
   const get = async (name) => {
     const res = await fetch(`data/${name}-${emb}.json`);
     if (!res.ok) throw new Error(`${name}-${emb}.json: HTTP ${res.status}`);
     return res.json();
   };
-  const [ret, tr] = await Promise.all([get("real-data-bfcl"), get("real-data-bfcl-transfer")]);
-  return { ret, tr };
+  const getOptional = async (name) => {
+    const res = await fetch(`data/${name}-${emb}-v1.json`);
+    return res.ok ? res.json() : null;
+  };
+  const [ret, tr, retV1, trV1] = await Promise.all([
+    get("real-data-bfcl"),
+    get("real-data-bfcl-transfer"),
+    getOptional("real-data-bfcl"),
+    getOptional("real-data-bfcl-transfer"),
+  ]);
+  return { ret, tr, retV1, trV1 };
 }
 
 async function show(emb) {
   const $ = (s) => document.querySelector(s);
   try {
-    const { ret, tr } = await load(emb);
+    const { ret, tr, retV1, trV1 } = await load(emb);
     $("#provenance").textContent = provenance(ret, tr);
     $("#retrieval-table").innerHTML = renderRetrieval(ret);
     $("#transfer-table").innerHTML = renderTransfer(tr);
     $("#retrieval-note").textContent = `Test split, n=${ret.test_labeled}. RRF k=${ret.rrf_k}. Selection rule: ${ret.selection_rule}.`;
     $("#transfer-note").textContent = `${tr.scenarios} paired scenarios. ${tr.injected_failure}. Success means a schema-valid second call.`;
+    const delta = [];
+    if (retV1) delta.push(`<h3>Retrieval, test hit@1</h3>${renderDelta(ret, retV1, "retrieval")}<p class="section-note">${esc(pairedNote(ret))}</p>`);
+    if (trV1) delta.push(`<h3>Transfer, task success</h3>${renderDelta(tr, trV1, "transfer")}`);
+    $("#delta-tables").innerHTML = delta.join("") || "<p class=\"section-note\">Pre-fix reports are not deployed.</p>";
     $("#limits-list").innerHTML = [...ret.limits, ...tr.limits].map((l) => `<li>${esc(l)}</li>`).join("");
   } catch (err) {
     $("#provenance").textContent = `Report data unavailable: ${err.message}. Serve over HTTP and copy docs/evidence/real-data-bfcl-*.json into web/data/.`;
@@ -80,4 +111,4 @@ if (typeof document !== "undefined") {
   sel.addEventListener("change", () => show(sel.value));
   show(sel.value);
 }
-if (typeof module !== "undefined") module.exports = { renderRetrieval, renderTransfer, provenance };
+if (typeof module !== "undefined") module.exports = { renderRetrieval, renderTransfer, provenance, renderDelta, pairedNote };

@@ -26,6 +26,7 @@
       <a class="brand" href="index.html" aria-label="RECAP home"><span class="brand-mark" aria-hidden="true">R</span><span>RECAP</span></a>
       <nav aria-label="Primary navigation">
         <a href="#retrieval">Retrieval</a>
+        <a href="#delta">What changed</a>
         <a href="#transfer">Failure-memory transfer</a>
         <a href="#limits">Limits</a>
         <a href="index.html">Replay (synthetic audit trail)</a>
@@ -49,6 +50,14 @@
           <li class="info">Retrieval is function selection over 630 real tool schemas. It is a proxy for RECAP, not the selection and safety pipeline.</li>
           <li>Equal-weight RRF and ×2/×3 weighting all score below dense on the Qwen run. The paired bootstrap on the same queries excludes zero for every fusion row, so reweighting does not close the gap.</li>
         </ul>
+      </section>
+
+      <section class="section" id="delta">
+        <div class="section-heading">
+          <h2>What changed and why</h2>
+          <p class="section-note">The 2026-10-31 rerun fixed two confounds from the first report: queries now carry Qwen’s instruction prefix, and memory text includes the tool and parameter descriptions. Identifier analysis was tested and kept only where the field is an identifier (function name), not on prose descriptions. The pre-fix reports are kept beside the current ones as <code>-v1</code> so the change is visible.</p>
+        </div>
+        <div id="delta-tables"></div>
       </section>
 
       <section class="section" id="retrieval">

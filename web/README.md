@@ -21,8 +21,9 @@ python -m http.server 8000 --directory web
 The third input is the live-model run. The exported catalog keeps it selectable but does not
 make it the default; the deterministic test artifact remains the headline.
 
-The real-data page (`real-data.html`) reads copies of the BFCL reports. Copy them first; CI does
-the same on deploy, so `web/data/` is gitignored:
+The real-data page (`real-data.html`) reads copies of the BFCL reports, including the pre-fix
+`-v1` reports, so it can show old vs current side by side. Copy them first; CI does the same on
+deploy, so `web/data/` is gitignored:
 
 ```bash
 mkdir -p web/data && cp docs/evidence/real-data-bfcl-*.json web/data/

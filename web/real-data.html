@@ -47,7 +47,7 @@
         </div>
         <ul class="callouts">
           <li class="info">Retrieval is function selection over 630 real tool schemas. It is a proxy for RECAP, not the selection and safety pipeline.</li>
-          <li>Equal-weight RRF scores below dense on the Qwen run. Weighting the dense list ×2 or ×3 narrows the gap but does not close it.</li>
+          <li>Equal-weight RRF and ×2/×3 weighting all score below dense on the Qwen run. The paired bootstrap on the same queries excludes zero for every fusion row, so reweighting does not close the gap.</li>
         </ul>
       </section>
 
@@ -61,7 +61,7 @@
         <div class="table-wrap" id="transfer-table"></div>
         <ul class="callouts">
           <li><code>function_keyed</code> equals the oracle: when the tool name is known, a dictionary lookup solves this test by construction. Memory success here tracks retrieval hit@1.</li>
-          <li>Read the BM25 and RRF rows with care. Each memory is one repair sentence with no tool description, so the lexical channel has little to match. A rerun with identifier-aware analysis is pending, and until then these rows do not show a general fusion defect.</li>
+          <li>Read the BM25 and RRF rows with care. Each memory now carries the tool and parameter descriptions, and the lexical channel indexes the function name with identifier analysis and the prose with the standard analyzer. That analyzer split was chosen on the retrieval dev split, never on these 48 outcomes. RRF is still below dense on Qwen, and its paired interval includes zero.</li>
           <li>Every memory in the pool is valid for its target. Stale versions, unseen functions and abstention are not exercised.</li>
         </ul>
       </section>

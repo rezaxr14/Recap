@@ -13,7 +13,7 @@ Injected: one required parameter is renamed per function, so the first call fail
 | Item | Value |
 |---|---|
 | Dataset | `gorilla-llm/Berkeley-Function-Calling-Leaderboard (BFCL v3)` |
-| Generated | `2026-10-30T08:05:45.292398+00:00` |
+| Generated | `2026-10-31T16:38:27.538050+00:00` |
 | Scenarios (one per function) | 48 |
 | Embedder | `hashing` / `recap-hashing-embedding-v1` (256d) |
 | Injected failure | one required parameter renamed per function (old -> old_v2) |
@@ -24,11 +24,28 @@ Injected: one required parameter is renamed per function, so the first call fail
 |---|---:|---:|---:|
 | `no_memory` | 0/48 | 0.000 [0.000, 0.000] | n/a |
 | `retry_only` | 0/48 | 0.000 [0.000, 0.000] | n/a |
-| `bm25` | 11/48 | 0.229 [0.125, 0.333] | 0.167 |
-| `vector` | 23/48 | 0.479 [0.333, 0.625] | 0.417 |
-| `hybrid_rrf` | 12/48 | 0.250 [0.125, 0.375] | 0.208 |
+| `bm25` | 39/48 | 0.812 [0.688, 0.917] | 0.771 |
+| `vector` | 35/48 | 0.729 [0.604, 0.854] | 0.688 |
+| `hybrid_rrf` | 39/48 | 0.812 [0.688, 0.917] | 0.750 |
 | `function_keyed` | 48/48 | 1.000 [1.000, 1.000] | n/a |
 | `oracle_memory` | 48/48 | 1.000 [1.000, 1.000] | n/a |
+
+## Protocol change (2026-10-31)
+
+- Memory text now includes the tool description and parameter descriptions, not one repair sentence.
+- BM25 indexes the function name with identifier analysis and the memory prose with the standard analyzer. That split was selected on the retrieval dev split, never on these transfer outcomes.
+- Queries are embedded through embed_query with Qwen's instruction prefix.
+
+## Paired effects vs dense memory (same scenarios)
+
+| Comparison | Scenarios | Observed difference | 95% CI | Excludes zero |
+|---|---:|---:|---:|---|
+| `bm25_minus_vector` | 48 | +0.083 | [-0.042, +0.229] | False |
+| `hybrid_rrf_minus_vector` | 48 | +0.083 | [+0.000, +0.188] | False |
+| `no_memory_minus_vector` | 48 | -0.729 | [-0.854, -0.583] | True |
+| `retry_only_minus_vector` | 48 | -0.729 | [-0.854, -0.604] | True |
+| `function_keyed_minus_vector` | 48 | +0.271 | [+0.146, +0.396] | True |
+| `oracle_memory_minus_vector` | 48 | +0.271 | [+0.146, +0.396] | True |
 
 ## Limits
 

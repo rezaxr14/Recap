@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-30T08:06:50.113331+00:00",
+  "generated_at": "2026-10-31T16:50:55.903876+00:00",
   "dataset": "gorilla-llm/Berkeley-Function-Calling-Leaderboard (BFCL v3)",
   "source_hashes": {
     "BFCL_v3_simple.json": "fbc37b2ad252bf9af985582e0e07b456173fe627d957491472ea9cef5fb83158",
@@ -67,45 +67,45 @@
   "injected_failure": "one required parameter renamed per function (old -> old_v2)",
   "results": {
     "bm25": {
-      "success_rate": 0.22916666666666666,
+      "success_rate": 0.8125,
       "success_ci95": [
-        0.125,
-        0.3333333333333333
+        0.6875,
+        0.9166666666666666
       ],
-      "successes": 11,
+      "successes": 39,
       "n_scenarios": 48,
-      "retrieval_hit_at_1": 0.16666666666666666,
+      "retrieval_hit_at_1": 0.7708333333333334,
       "retrieval_hit_at_1_ci95": [
-        0.0625,
-        0.2916666666666667
+        0.6458333333333334,
+        0.875
       ]
     },
     "vector": {
-      "success_rate": 0.9375,
+      "success_rate": 0.9583333333333334,
       "success_ci95": [
-        0.8541666666666666,
+        0.8958333333333334,
         1.0
       ],
-      "successes": 45,
+      "successes": 46,
       "n_scenarios": 48,
-      "retrieval_hit_at_1": 0.9166666666666666,
+      "retrieval_hit_at_1": 0.9375,
       "retrieval_hit_at_1_ci95": [
-        0.8333333333333334,
-        0.9791666666666666
+        0.8541666666666666,
+        1.0
       ]
     },
     "hybrid_rrf": {
-      "success_rate": 0.3541666666666667,
+      "success_rate": 0.875,
       "success_ci95": [
-        0.22916666666666666,
-        0.5
+        0.7708333333333334,
+        0.9583333333333334
       ],
-      "successes": 17,
+      "successes": 42,
       "n_scenarios": 48,
-      "retrieval_hit_at_1": 0.2916666666666667,
+      "retrieval_hit_at_1": 0.8541666666666666,
       "retrieval_hit_at_1_ci95": [
-        0.16666666666666666,
-        0.4375
+        0.75,
+        0.9375
       ]
     },
     "no_memory": {
@@ -145,6 +145,1427 @@
       "n_scenarios": 48
     }
   },
+  "per_scenario": {
+    "bm25": [
+      {
+        "function": "add_binary_numbers",
+        "success": true
+      },
+      {
+        "function": "calc_binomial_probability",
+        "success": false
+      },
+      {
+        "function": "calculate_cosine_similarity",
+        "success": true
+      },
+      {
+        "function": "calculate_displacement",
+        "success": true
+      },
+      {
+        "function": "calculate_electrostatic_potential_energy",
+        "success": true
+      },
+      {
+        "function": "calculate_investment_value",
+        "success": true
+      },
+      {
+        "function": "calculate_mean",
+        "success": true
+      },
+      {
+        "function": "calculate_nutritional_needs",
+        "success": true
+      },
+      {
+        "function": "calculate_permutations",
+        "success": true
+      },
+      {
+        "function": "calculate_standard_deviation",
+        "success": true
+      },
+      {
+        "function": "calculate_triangle_area",
+        "success": true
+      },
+      {
+        "function": "estimate_derivative",
+        "success": false
+      },
+      {
+        "function": "find_term_on_urban_dictionary",
+        "success": true
+      },
+      {
+        "function": "geometry_area_circle",
+        "success": true
+      },
+      {
+        "function": "get_active_covid_case_by_country",
+        "success": true
+      },
+      {
+        "function": "get_company_name_by_stock_name",
+        "success": true
+      },
+      {
+        "function": "get_coordinate_by_ip_address",
+        "success": true
+      },
+      {
+        "function": "get_coordinates_from_city",
+        "success": false
+      },
+      {
+        "function": "get_covid_death_by_country",
+        "success": false
+      },
+      {
+        "function": "get_distance",
+        "success": true
+      },
+      {
+        "function": "get_fibonacci_sequence",
+        "success": true
+      },
+      {
+        "function": "get_movie_director",
+        "success": false
+      },
+      {
+        "function": "get_movie_rating",
+        "success": true
+      },
+      {
+        "function": "get_price_by_amazon_ASIN",
+        "success": true
+      },
+      {
+        "function": "get_product_name_by_amazon_ASIN",
+        "success": true
+      },
+      {
+        "function": "get_rating_by_amazon_ASIN",
+        "success": true
+      },
+      {
+        "function": "get_stock_history",
+        "success": true
+      },
+      {
+        "function": "get_stock_price_by_stock_name",
+        "success": true
+      },
+      {
+        "function": "get_time_zone_by_coord",
+        "success": false
+      },
+      {
+        "function": "get_weather_data",
+        "success": true
+      },
+      {
+        "function": "get_zipcode_by_ip_address",
+        "success": true
+      },
+      {
+        "function": "linear_regression",
+        "success": true
+      },
+      {
+        "function": "mat_mul",
+        "success": true
+      },
+      {
+        "function": "math.factorial",
+        "success": true
+      },
+      {
+        "function": "math.gcd",
+        "success": true
+      },
+      {
+        "function": "math_factorial",
+        "success": false
+      },
+      {
+        "function": "math_gcd",
+        "success": false
+      },
+      {
+        "function": "math_lcm",
+        "success": true
+      },
+      {
+        "function": "maxPoints",
+        "success": true
+      },
+      {
+        "function": "mortgage_calculator",
+        "success": true
+      },
+      {
+        "function": "order_food",
+        "success": true
+      },
+      {
+        "function": "polygon_area",
+        "success": false
+      },
+      {
+        "function": "quadratic_roots",
+        "success": true
+      },
+      {
+        "function": "retrieve_city_based_on_zipcode",
+        "success": true
+      },
+      {
+        "function": "retrieve_holiday_by_year",
+        "success": true
+      },
+      {
+        "function": "solve_quadratic",
+        "success": true
+      },
+      {
+        "function": "sort_array",
+        "success": true
+      },
+      {
+        "function": "sports_ranking",
+        "success": true
+      }
+    ],
+    "vector": [
+      {
+        "function": "add_binary_numbers",
+        "success": true
+      },
+      {
+        "function": "calc_binomial_probability",
+        "success": true
+      },
+      {
+        "function": "calculate_cosine_similarity",
+        "success": true
+      },
+      {
+        "function": "calculate_displacement",
+        "success": true
+      },
+      {
+        "function": "calculate_electrostatic_potential_energy",
+        "success": true
+      },
+      {
+        "function": "calculate_investment_value",
+        "success": true
+      },
+      {
+        "function": "calculate_mean",
+        "success": true
+      },
+      {
+        "function": "calculate_nutritional_needs",
+        "success": true
+      },
+      {
+        "function": "calculate_permutations",
+        "success": true
+      },
+      {
+        "function": "calculate_standard_deviation",
+        "success": true
+      },
+      {
+        "function": "calculate_triangle_area",
+        "success": true
+      },
+      {
+        "function": "estimate_derivative",
+        "success": true
+      },
+      {
+        "function": "find_term_on_urban_dictionary",
+        "success": true
+      },
+      {
+        "function": "geometry_area_circle",
+        "success": true
+      },
+      {
+        "function": "get_active_covid_case_by_country",
+        "success": true
+      },
+      {
+        "function": "get_company_name_by_stock_name",
+        "success": true
+      },
+      {
+        "function": "get_coordinate_by_ip_address",
+        "success": true
+      },
+      {
+        "function": "get_coordinates_from_city",
+        "success": true
+      },
+      {
+        "function": "get_covid_death_by_country",
+        "success": true
+      },
+      {
+        "function": "get_distance",
+        "success": true
+      },
+      {
+        "function": "get_fibonacci_sequence",
+        "success": true
+      },
+      {
+        "function": "get_movie_director",
+        "success": true
+      },
+      {
+        "function": "get_movie_rating",
+        "success": true
+      },
+      {
+        "function": "get_price_by_amazon_ASIN",
+        "success": true
+      },
+      {
+        "function": "get_product_name_by_amazon_ASIN",
+        "success": true
+      },
+      {
+        "function": "get_rating_by_amazon_ASIN",
+        "success": true
+      },
+      {
+        "function": "get_stock_history",
+        "success": true
+      },
+      {
+        "function": "get_stock_price_by_stock_name",
+        "success": true
+      },
+      {
+        "function": "get_time_zone_by_coord",
+        "success": true
+      },
+      {
+        "function": "get_weather_data",
+        "success": true
+      },
+      {
+        "function": "get_zipcode_by_ip_address",
+        "success": true
+      },
+      {
+        "function": "linear_regression",
+        "success": true
+      },
+      {
+        "function": "mat_mul",
+        "success": true
+      },
+      {
+        "function": "math.factorial",
+        "success": true
+      },
+      {
+        "function": "math.gcd",
+        "success": true
+      },
+      {
+        "function": "math_factorial",
+        "success": false
+      },
+      {
+        "function": "math_gcd",
+        "success": false
+      },
+      {
+        "function": "math_lcm",
+        "success": true
+      },
+      {
+        "function": "maxPoints",
+        "success": true
+      },
+      {
+        "function": "mortgage_calculator",
+        "success": true
+      },
+      {
+        "function": "order_food",
+        "success": true
+      },
+      {
+        "function": "polygon_area",
+        "success": true
+      },
+      {
+        "function": "quadratic_roots",
+        "success": true
+      },
+      {
+        "function": "retrieve_city_based_on_zipcode",
+        "success": true
+      },
+      {
+        "function": "retrieve_holiday_by_year",
+        "success": true
+      },
+      {
+        "function": "solve_quadratic",
+        "success": true
+      },
+      {
+        "function": "sort_array",
+        "success": true
+      },
+      {
+        "function": "sports_ranking",
+        "success": true
+      }
+    ],
+    "hybrid_rrf": [
+      {
+        "function": "add_binary_numbers",
+        "success": true
+      },
+      {
+        "function": "calc_binomial_probability",
+        "success": true
+      },
+      {
+        "function": "calculate_cosine_similarity",
+        "success": true
+      },
+      {
+        "function": "calculate_displacement",
+        "success": true
+      },
+      {
+        "function": "calculate_electrostatic_potential_energy",
+        "success": true
+      },
+      {
+        "function": "calculate_investment_value",
+        "success": true
+      },
+      {
+        "function": "calculate_mean",
+        "success": true
+      },
+      {
+        "function": "calculate_nutritional_needs",
+        "success": true
+      },
+      {
+        "function": "calculate_permutations",
+        "success": true
+      },
+      {
+        "function": "calculate_standard_deviation",
+        "success": true
+      },
+      {
+        "function": "calculate_triangle_area",
+        "success": true
+      },
+      {
+        "function": "estimate_derivative",
+        "success": false
+      },
+      {
+        "function": "find_term_on_urban_dictionary",
+        "success": true
+      },
+      {
+        "function": "geometry_area_circle",
+        "success": true
+      },
+      {
+        "function": "get_active_covid_case_by_country",
+        "success": true
+      },
+      {
+        "function": "get_company_name_by_stock_name",
+        "success": true
+      },
+      {
+        "function": "get_coordinate_by_ip_address",
+        "success": true
+      },
+      {
+        "function": "get_coordinates_from_city",
+        "success": false
+      },
+      {
+        "function": "get_covid_death_by_country",
+        "success": true
+      },
+      {
+        "function": "get_distance",
+        "success": true
+      },
+      {
+        "function": "get_fibonacci_sequence",
+        "success": true
+      },
+      {
+        "function": "get_movie_director",
+        "success": false
+      },
+      {
+        "function": "get_movie_rating",
+        "success": true
+      },
+      {
+        "function": "get_price_by_amazon_ASIN",
+        "success": true
+      },
+      {
+        "function": "get_product_name_by_amazon_ASIN",
+        "success": true
+      },
+      {
+        "function": "get_rating_by_amazon_ASIN",
+        "success": true
+      },
+      {
+        "function": "get_stock_history",
+        "success": true
+      },
+      {
+        "function": "get_stock_price_by_stock_name",
+        "success": true
+      },
+      {
+        "function": "get_time_zone_by_coord",
+        "success": false
+      },
+      {
+        "function": "get_weather_data",
+        "success": true
+      },
+      {
+        "function": "get_zipcode_by_ip_address",
+        "success": true
+      },
+      {
+        "function": "linear_regression",
+        "success": true
+      },
+      {
+        "function": "mat_mul",
+        "success": true
+      },
+      {
+        "function": "math.factorial",
+        "success": true
+      },
+      {
+        "function": "math.gcd",
+        "success": true
+      },
+      {
+        "function": "math_factorial",
+        "success": false
+      },
+      {
+        "function": "math_gcd",
+        "success": true
+      },
+      {
+        "function": "math_lcm",
+        "success": true
+      },
+      {
+        "function": "maxPoints",
+        "success": true
+      },
+      {
+        "function": "mortgage_calculator",
+        "success": true
+      },
+      {
+        "function": "order_food",
+        "success": true
+      },
+      {
+        "function": "polygon_area",
+        "success": false
+      },
+      {
+        "function": "quadratic_roots",
+        "success": true
+      },
+      {
+        "function": "retrieve_city_based_on_zipcode",
+        "success": true
+      },
+      {
+        "function": "retrieve_holiday_by_year",
+        "success": true
+      },
+      {
+        "function": "solve_quadratic",
+        "success": true
+      },
+      {
+        "function": "sort_array",
+        "success": true
+      },
+      {
+        "function": "sports_ranking",
+        "success": true
+      }
+    ],
+    "no_memory": [
+      {
+        "function": "add_binary_numbers",
+        "success": false
+      },
+      {
+        "function": "calc_binomial_probability",
+        "success": false
+      },
+      {
+        "function": "calculate_cosine_similarity",
+        "success": false
+      },
+      {
+        "function": "calculate_displacement",
+        "success": false
+      },
+      {
+        "function": "calculate_electrostatic_potential_energy",
+        "success": false
+      },
+      {
+        "function": "calculate_investment_value",
+        "success": false
+      },
+      {
+        "function": "calculate_mean",
+        "success": false
+      },
+      {
+        "function": "calculate_nutritional_needs",
+        "success": false
+      },
+      {
+        "function": "calculate_permutations",
+        "success": false
+      },
+      {
+        "function": "calculate_standard_deviation",
+        "success": false
+      },
+      {
+        "function": "calculate_triangle_area",
+        "success": false
+      },
+      {
+        "function": "estimate_derivative",
+        "success": false
+      },
+      {
+        "function": "find_term_on_urban_dictionary",
+        "success": false
+      },
+      {
+        "function": "geometry_area_circle",
+        "success": false
+      },
+      {
+        "function": "get_active_covid_case_by_country",
+        "success": false
+      },
+      {
+        "function": "get_company_name_by_stock_name",
+        "success": false
+      },
+      {
+        "function": "get_coordinate_by_ip_address",
+        "success": false
+      },
+      {
+        "function": "get_coordinates_from_city",
+        "success": false
+      },
+      {
+        "function": "get_covid_death_by_country",
+        "success": false
+      },
+      {
+        "function": "get_distance",
+        "success": false
+      },
+      {
+        "function": "get_fibonacci_sequence",
+        "success": false
+      },
+      {
+        "function": "get_movie_director",
+        "success": false
+      },
+      {
+        "function": "get_movie_rating",
+        "success": false
+      },
+      {
+        "function": "get_price_by_amazon_ASIN",
+        "success": false
+      },
+      {
+        "function": "get_product_name_by_amazon_ASIN",
+        "success": false
+      },
+      {
+        "function": "get_rating_by_amazon_ASIN",
+        "success": false
+      },
+      {
+        "function": "get_stock_history",
+        "success": false
+      },
+      {
+        "function": "get_stock_price_by_stock_name",
+        "success": false
+      },
+      {
+        "function": "get_time_zone_by_coord",
+        "success": false
+      },
+      {
+        "function": "get_weather_data",
+        "success": false
+      },
+      {
+        "function": "get_zipcode_by_ip_address",
+        "success": false
+      },
+      {
+        "function": "linear_regression",
+        "success": false
+      },
+      {
+        "function": "mat_mul",
+        "success": false
+      },
+      {
+        "function": "math.factorial",
+        "success": false
+      },
+      {
+        "function": "math.gcd",
+        "success": false
+      },
+      {
+        "function": "math_factorial",
+        "success": false
+      },
+      {
+        "function": "math_gcd",
+        "success": false
+      },
+      {
+        "function": "math_lcm",
+        "success": false
+      },
+      {
+        "function": "maxPoints",
+        "success": false
+      },
+      {
+        "function": "mortgage_calculator",
+        "success": false
+      },
+      {
+        "function": "order_food",
+        "success": false
+      },
+      {
+        "function": "polygon_area",
+        "success": false
+      },
+      {
+        "function": "quadratic_roots",
+        "success": false
+      },
+      {
+        "function": "retrieve_city_based_on_zipcode",
+        "success": false
+      },
+      {
+        "function": "retrieve_holiday_by_year",
+        "success": false
+      },
+      {
+        "function": "solve_quadratic",
+        "success": false
+      },
+      {
+        "function": "sort_array",
+        "success": false
+      },
+      {
+        "function": "sports_ranking",
+        "success": false
+      }
+    ],
+    "retry_only": [
+      {
+        "function": "add_binary_numbers",
+        "success": false
+      },
+      {
+        "function": "calc_binomial_probability",
+        "success": false
+      },
+      {
+        "function": "calculate_cosine_similarity",
+        "success": false
+      },
+      {
+        "function": "calculate_displacement",
+        "success": false
+      },
+      {
+        "function": "calculate_electrostatic_potential_energy",
+        "success": false
+      },
+      {
+        "function": "calculate_investment_value",
+        "success": false
+      },
+      {
+        "function": "calculate_mean",
+        "success": false
+      },
+      {
+        "function": "calculate_nutritional_needs",
+        "success": false
+      },
+      {
+        "function": "calculate_permutations",
+        "success": false
+      },
+      {
+        "function": "calculate_standard_deviation",
+        "success": false
+      },
+      {
+        "function": "calculate_triangle_area",
+        "success": false
+      },
+      {
+        "function": "estimate_derivative",
+        "success": false
+      },
+      {
+        "function": "find_term_on_urban_dictionary",
+        "success": false
+      },
+      {
+        "function": "geometry_area_circle",
+        "success": false
+      },
+      {
+        "function": "get_active_covid_case_by_country",
+        "success": false
+      },
+      {
+        "function": "get_company_name_by_stock_name",
+        "success": false
+      },
+      {
+        "function": "get_coordinate_by_ip_address",
+        "success": false
+      },
+      {
+        "function": "get_coordinates_from_city",
+        "success": false
+      },
+      {
+        "function": "get_covid_death_by_country",
+        "success": false
+      },
+      {
+        "function": "get_distance",
+        "success": false
+      },
+      {
+        "function": "get_fibonacci_sequence",
+        "success": false
+      },
+      {
+        "function": "get_movie_director",
+        "success": false
+      },
+      {
+        "function": "get_movie_rating",
+        "success": false
+      },
+      {
+        "function": "get_price_by_amazon_ASIN",
+        "success": false
+      },
+      {
+        "function": "get_product_name_by_amazon_ASIN",
+        "success": false
+      },
+      {
+        "function": "get_rating_by_amazon_ASIN",
+        "success": false
+      },
+      {
+        "function": "get_stock_history",
+        "success": false
+      },
+      {
+        "function": "get_stock_price_by_stock_name",
+        "success": false
+      },
+      {
+        "function": "get_time_zone_by_coord",
+        "success": false
+      },
+      {
+        "function": "get_weather_data",
+        "success": false
+      },
+      {
+        "function": "get_zipcode_by_ip_address",
+        "success": false
+      },
+      {
+        "function": "linear_regression",
+        "success": false
+      },
+      {
+        "function": "mat_mul",
+        "success": false
+      },
+      {
+        "function": "math.factorial",
+        "success": false
+      },
+      {
+        "function": "math.gcd",
+        "success": false
+      },
+      {
+        "function": "math_factorial",
+        "success": false
+      },
+      {
+        "function": "math_gcd",
+        "success": false
+      },
+      {
+        "function": "math_lcm",
+        "success": false
+      },
+      {
+        "function": "maxPoints",
+        "success": false
+      },
+      {
+        "function": "mortgage_calculator",
+        "success": false
+      },
+      {
+        "function": "order_food",
+        "success": false
+      },
+      {
+        "function": "polygon_area",
+        "success": false
+      },
+      {
+        "function": "quadratic_roots",
+        "success": false
+      },
+      {
+        "function": "retrieve_city_based_on_zipcode",
+        "success": false
+      },
+      {
+        "function": "retrieve_holiday_by_year",
+        "success": false
+      },
+      {
+        "function": "solve_quadratic",
+        "success": false
+      },
+      {
+        "function": "sort_array",
+        "success": false
+      },
+      {
+        "function": "sports_ranking",
+        "success": false
+      }
+    ],
+    "function_keyed": [
+      {
+        "function": "add_binary_numbers",
+        "success": true
+      },
+      {
+        "function": "calc_binomial_probability",
+        "success": true
+      },
+      {
+        "function": "calculate_cosine_similarity",
+        "success": true
+      },
+      {
+        "function": "calculate_displacement",
+        "success": true
+      },
+      {
+        "function": "calculate_electrostatic_potential_energy",
+        "success": true
+      },
+      {
+        "function": "calculate_investment_value",
+        "success": true
+      },
+      {
+        "function": "calculate_mean",
+        "success": true
+      },
+      {
+        "function": "calculate_nutritional_needs",
+        "success": true
+      },
+      {
+        "function": "calculate_permutations",
+        "success": true
+      },
+      {
+        "function": "calculate_standard_deviation",
+        "success": true
+      },
+      {
+        "function": "calculate_triangle_area",
+        "success": true
+      },
+      {
+        "function": "estimate_derivative",
+        "success": true
+      },
+      {
+        "function": "find_term_on_urban_dictionary",
+        "success": true
+      },
+      {
+        "function": "geometry_area_circle",
+        "success": true
+      },
+      {
+        "function": "get_active_covid_case_by_country",
+        "success": true
+      },
+      {
+        "function": "get_company_name_by_stock_name",
+        "success": true
+      },
+      {
+        "function": "get_coordinate_by_ip_address",
+        "success": true
+      },
+      {
+        "function": "get_coordinates_from_city",
+        "success": true
+      },
+      {
+        "function": "get_covid_death_by_country",
+        "success": true
+      },
+      {
+        "function": "get_distance",
+        "success": true
+      },
+      {
+        "function": "get_fibonacci_sequence",
+        "success": true
+      },
+      {
+        "function": "get_movie_director",
+        "success": true
+      },
+      {
+        "function": "get_movie_rating",
+        "success": true
+      },
+      {
+        "function": "get_price_by_amazon_ASIN",
+        "success": true
+      },
+      {
+        "function": "get_product_name_by_amazon_ASIN",
+        "success": true
+      },
+      {
+        "function": "get_rating_by_amazon_ASIN",
+        "success": true
+      },
+      {
+        "function": "get_stock_history",
+        "success": true
+      },
+      {
+        "function": "get_stock_price_by_stock_name",
+        "success": true
+      },
+      {
+        "function": "get_time_zone_by_coord",
+        "success": true
+      },
+      {
+        "function": "get_weather_data",
+        "success": true
+      },
+      {
+        "function": "get_zipcode_by_ip_address",
+        "success": true
+      },
+      {
+        "function": "linear_regression",
+        "success": true
+      },
+      {
+        "function": "mat_mul",
+        "success": true
+      },
+      {
+        "function": "math.factorial",
+        "success": true
+      },
+      {
+        "function": "math.gcd",
+        "success": true
+      },
+      {
+        "function": "math_factorial",
+        "success": true
+      },
+      {
+        "function": "math_gcd",
+        "success": true
+      },
+      {
+        "function": "math_lcm",
+        "success": true
+      },
+      {
+        "function": "maxPoints",
+        "success": true
+      },
+      {
+        "function": "mortgage_calculator",
+        "success": true
+      },
+      {
+        "function": "order_food",
+        "success": true
+      },
+      {
+        "function": "polygon_area",
+        "success": true
+      },
+      {
+        "function": "quadratic_roots",
+        "success": true
+      },
+      {
+        "function": "retrieve_city_based_on_zipcode",
+        "success": true
+      },
+      {
+        "function": "retrieve_holiday_by_year",
+        "success": true
+      },
+      {
+        "function": "solve_quadratic",
+        "success": true
+      },
+      {
+        "function": "sort_array",
+        "success": true
+      },
+      {
+        "function": "sports_ranking",
+        "success": true
+      }
+    ],
+    "oracle_memory": [
+      {
+        "function": "add_binary_numbers",
+        "success": true
+      },
+      {
+        "function": "calc_binomial_probability",
+        "success": true
+      },
+      {
+        "function": "calculate_cosine_similarity",
+        "success": true
+      },
+      {
+        "function": "calculate_displacement",
+        "success": true
+      },
+      {
+        "function": "calculate_electrostatic_potential_energy",
+        "success": true
+      },
+      {
+        "function": "calculate_investment_value",
+        "success": true
+      },
+      {
+        "function": "calculate_mean",
+        "success": true
+      },
+      {
+        "function": "calculate_nutritional_needs",
+        "success": true
+      },
+      {
+        "function": "calculate_permutations",
+        "success": true
+      },
+      {
+        "function": "calculate_standard_deviation",
+        "success": true
+      },
+      {
+        "function": "calculate_triangle_area",
+        "success": true
+      },
+      {
+        "function": "estimate_derivative",
+        "success": true
+      },
+      {
+        "function": "find_term_on_urban_dictionary",
+        "success": true
+      },
+      {
+        "function": "geometry_area_circle",
+        "success": true
+      },
+      {
+        "function": "get_active_covid_case_by_country",
+        "success": true
+      },
+      {
+        "function": "get_company_name_by_stock_name",
+        "success": true
+      },
+      {
+        "function": "get_coordinate_by_ip_address",
+        "success": true
+      },
+      {
+        "function": "get_coordinates_from_city",
+        "success": true
+      },
+      {
+        "function": "get_covid_death_by_country",
+        "success": true
+      },
+      {
+        "function": "get_distance",
+        "success": true
+      },
+      {
+        "function": "get_fibonacci_sequence",
+        "success": true
+      },
+      {
+        "function": "get_movie_director",
+        "success": true
+      },
+      {
+        "function": "get_movie_rating",
+        "success": true
+      },
+      {
+        "function": "get_price_by_amazon_ASIN",
+        "success": true
+      },
+      {
+        "function": "get_product_name_by_amazon_ASIN",
+        "success": true
+      },
+      {
+        "function": "get_rating_by_amazon_ASIN",
+        "success": true
+      },
+      {
+        "function": "get_stock_history",
+        "success": true
+      },
+      {
+        "function": "get_stock_price_by_stock_name",
+        "success": true
+      },
+      {
+        "function": "get_time_zone_by_coord",
+        "success": true
+      },
+      {
+        "function": "get_weather_data",
+        "success": true
+      },
+      {
+        "function": "get_zipcode_by_ip_address",
+        "success": true
+      },
+      {
+        "function": "linear_regression",
+        "success": true
+      },
+      {
+        "function": "mat_mul",
+        "success": true
+      },
+      {
+        "function": "math.factorial",
+        "success": true
+      },
+      {
+        "function": "math.gcd",
+        "success": true
+      },
+      {
+        "function": "math_factorial",
+        "success": true
+      },
+      {
+        "function": "math_gcd",
+        "success": true
+      },
+      {
+        "function": "math_lcm",
+        "success": true
+      },
+      {
+        "function": "maxPoints",
+        "success": true
+      },
+      {
+        "function": "mortgage_calculator",
+        "success": true
+      },
+      {
+        "function": "order_food",
+        "success": true
+      },
+      {
+        "function": "polygon_area",
+        "success": true
+      },
+      {
+        "function": "quadratic_roots",
+        "success": true
+      },
+      {
+        "function": "retrieve_city_based_on_zipcode",
+        "success": true
+      },
+      {
+        "function": "retrieve_holiday_by_year",
+        "success": true
+      },
+      {
+        "function": "solve_quadratic",
+        "success": true
+      },
+      {
+        "function": "sort_array",
+        "success": true
+      },
+      {
+        "function": "sports_ranking",
+        "success": true
+      }
+    ]
+  },
+  "paired_vs_vector": {
+    "bm25_minus_vector": {
+      "n_scenarios": 48,
+      "observed": -0.14583333333333334,
+      "cluster_ci95": [
+        -0.25,
+        -0.0625
+      ],
+      "excludes_zero": true
+    },
+    "hybrid_rrf_minus_vector": {
+      "n_scenarios": 48,
+      "observed": -0.08333333333333333,
+      "cluster_ci95": [
+        -0.1875,
+        0.0
+      ],
+      "excludes_zero": false
+    },
+    "no_memory_minus_vector": {
+      "n_scenarios": 48,
+      "observed": -0.9583333333333334,
+      "cluster_ci95": [
+        -1.0,
+        -0.8958333333333334
+      ],
+      "excludes_zero": true
+    },
+    "retry_only_minus_vector": {
+      "n_scenarios": 48,
+      "observed": -0.9583333333333334,
+      "cluster_ci95": [
+        -1.0,
+        -0.8958333333333334
+      ],
+      "excludes_zero": true
+    },
+    "function_keyed_minus_vector": {
+      "n_scenarios": 48,
+      "observed": 0.041666666666666664,
+      "cluster_ci95": [
+        0.0,
+        0.10416666666666667
+      ],
+      "excludes_zero": false
+    },
+    "oracle_memory_minus_vector": {
+      "n_scenarios": 48,
+      "observed": 0.041666666666666664,
+      "cluster_ci95": [
+        0.0,
+        0.10416666666666667
+      ],
+      "excludes_zero": false
+    }
+  },
+  "protocol_changes": [
+    "Memory text now includes the tool description and parameter descriptions, not one repair sentence.",
+    "BM25 indexes the function name with identifier analysis and the memory prose with the standard analyzer. That split was selected on the retrieval dev split, never on these transfer outcomes.",
+    "Queries are embedded through embed_query with Qwen's instruction prefix."
+  ],
   "limits": [
     "The failure is scripted: one required parameter is renamed on the real BFCL schema. No production failure log was used.",
     "Queries, schemas, and gold arguments are real BFCL data.",

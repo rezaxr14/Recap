@@ -179,46 +179,59 @@ provenance, and JSON reports are in
 ### Retrieval over 630 real functions
 
 500 labeled dev/test queries, 630 unique real function schemas, Qwen3-Embedding-0.6B
-(1024-d), dev/test split fixed by hash, RRF weight chosen on dev only. Test results:
+(1024-d), dev/test split fixed by hash, RRF weight chosen on dev only, test read once. Test
+results:
 
 | Method | hit@1 (95% CI) | hit@3 | MRR@10 | AUC vs irrelevance | Abstain @95% coverage |
 |---|---:|---:|---:|---:|---:|
 | `bm25` | 0.610 [0.551, 0.669] | 0.758 | 0.700 | 0.910 | 0.741 |
-| `vector` (selected) | **0.754 [0.699, 0.809]** | **0.953** | **0.853** | **0.915** | 0.629 |
-| `hybrid_rrf` (equal weight) | 0.695 [0.636, 0.750] | 0.890 | 0.803 | 0.915 | 0.733 |
+| `vector` (selected) | **0.792 [0.737, 0.843]** | **0.953** | **0.875** | **0.975** | **0.853** |
+| `hybrid_rrf` ×1 | 0.708 [0.648, 0.763] | 0.903 | 0.812 | 0.926 | 0.741 |
+| `hybrid_rrf` ×2 | 0.733 [0.674, 0.788] | 0.915 | 0.831 | 0.927 | 0.741 |
+| `hybrid_rrf` ×3 | 0.746 [0.691, 0.801] | 0.911 | 0.837 | 0.927 | 0.741 |
 
-The dense retriever wins, and equal-weight RRF is below dense alone (75.4% → 69.5% hit@1; the
-intervals overlap and no paired test has been run yet). Weighting the dense list does not
-close the gap on test: ×2 gives 0.708 and ×3 gives 0.712 against 0.754 for dense. With the
-lexical hashing embedder, equal-weight RRF does help on retrieval (0.640 vs 0.610 BM25 and
-0.487 dense). Whether a better fusion rule or a reranker helps is still open.
+The dense retriever wins, and the paired bootstrap on the same queries says the gap is real:
+dense minus BM25 is +0.182 hit@1, 95% CI [0.119, 0.246]; dense minus ×3 fusion is +0.047,
+[0.008, 0.089]. All four fusion comparisons exclude zero, so weighting the dense list down
+does not close the gap. With the lexical hashing embedder the ranking reverses: BM25 0.610,
+dense 0.487, and equal-weight RRF 0.640 (paired vs dense +0.153, [0.097, 0.203]). Fusion helps
+only when one channel is weak, and it is not a fix for a strong dense channel.
+
+Protocol note (2026-10-31): queries now go through `embed_query` with Qwen's instruction
+prefix, and the lexical channel can be switched to RECAP's `recap_identifier` analysis.
+Identifier analysis on *prose* descriptions was tested on dev and rejected (it lowered dev
+BM25 hit@1), so the canonical run uses `standard` analysis and `--analyzer identifier` is kept
+only for reproduction. Pre-fix reports are retained beside the current ones as
+`docs/evidence/real-data-bfcl-*-v1.{json,md}`.
 
 ### Failure-memory transfer (48 paired real scenarios)
 
 Each scenario uses two different real queries for the same real function. One required
 parameter is renamed between episodes, the first call fails, the failure and repair are
 stored as one memory among 48, and the second call must be schema-valid. Success is a valid
-call, not a text match.
+call, not a text match. Qwen3-Embedding-0.6B:
 
 | Method | Success (95% CI) | Memory hit@1 |
 |---|---:|---:|
 | `no_memory` / `retry_only` | 0.000 [0.000, 0.000] | n/a |
-| `bm25` memory | 0.229 [0.125, 0.333] | 0.167 |
-| `hybrid_rrf` memory | 0.354 [0.229, 0.500] | 0.292 |
-| `vector` memory | **0.938 [0.854, 1.000]** | **0.917** |
+| `bm25` memory | 0.812 [0.688, 0.917] | 0.771 |
+| `hybrid_rrf` memory | 0.875 [0.771, 0.958] | 0.854 |
+| `vector` memory | **0.958 [0.896, 1.000]** | **0.938** |
 | `function_keyed` (memory addressed by tool name) | 1.000 | n/a |
 | `oracle_memory` | 1.000 | n/a |
 
-The injected failure is scripted; the schemas, queries, and arguments are real BFCL data, and
-the report says so. Function selection is assumed correct. Read this table with three caveats:
+With the hashing embedder the ordering flips again: BM25 0.812, RRF 0.812, dense 0.729, so the
+retrieval finding carries over to transfer. The injected failure is scripted; the schemas,
+queries, and arguments are real BFCL data, and the report says so. Function selection is
+assumed correct. Read this table with three caveats:
 
 - `function_keyed` equals the oracle. When the tool name is known, a dictionary lookup solves
   this test by construction, and memory success tracks retrieval hit@1. It measures matching a
   natural-language query to a function name, not whether a memory is safe to apply.
-- Each memory is one repair sentence with no tool description, and the index uses the default
-  analyzer, so the BM25 and RRF rows are confounded by a starved lexical channel. With the
-  hashing embedder RRF (0.250) is also below dense (0.479). A rerun with identifier-aware
-  analysis is pending; do not cite the RRF row as a general fusion defect.
+- The memory text now carries the tool and parameter descriptions, and the lexical channel uses
+  identifier analysis on the function name and standard analysis on the prose. That analyzer
+  split was chosen on the retrieval dev split, never on these 48 outcomes. Even so, RRF is
+  still below dense on Qwen (−0.083, 95% CI [−0.188, 0.000], which does not exclude zero).
 - Every memory in the pool is valid for its target, so stale versions, unseen functions and
   abstention are not exercised. These scripts do not run RECAP's selection policy.
 

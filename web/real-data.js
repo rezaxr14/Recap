@@ -32,7 +32,7 @@ function renderRetrieval(report) {
     const t = report.results[k].test;
     const a = report.results[k].abstention || {};
     const name = esc(label) + (k === report.selected_variant ? " (selected on dev)" : "");
-    return [name, withCi(t.hit_at_1, t.hit_at_1_ci95), num(t.hit_at_3), num(t.reciprocal_rank), num(t.auc_vs_irrelevance), num(a.test_control_abstention)];
+    return [name, withCi(t.hit_at_1, t.hit_at_1_ci95), num(t.hit_at_3), num(t.reciprocal_rank), num(t.auc_vs_irrelevance), a.identified === false ? "n/a (threshold 0)" : num(a.test_control_abstention)];
   });
   return table(["Method", "hit@1 (95% CI)", "hit@3", "MRR@10", "AUC vs irrelevance", "Control abstention at 95% coverage"], rows);
 }

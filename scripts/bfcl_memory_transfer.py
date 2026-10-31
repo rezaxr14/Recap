@@ -25,8 +25,11 @@ Baselines:
 
 Run:
     python scripts/bfcl_memory_transfer.py --embedding qwen \
-        --model-path C:/Users/rezax/Home/Code/models/Qwen3-Embedding-0.6B \
+        --model-path /path/to/Qwen3-Embedding-0.6B \
         --out docs/evidence
+
+Data download is the same four BFCL v3 files as ``bfcl_retrieval.py``; pass
+``--data-dir`` if they are not under ``data/bfcl``.
 """
 
 from __future__ import annotations
@@ -44,14 +47,42 @@ import numpy as np
 
 from recap.config import ElasticsearchSettings, EmbeddingSettings
 from recap.infrastructure.elasticsearch.client import build_client
+from recap.infrastructure.elasticsearch.mappings import (
+    IDENTIFIER_ANALYZER,
+    IDENTIFIER_FILTER,
+)
 from recap.infrastructure.embeddings import build_embedding_provider
 from recap.recall.rrf import RankedList, reciprocal_rank_fusion
 
-DEFAULT_DATA = Path(r"C:\Users\rezax\Home\Code\models\datasets\bfcl")
+DEFAULT_DATA = Path("data/bfcl")
 INDEX = "bfcl-v3-memories"
 BOOTSTRAP = 2000
 RNG_SEED = 20261030
 TOP_K = 5
+QWEN_QUERY_TASK = "Given a user request, retrieve a previous repair for the same tool"
+FIELDS = ["function.identifier^2", "text"]
+IDENTIFIER_SETTINGS = {
+    "analysis": {
+        "filter": {
+            IDENTIFIER_FILTER: {
+                "type": "word_delimiter_graph",
+                "generate_word_parts": True,
+                "generate_number_parts": True,
+                "split_on_case_change": True,
+                "split_on_numerics": True,
+                "preserve_original": True,
+                "stem_english_possessive": False,
+            }
+        },
+        "analyzer": {
+            IDENTIFIER_ANALYZER: {
+                "type": "custom",
+                "tokenizer": "standard",
+                "filter": [IDENTIFIER_FILTER, "lowercase"],
+            }
+        },
+    }
+}
 
 
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -202,6 +233,12 @@ def _scenarios(tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
             continue
         if not _valid(schema, _apply_rename(second["args"], old, new)):
             continue
+        properties = (schema.get("parameters") or {}).get("properties") or {}
+        parameter_text = "; ".join(
+            f"{name}: {spec.get('description') or ''}"
+            for name, spec in properties.items()
+            if isinstance(spec, dict)
+        )
         scenarios.append(
             {
                 "function": function,
@@ -214,8 +251,10 @@ def _scenarios(tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "args2": second["args"],
                 "error": f"unknown parameter '{old}'; required '{new}'",
                 "memory_text": (
-                    f"{function}: parameter '{old}' was renamed to '{new}'. "
-                    f"A call failed with {f'unknown parameter {old!r}'}."
+                    f"Tool {function}: {schema.get('description') or ''} "
+                    f"Parameters: {parameter_text}. "
+                    f"Repair: parameter '{old}' was renamed to '{new}'. "
+                    f"A call failed with unknown parameter '{old}'."
                 ),
             }
         )
@@ -246,6 +285,24 @@ def _bootstrap_ci(values: list[float], rng: np.random.Generator) -> list[float]:
     return [float(np.quantile(samples, 0.025)), float(np.quantile(samples, 0.975))]
 
 
+def _paired_success(
+    treatment: list[float], reference: list[float], rng: np.random.Generator
+) -> dict[str, Any]:
+    differences = np.asarray(treatment) - np.asarray(reference)
+    samples = rng.choice(differences, size=(BOOTSTRAP, differences.size), replace=True).mean(axis=1)
+    return {
+        "n_scenarios": int(differences.size),
+        "observed": float(differences.mean()),
+        "cluster_ci95": [
+            float(np.quantile(samples, 0.025)),
+            float(np.quantile(samples, 0.975)),
+        ],
+        "excludes_zero": bool(
+            np.quantile(samples, 0.025) > 0.0 or np.quantile(samples, 0.975) < 0.0
+        ),
+    }
+
+
 def _rank(ids: list[str], scores: np.ndarray, k: int = TOP_K) -> list[str]:
     return [ids[index] for index in np.argsort(-scores)[:k]]
 
@@ -260,6 +317,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--es-url", default="http://localhost:9200")
     args = parser.parse_args(argv)
 
+    if not args.data_dir.is_dir():
+        raise SystemExit(
+            f"{args.data_dir} does not exist. Download BFCL v3 into it (see the module "
+            "docstring) or pass --data-dir."
+        )
     tasks, hashes = _load_tasks(args.data_dir)
     scenarios = _scenarios(tasks)
     print(f"tasks={len(tasks)} scenarios={len(scenarios)}")
@@ -267,11 +329,17 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit("too few paired scenarios to report")
 
     if args.embedding == "qwen":
-        model_path = args.model_path or Path(
-            r"C:\Users\rezax\Home\Code\models\Qwen3-Embedding-0.6B"
-        )
+        if args.model_path is None:
+            raise SystemExit(
+                "--model-path is required for --embedding qwen (a local "
+                "sentence-transformers directory or Hugging Face model id)"
+            )
+        model_path = args.model_path
         settings = EmbeddingSettings(
-            provider="sentence-transformers", model_path=str(model_path), dimension=1024
+            provider="sentence-transformers",
+            model_path=str(model_path),
+            dimension=1024,
+            query_prefix=f"Instruct: {QWEN_QUERY_TASK}\nQuery: ",
         )
         model_id = model_path.name
     else:
@@ -288,10 +356,17 @@ def main(argv: list[str] | None = None) -> int:
         client.indices.delete(index=INDEX, ignore_unavailable=True)
         client.indices.create(
             index=INDEX,
+            settings=IDENTIFIER_SETTINGS,
             mappings={
                 "properties": {
-                    "function": {"type": "text"},
-                    "text": {"type": "text"},
+                    "function": {
+                        "type": "text",
+                        "fields": {"identifier": {"type": "text", "analyzer": IDENTIFIER_ANALYZER}},
+                    },
+                    "text": {
+                        "type": "text",
+                        "fields": {"identifier": {"type": "text", "analyzer": IDENTIFIER_ANALYZER}},
+                    },
                 }
             },
         )
@@ -308,7 +383,7 @@ def main(argv: list[str] | None = None) -> int:
                 query={
                     "multi_match": {
                         "query": query,
-                        "fields": ["function^2", "text"],
+                        "fields": FIELDS,
                         "type": "best_fields",
                         "tie_breaker": 0.3,
                     }
@@ -320,7 +395,7 @@ def main(argv: list[str] | None = None) -> int:
 
     matrix = np.asarray(provider.embed_documents(memory_texts), dtype=float)
     matrix /= np.linalg.norm(matrix, axis=1, keepdims=True) + 1e-12
-    query_vectors = np.asarray(provider.embed_documents(queries), dtype=float)
+    query_vectors = np.asarray([provider.embed_query(query) for query in queries], dtype=float)
     query_vectors /= np.linalg.norm(query_vectors, axis=1, keepdims=True) + 1e-12
     dense_rankings = [_rank(ids, matrix @ vector) for vector in query_vectors]
     hybrid_rankings = [
@@ -397,6 +472,26 @@ def main(argv: list[str] | None = None) -> int:
         "rng_seed": RNG_SEED,
         "injected_failure": "one required parameter renamed per function (old -> old_v2)",
         "results": results,
+        "per_scenario": {
+            name: [
+                {"function": scenario["function"], "success": bool(value)}
+                for scenario, value in zip(scenarios, values, strict=True)
+            ]
+            for name, values in outcomes.items()
+        },
+        "paired_vs_vector": {
+            f"{name}_minus_vector": _paired_success(outcomes[name], outcomes["vector"], rng)
+            for name in outcomes
+            if name != "vector"
+        },
+        "protocol_changes": [
+            "Memory text now includes the tool description and parameter descriptions, "
+            "not one repair sentence.",
+            "BM25 indexes the function name with identifier analysis and the memory prose "
+            "with the standard analyzer. That split was selected on the retrieval dev "
+            "split, never on these transfer outcomes.",
+            "Queries are embedded through embed_query with Qwen's instruction prefix.",
+        ],
         "limits": [
             "The failure is scripted: one required parameter is renamed on the real "
             "BFCL schema. No production failure log was used.",
@@ -472,6 +567,24 @@ def render_markdown(payload: dict[str, Any]) -> str:
             f"| `{name}` | {stats['successes']}/{stats['n_scenarios']} | "
             f"{stats['success_rate']:.3f} "
             f"[{stats['success_ci95'][0]:.3f}, {stats['success_ci95'][1]:.3f}] | {hit} |"
+        )
+    lines.extend(["", "## Protocol change (2026-10-31)", ""])
+    for change in payload.get("protocol_changes") or []:
+        lines.append(f"- {change}")
+    lines.extend(
+        [
+            "",
+            "## Paired effects vs dense memory (same scenarios)",
+            "",
+            "| Comparison | Scenarios | Observed difference | 95% CI | Excludes zero |",
+            "|---|---:|---:|---:|---|",
+        ]
+    )
+    for name, stats in (payload.get("paired_vs_vector") or {}).items():
+        lines.append(
+            f"| `{name}` | {stats['n_scenarios']} | {stats['observed']:+.3f} | "
+            f"[{stats['cluster_ci95'][0]:+.3f}, {stats['cluster_ci95'][1]:+.3f}] | "
+            f"{stats['excludes_zero']} |"
         )
     lines.extend(["", "## Limits", ""])
     for limit in payload["limits"]:

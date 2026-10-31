@@ -13,12 +13,13 @@ Not measured here: end-to-end tool execution and failure-memory transfer. This r
 | Item | Value |
 |---|---|
 | Dataset | `gorilla-llm/Berkeley-Function-Calling-Leaderboard (BFCL v3)` |
-| Generated | `2026-10-30T07:56:10.095062+00:00` |
+| Generated | `2026-10-31T16:38:21.390064+00:00` |
 | Labeled tasks | 500 (dev 264 / test 236) |
 | Control tasks (irrelevance) | 240 |
 | Function pool | 630 |
 | Embedder | `hashing` / `recap-hashing-embedding-v1` (256d) |
 | RRF k | 60 |
+| Lexical analyzer | `standard` |
 
 ## Test results (headline)
 
@@ -26,11 +27,28 @@ Not measured here: end-to-end tool execution and failure-memory transfer. This r
 |---|---:|---:|---:|---:|---:|---:|
 | `bm25` | 0.610 [0.551, 0.669] | 0.758 | 0.831 | 0.700 | 0.910 | 0.741 |
 | `vector` | 0.487 [0.424, 0.551] | 0.674 | 0.733 | 0.595 | 0.876 | 0.638 |
-| `hybrid_rrf_w1` **(selected)** | 0.640 [0.576, 0.699] | 0.780 | 0.822 | 0.718 | 0.881 | 0.000 |
-| `hybrid_rrf_w2` | 0.614 [0.551, 0.674] | 0.750 | 0.788 | 0.686 | 0.878 | 0.000 |
-| `hybrid_rrf_w3` | 0.593 [0.534, 0.653] | 0.750 | 0.788 | 0.675 | 0.877 | 0.000 |
+| `hybrid_rrf_w1` **(selected)** | 0.640 [0.576, 0.699] | 0.780 | 0.822 | 0.718 | 0.881 | n/a (threshold 0) |
+| `hybrid_rrf_w2` | 0.614 [0.551, 0.674] | 0.750 | 0.788 | 0.686 | 0.878 | n/a (threshold 0) |
+| `hybrid_rrf_w3` | 0.593 [0.534, 0.653] | 0.750 | 0.788 | 0.675 | 0.877 | n/a (threshold 0) |
 
 Selected by `highest dev hit@1, tie-broken by dev MRR; test never used`: `hybrid_rrf_w1`.
+
+## Protocol change (2026-10-31)
+
+Earlier numbers used the default analyzer and embedded queries as documents. This run adds two changes instead of one: Qwen's instruction prefix through `embed_query`, and an optional identifier-aware lexical channel. The earlier report is kept beside this one as `-v1`.
+
+### Analyzer result (dev-selected, test reported once)
+
+Identifier analysis on *prose* descriptions was tested first and rejected on dev (dev BM25 hit@1 0.598 -> 0.485). The `standard` analyzer is therefore the canonical configuration; `--analyzer identifier` remains available for reproduction and applies identifier analysis only to name/params subfields.
+
+## Paired effects vs dense (test)
+
+| Comparison | Queries | Observed hit@1 difference | 95% CI | Excludes zero |
+|---|---:|---:|---:|---|
+| `bm25_minus_vector` | 236 | +0.123 | [+0.055, +0.195] | True |
+| `hybrid_rrf_w1_minus_vector` | 236 | +0.153 | [+0.097, +0.203] | True |
+| `hybrid_rrf_w2_minus_vector` | 236 | +0.127 | [+0.085, +0.174] | True |
+| `hybrid_rrf_w3_minus_vector` | 236 | +0.106 | [+0.068, +0.144] | True |
 
 ## Dev results (tuning only)
 
@@ -50,4 +68,3 @@ Abstention thresholds are taken from dev labeled scores at 95% coverage and appl
 - The pool is the 630 unique functions present in these BFCL files; it is not the full BFCL function universe.
 - Irrelevance controls score only the single function each task offers. That matches BFCL's definition (the provided function does not apply), but it is a matched single-candidate comparison, not a 630-way pool ranking.
 - BM25 scores are query-length sensitive, so its control AUC is a weaker diagnostic than the cosine and RRF ones.
-- The Qwen embedder is used without its recommended query instruction prefix, so its numbers are a lower bound for that model.

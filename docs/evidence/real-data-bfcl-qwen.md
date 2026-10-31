@@ -13,34 +13,52 @@ Not measured here: end-to-end tool execution and failure-memory transfer. This r
 | Item | Value |
 |---|---|
 | Dataset | `gorilla-llm/Berkeley-Function-Calling-Leaderboard (BFCL v3)` |
-| Generated | `2026-10-30T08:03:36.926354+00:00` |
+| Generated | `2026-10-31T16:49:30.267609+00:00` |
 | Labeled tasks | 500 (dev 264 / test 236) |
 | Control tasks (irrelevance) | 240 |
 | Function pool | 630 |
 | Embedder | `sentence-transformers` / `Qwen3-Embedding-0.6B` (1024d) |
 | RRF k | 60 |
+| Lexical analyzer | `standard` |
 
 ## Test results (headline)
 
 | Method | hit@1 (95% CI) | hit@3 | hit@5 | MRR@10 | AUC vs irrelevance | Control abstention @95% coverage |
 |---|---:|---:|---:|---:|---:|---:|
 | `bm25` | 0.610 [0.551, 0.669] | 0.758 | 0.831 | 0.700 | 0.910 | 0.741 |
-| `vector` **(selected)** | 0.754 [0.699, 0.809] | 0.953 | 0.987 | 0.853 | 0.915 | 0.629 |
-| `hybrid_rrf_w1` | 0.695 [0.636, 0.750] | 0.890 | 0.966 | 0.803 | 0.915 | 0.733 |
-| `hybrid_rrf_w2` | 0.708 [0.653, 0.767] | 0.903 | 0.983 | 0.816 | 0.915 | 0.733 |
-| `hybrid_rrf_w3` | 0.712 [0.653, 0.767] | 0.907 | 0.983 | 0.817 | 0.914 | 0.733 |
+| `vector` **(selected)** | 0.792 [0.737, 0.843] | 0.953 | 0.992 | 0.875 | 0.975 | 0.853 |
+| `hybrid_rrf_w1` | 0.708 [0.648, 0.763] | 0.903 | 0.966 | 0.812 | 0.926 | 0.741 |
+| `hybrid_rrf_w2` | 0.733 [0.674, 0.788] | 0.915 | 0.983 | 0.831 | 0.927 | 0.741 |
+| `hybrid_rrf_w3` | 0.746 [0.691, 0.801] | 0.911 | 0.983 | 0.837 | 0.927 | 0.741 |
 
 Selected by `highest dev hit@1, tie-broken by dev MRR; test never used`: `vector`.
+
+## Protocol change (2026-10-31)
+
+Earlier numbers used the default analyzer and embedded queries as documents. This run adds two changes instead of one: Qwen's instruction prefix through `embed_query`, and an optional identifier-aware lexical channel. The earlier report is kept beside this one as `-v1`.
+
+### Analyzer result (dev-selected, test reported once)
+
+Identifier analysis on *prose* descriptions was tested first and rejected on dev (dev BM25 hit@1 0.598 -> 0.485). The `standard` analyzer is therefore the canonical configuration; `--analyzer identifier` remains available for reproduction and applies identifier analysis only to name/params subfields.
+
+## Paired effects vs dense (test)
+
+| Comparison | Queries | Observed hit@1 difference | 95% CI | Excludes zero |
+|---|---:|---:|---:|---|
+| `bm25_minus_vector` | 236 | -0.182 | [-0.246, -0.119] | True |
+| `hybrid_rrf_w1_minus_vector` | 236 | -0.085 | [-0.140, -0.034] | True |
+| `hybrid_rrf_w2_minus_vector` | 236 | -0.059 | [-0.102, -0.017] | True |
+| `hybrid_rrf_w3_minus_vector` | 236 | -0.047 | [-0.089, -0.008] | True |
 
 ## Dev results (tuning only)
 
 | Method | hit@1 | hit@3 | MRR@10 | AUC vs irrelevance |
 |---|---:|---:|---:|---:|
 | `bm25` | 0.598 | 0.769 | 0.697 | 0.897 |
-| `vector` | 0.750 | 0.932 | 0.849 | 0.903 |
-| `hybrid_rrf_w1` | 0.708 | 0.905 | 0.810 | 0.868 |
-| `hybrid_rrf_w2` | 0.720 | 0.917 | 0.823 | 0.872 |
-| `hybrid_rrf_w3` | 0.705 | 0.917 | 0.816 | 0.873 |
+| `vector` | 0.788 | 0.943 | 0.870 | 0.953 |
+| `hybrid_rrf_w1` | 0.735 | 0.909 | 0.829 | 0.879 |
+| `hybrid_rrf_w2` | 0.754 | 0.920 | 0.843 | 0.883 |
+| `hybrid_rrf_w3` | 0.758 | 0.920 | 0.847 | 0.884 |
 
 Abstention thresholds are taken from dev labeled scores at 95% coverage and applied unchanged to test; test control abstention is reported at that fixed operating point.
 
@@ -50,4 +68,3 @@ Abstention thresholds are taken from dev labeled scores at 95% coverage and appl
 - The pool is the 630 unique functions present in these BFCL files; it is not the full BFCL function universe.
 - Irrelevance controls score only the single function each task offers. That matches BFCL's definition (the provided function does not apply), but it is a matched single-candidate comparison, not a 630-way pool ranking.
 - BM25 scores are query-length sensitive, so its control AUC is a weaker diagnostic than the cosine and RRF ones.
-- The Qwen embedder is used without its recommended query instruction prefix, so its numbers are a lower bound for that model.

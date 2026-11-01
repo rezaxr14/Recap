@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from typing import Any, cast
 
 from recap.config import Settings
@@ -31,8 +32,21 @@ class MemorySnapshotService:
         self.settings = settings
         self.embeddings = embedding_provider
 
-    def create(self, workspace_id: str, *, reason: str = "run_start") -> MemorySnapshot:
-        memories = self.memories.list_for_snapshot(workspace_id, limit=MAX_SNAPSHOT_ENTRIES + 1)
+    def create(
+        self,
+        workspace_id: str,
+        *,
+        reason: str = "run_start",
+        exclude_memory_ids: Collection[str] = (),
+    ) -> MemorySnapshot:
+        excluded = set(exclude_memory_ids)
+        memories = [
+            memory
+            for memory in self.memories.list_for_snapshot(
+                workspace_id, limit=MAX_SNAPSHOT_ENTRIES + 1
+            )
+            if memory.id not in excluded
+        ]
         if len(memories) > MAX_SNAPSHOT_ENTRIES:
             raise ValidationError(
                 f"workspace {workspace_id!r} has more than {MAX_SNAPSHOT_ENTRIES} "
@@ -56,7 +70,10 @@ class MemorySnapshotService:
                 for memory in memories
             ),
             reason=reason,
-            metadata={"max_entries": MAX_SNAPSHOT_ENTRIES},
+            metadata={
+                "max_entries": MAX_SNAPSHOT_ENTRIES,
+                "excluded_memory_ids": sorted(excluded),
+            },
         )
         return cast(MemorySnapshot, self.snapshots.create(snapshot))
 

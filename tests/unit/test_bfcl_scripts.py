@@ -162,17 +162,11 @@ def test_drift_can_chain_a_second_rename_to_a_named_parameter() -> None:
     }
     first, old, renamed = bfcl.drift_schema(schema)
     assert (old, renamed) == ("city", "city_v2")
-    second, old2, renamed2 = bfcl.drift_schema(
-        first, parameter="city_v2", new_name="city_v3"
-    )
+    second, old2, renamed2 = bfcl.drift_schema(first, parameter="city_v2", new_name="city_v3")
     assert (old2, renamed2) == ("city_v2", "city_v3")
     assert set(second["parameters"]["properties"]) == {"city_v3", "unit"}
-    assert bfcl.drift_schema(
-        first, parameter="city_v2", new_name="unit"
-    ) is None
-    assert bfcl.drift_schema(
-        first, parameter="missing", new_name="x"
-    ) is None
+    assert bfcl.drift_schema(first, parameter="city_v2", new_name="unit") is None
+    assert bfcl.drift_schema(first, parameter="missing", new_name="x") is None
 
 
 def test_apply_rename_only_touches_present_keys() -> None:

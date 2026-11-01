@@ -59,9 +59,7 @@ def test_create_excludes_requested_memory_ids() -> None:
             _Memory("mem_c", content_hash="c"),
         ]
     )
-    snapshot = service.create(
-        "ws", reason="held_out", exclude_memory_ids={"mem_b"}
-    )
+    snapshot = service.create("ws", reason="held_out", exclude_memory_ids={"mem_b"})
     assert snapshot.reason == "held_out"
     assert [entry.memory_id for entry in snapshot.entries] == ["mem_a", "mem_c"]
     assert snapshot.metadata["excluded_memory_ids"] == ["mem_b"]

@@ -12,6 +12,8 @@ from __future__ import annotations
 import numpy as np
 from scripts import bfcl_memory_transfer, bfcl_retrieval
 
+from recap.evals import bfcl
+
 
 def _metrics(**overrides: float) -> dict[str, float]:
     base = {
@@ -138,7 +140,7 @@ def test_drift_renames_the_first_required_parameter() -> None:
             "required": ["city", "unit"],
         },
     }
-    drifted, old, new = bfcl_memory_transfer._drift(schema)
+    drifted, old, new = bfcl.drift_schema(schema)
     assert (old, new) == ("city", "city_v2")
     properties = drifted["parameters"]["properties"]
     assert set(properties) == {"city_v2", "unit"}
@@ -147,16 +149,39 @@ def test_drift_renames_the_first_required_parameter() -> None:
 
 
 def test_drift_returns_none_without_parameters() -> None:
-    assert bfcl_memory_transfer._drift({"name": "ping"}) is None
+    assert bfcl.drift_schema({"name": "ping"}) is None
+
+
+def test_drift_can_chain_a_second_rename_to_a_named_parameter() -> None:
+    schema = {
+        "name": "get_weather",
+        "parameters": {
+            "properties": {"city": {"type": "string"}, "unit": {"type": "string"}},
+            "required": ["city", "unit"],
+        },
+    }
+    first, old, renamed = bfcl.drift_schema(schema)
+    assert (old, renamed) == ("city", "city_v2")
+    second, old2, renamed2 = bfcl.drift_schema(
+        first, parameter="city_v2", new_name="city_v3"
+    )
+    assert (old2, renamed2) == ("city_v2", "city_v3")
+    assert set(second["parameters"]["properties"]) == {"city_v3", "unit"}
+    assert bfcl.drift_schema(
+        first, parameter="city_v2", new_name="unit"
+    ) is None
+    assert bfcl.drift_schema(
+        first, parameter="missing", new_name="x"
+    ) is None
 
 
 def test_apply_rename_only_touches_present_keys() -> None:
     args = {"city": "Paris", "unit": "c"}
-    assert bfcl_memory_transfer._apply_rename(args, "city", "city_v2") == {
+    assert bfcl.apply_rename(args, "city", "city_v2") == {
         "city_v2": "Paris",
         "unit": "c",
     }
-    assert bfcl_memory_transfer._apply_rename({"unit": "c"}, "city", "city_v2") == {"unit": "c"}
+    assert bfcl.apply_rename({"unit": "c"}, "city", "city_v2") == {"unit": "c"}
     assert args == {"city": "Paris", "unit": "c"}
 
 
@@ -167,14 +192,14 @@ def test_call_status_separates_unknown_from_missing() -> None:
             "required": ["city", "unit"],
         }
     }
-    unknown, missing = bfcl_memory_transfer._call_status(schema, {"city": "Paris", "x": 1})
+    unknown, missing = bfcl.call_status(schema, {"city": "Paris", "x": 1})
     assert unknown == {"x"}
     assert missing == {"unit"}
-    assert bfcl_memory_transfer._valid(schema, {"city": "Paris", "unit": "c"})
-    assert not bfcl_memory_transfer._valid(schema, {"city": "Paris"})
+    assert bfcl.is_valid_call(schema, {"city": "Paris", "unit": "c"})
+    assert not bfcl.is_valid_call(schema, {"city": "Paris"})
 
 
 def test_parse_call_reads_keyword_arguments_and_rejects_junk() -> None:
-    assert bfcl_memory_transfer._parse_call("f(a=1, b='two')") == {"a": 1, "b": "two"}
-    assert bfcl_memory_transfer._parse_call("not a call") == {}
-    assert bfcl_memory_transfer._parse_call("f(a=some_name)") == {}
+    assert bfcl.parse_call("f(a=1, b='two')") == {"a": 1, "b": "two"}
+    assert bfcl.parse_call("not a call") == {}
+    assert bfcl.parse_call("f(a=some_name)") == {}

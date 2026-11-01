@@ -35,10 +35,8 @@ Data download is the same four BFCL v3 files as ``bfcl_retrieval.py``; pass
 from __future__ import annotations
 
 import argparse
-import ast
 import json
 import sys
-from collections import defaultdict
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -46,6 +44,12 @@ from typing import Any
 import numpy as np
 
 from recap.config import ElasticsearchSettings, EmbeddingSettings
+from recap.evals.bfcl import (
+    apply_rename as _apply_rename,
+    build_transfer_scenarios as _scenarios,
+    is_valid_call as _valid,
+    load_tasks as _load_tasks,
+)
 from recap.infrastructure.elasticsearch.client import build_client
 from recap.infrastructure.elasticsearch.mappings import (
     IDENTIFIER_ANALYZER,
@@ -83,189 +87,6 @@ IDENTIFIER_SETTINGS = {
         },
     }
 }
-
-
-def _read_jsonl(path: Path) -> list[dict[str, Any]]:
-    with path.open(encoding="utf-8") as handle:
-        return [json.loads(line) for line in handle if line.strip()]
-
-
-def _parse_call(text: str) -> dict[str, Any]:
-    try:
-        call = ast.parse(text, mode="eval").body
-    except SyntaxError:
-        return {}
-    if not isinstance(call, ast.Call):
-        return {}
-    args: dict[str, Any] = {}
-    for keyword in call.keywords:
-        if keyword.arg is None:
-            continue
-        try:
-            args[keyword.arg] = ast.literal_eval(keyword.value)
-        except (ValueError, SyntaxError):
-            return {}
-    return args
-
-
-def _load_tasks(data: Path) -> tuple[list[dict[str, Any]], dict[str, str]]:
-    answers = {
-        row["id"]: row for row in _read_jsonl(data / "possible_answer" / "BFCL_v3_simple.json")
-    }
-    tasks: list[dict[str, Any]] = []
-    for row in _read_jsonl(data / "BFCL_v3_simple.json"):
-        gold = answers.get(row["id"], {}).get("ground_truth") or []
-        for entry in gold:
-            if not isinstance(entry, dict):
-                continue
-            for name, params in entry.items():
-                if isinstance(params, dict):
-                    # BFCL stores each value as a list of accepted alternatives.
-                    args = {
-                        key: (value[0] if isinstance(value, list) and value else value)
-                        for key, value in params.items()
-                    }
-                    tasks.append(
-                        {
-                            "id": row["id"],
-                            "function": name,
-                            "query": _user_text(row.get("question")),
-                            "args": args,
-                            "schema": (row.get("function") or [{}])[0],
-                        }
-                    )
-    for row in _read_jsonl(data / "BFCL_v3_exec_simple.json"):
-        for text in row.get("ground_truth") or []:
-            if not isinstance(text, str):
-                continue
-            args = _parse_call(text)
-            if not args:
-                continue
-            tasks.append(
-                {
-                    "id": row["id"],
-                    "function": text.split("(", 1)[0].strip(),
-                    "query": _user_text(row.get("question")),
-                    "args": args,
-                    "schema": (row.get("function") or [{}])[0],
-                }
-            )
-    hashes = {
-        name: _sha256(data / name)
-        for name in (
-            "BFCL_v3_simple.json",
-            "possible_answer/BFCL_v3_simple.json",
-            "BFCL_v3_exec_simple.json",
-        )
-    }
-    return tasks, hashes
-
-
-def _sha256(path: Path) -> str:
-    import hashlib
-
-    return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
-def _user_text(messages: Any) -> str:
-    if isinstance(messages, str):
-        return messages
-    parts: list[str] = []
-    for turn in messages or []:
-        if isinstance(turn, list):
-            for message in turn:
-                if isinstance(message, dict) and message.get("role") == "user":
-                    parts.append(str(message.get("content") or ""))
-        elif isinstance(turn, dict) and turn.get("role") == "user":
-            parts.append(str(turn.get("content") or ""))
-    return " ".join(part for part in parts if part).strip()
-
-
-def _drift(schema: dict[str, Any]) -> tuple[dict[str, Any], str, str] | None:
-    params = schema.get("parameters") or {}
-    properties = dict(params.get("properties") or {})
-    required = list(params.get("required") or properties)
-    renameable = [name for name in required if name in properties]
-    if not renameable:
-        return None
-    old = sorted(renameable)[0]
-    new = f"{old}_v2"
-    properties[new] = properties.pop(old)
-    required = [new if name == old else name for name in required]
-    drifted = {
-        "name": schema.get("name"),
-        "description": schema.get("description"),
-        "parameters": {**params, "properties": properties, "required": required},
-    }
-    return drifted, old, new
-
-
-def _call_status(schema: dict[str, Any], args: dict[str, Any]) -> tuple[set[str], set[str]]:
-    params = schema.get("parameters") or {}
-    properties = set(params.get("properties") or {})
-    required = set(params.get("required") or properties)
-    return set(args) - properties, required - set(args)
-
-
-def _valid(schema: dict[str, Any], args: dict[str, Any]) -> bool:
-    unknown, missing = _call_status(schema, args)
-    return not unknown and not missing
-
-
-def _scenarios(tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for task in tasks:
-        grouped[task["function"]].append(task)
-    scenarios: list[dict[str, Any]] = []
-    for function, items in sorted(grouped.items()):
-        unique = {item["query"]: item for item in items}
-        if len(unique) < 2:
-            continue
-        ordered = [unique[key] for key in sorted(unique)][:2]
-        drifted = _drift(ordered[0]["schema"])
-        if drifted is None:
-            continue
-        schema, old, new = drifted
-        first, second = ordered
-        # A pair is measurable only if the first call fails on the drifted schema,
-        # the second call would fail too, and applying the repair makes it valid.
-        if _valid(schema, first["args"]) or _valid(schema, second["args"]):
-            continue
-        if not _valid(schema, _apply_rename(second["args"], old, new)):
-            continue
-        properties = (schema.get("parameters") or {}).get("properties") or {}
-        parameter_text = "; ".join(
-            f"{name}: {spec.get('description') or ''}"
-            for name, spec in properties.items()
-            if isinstance(spec, dict)
-        )
-        scenarios.append(
-            {
-                "function": function,
-                "schema": schema,
-                "old": old,
-                "new": new,
-                "query1": first["query"],
-                "args1": first["args"],
-                "query2": second["query"],
-                "args2": second["args"],
-                "error": f"unknown parameter '{old}'; required '{new}'",
-                "memory_text": (
-                    f"Tool {function}: {schema.get('description') or ''} "
-                    f"Parameters: {parameter_text}. "
-                    f"Repair: parameter '{old}' was renamed to '{new}'. "
-                    f"A call failed with unknown parameter '{old}'."
-                ),
-            }
-        )
-    return scenarios
-
-
-def _apply_rename(args: dict[str, Any], old: str, new: str) -> dict[str, Any]:
-    updated = dict(args)
-    if old in updated:
-        updated[new] = updated.pop(old)
-    return updated
 
 
 def _auc(positives: list[float], negatives: list[float]) -> float:

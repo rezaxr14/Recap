@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="dark light" />
-    <meta name="description" content="RECAP measured on real BFCL v3 data: tool retrieval over 630 functions and failure-memory transfer over 48 paired scenarios." />
+    <meta name="description" content="RECAP measured on real BFCL v3 data: tool retrieval over 630 functions, failure-memory transfer over 48 paired scenarios, and real-stack memory selection." />
     <title>RECAP — measured on real BFCL data</title>
     <link rel="icon" href="favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="styles.css" />
@@ -28,6 +28,7 @@
         <a href="#retrieval">Retrieval</a>
         <a href="#delta">What changed</a>
         <a href="#transfer">Failure-memory transfer</a>
+        <a href="#recap">Selection policy</a>
         <a href="#limits">Limits</a>
         <a href="index.html">Replay (synthetic audit trail)</a>
       </nav>
@@ -37,7 +38,7 @@
       <section class="section" style="border-top:0">
         <div class="section-heading">
           <h1>Measured on real BFCL v3 data</h1>
-          <p class="section-note">Schemas, queries and gold arguments are real. The only injected element is the parameter rename in the transfer test. Neither experiment runs RECAP’s selection policy yet.</p>
+          <p class="section-note">Schemas, queries and gold arguments are real. The only injected element is the failure used to create memories: one required parameter rename. The first two experiments are retrieval-only; the third runs RECAP’s real record → compile → validate → promote → retrieve stack.</p>
         </div>
         <div class="controls">
           <label for="emb">Embedder</label>
@@ -72,6 +73,21 @@
           <li><code>function_keyed</code> equals the oracle: when the tool name is known, a dictionary lookup solves this test by construction. Memory success here tracks retrieval hit@1.</li>
           <li>Read the BM25 and RRF rows with care. Each memory now carries the tool and parameter descriptions, and the lexical channel indexes the function name with identifier analysis and the prose with the standard analyzer. That analyzer split was chosen on the retrieval dev split, never on these 48 outcomes. RRF is still below dense on Qwen, and its paired interval includes zero.</li>
           <li>Every memory in the pool is valid for its target. Stale versions, unseen functions and abstention are not exercised.</li>
+        </ul>
+      </section>
+
+      <section class="section" id="recap">
+        <div class="section-heading">
+          <h2>Does the selection policy add value?</h2>
+          <p class="section-note" id="recap-note"></p>
+        </div>
+        <div id="recap-body"></div>
+        <ul class="callouts">
+          <li>The failure is injected. One required parameter is renamed on the real BFCL schema, and the memory is compiled and promoted by the live stack. Calls are checked for schema validity, not executed against live APIs.</li>
+          <li>Pure BM25, dense and RRF retrieval select a memory on every no-safe row. Typed retrieval with tool and schema context also selects on every no-safe row; it ranks well but does not decide safety.</li>
+          <li>The exact schema filters (<code>fingerprint_filter</code> and <code>schema_hash</code>) tie the full policy on this run. That is reported, not hidden: the experiment does not show the utility layer beating a static exact-schema filter.</li>
+          <li><code>function_keyed</code> and the environment-id filter are safe while the tool or environment id is current, but a silent schema drift inside one environment id defeats both. A tool name or environment id alone is not a safety signal.</li>
+          <li>Function selection is assumed correct. The context supplies the tool the agent already chose, so these tables measure memory selection, not whether an agent picks the right tool.</li>
         </ul>
       </section>
 

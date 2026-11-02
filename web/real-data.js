@@ -78,29 +78,150 @@ async function load(emb) {
     const res = await fetch(`data/${name}-${emb}-v1.json`);
     return res.ok ? res.json() : null;
   };
-  const [ret, tr, retV1, trV1] = await Promise.all([
+  const getRecap = async () => {
+    const res = await fetch(`data/real-data-bfcl-recap-${emb}.json`);
+    return res.ok ? res.json() : null;
+  };
+  const [ret, tr, retV1, trV1, recap] = await Promise.all([
     get("real-data-bfcl"),
     get("real-data-bfcl-transfer"),
     getOptional("real-data-bfcl"),
     getOptional("real-data-bfcl-transfer"),
+    getRecap(),
   ]);
-  return { ret, tr, retV1, trV1 };
+  return { ret, tr, retV1, trV1, recap };
+}
+
+const RECAP_ARMS = [
+  ["bm25", "BM25"],
+  ["vector", "Dense"],
+  ["hybrid_rrf", "RRF"],
+  ["rrf_typed", "RRF + typed context"],
+  ["rrf_version_filter", "RRF + environment-id filter"],
+  ["fingerprint_filter", "RRF + fingerprint filter"],
+  ["function_keyed", "Keyed by tool name"],
+  ["schema_hash", "Schema-hash match"],
+  ["full_recap", "Full RECAP policy"],
+];
+
+function renderRecapSafe(report) {
+  const conditions = ["in_pool", "drift_phase1", "drift_phase3"].filter((c) => report.conditions[c]);
+  const rows = RECAP_ARMS.filter(([arm]) =>
+    conditions.every((condition) => report.conditions[condition].results[arm]),
+  ).map(([arm, label]) => [
+    esc(label),
+    ...conditions.map((condition) => num(report.conditions[condition].results[arm].call_valid_rate)),
+  ]);
+  return table(["Arm", ...conditions.map((c) => `${c}: call valid`)], rows);
+}
+
+function renderRecapNoSafe(report) {
+  const conditions = ["held_out", "sibling", "drift_phase2"].filter((c) => report.conditions[c]);
+  const rows = RECAP_ARMS.filter(([arm]) =>
+    conditions.every((condition) => report.conditions[condition].results[arm]),
+  ).map(([arm, label]) => [
+    esc(label),
+    ...conditions.flatMap((condition) => {
+      const stats = report.conditions[condition].results[arm];
+      return [num(stats.false_apply_rate), num(stats.abstain_rate)];
+    }),
+  ]);
+  const head = [
+    "Arm",
+    ...conditions.flatMap((c) => [`${c}: false apply`, `${c}: abstain`]),
+  ];
+  return table(head, rows);
+}
+
+function renderRecapAbstention(report) {
+  const rows = Object.entries(report.abstention)
+    .filter(([arm]) => arm !== "no_memory" && arm !== "retry_only")
+    .map(([arm, stats]) => [
+      esc(arm),
+      num(stats.precision),
+      num(stats.recall),
+      `${stats.missed_abstentions}/${stats.n_no_safe}`,
+      `${stats.unneeded_abstentions}/${stats.n_safe}`,
+    ]);
+  return table(
+    ["Arm", "Precision", "Recall", "Missed (no-safe selected)", "Unneeded (safe abstained)"],
+    rows,
+  );
+}
+
+function renderRecapPaired(report) {
+  const arms = [
+    "bm25",
+    "vector",
+    "hybrid_rrf",
+    "rrf_typed",
+    "rrf_version_filter",
+    "fingerprint_filter",
+    "function_keyed",
+    "schema_hash",
+  ];
+  const signed = (x) => `${x >= 0 ? "+" : ""}${x.toFixed(3)}`;
+  const rows = [];
+  for (const subset of ["safe", "no_safe"]) {
+    for (const arm of arms) {
+      const stats = ((report.paired || {})[subset] || {})[arm];
+      if (!stats) continue;
+      const [lo, hi] = stats.cluster_ci95;
+      rows.push([
+        subset === "safe" ? "Safe" : "No-safe",
+        esc(arm),
+        signed(stats.observed),
+        `[${signed(lo)}, ${signed(hi)}]`,
+        stats.excludes_zero ? "yes" : "no",
+      ]);
+    }
+  }
+  return table(["Subset", "Baseline", "full_recap − baseline", "95% CI", "Excludes zero"], rows);
+}
+
+function renderRecap(report) {
+  if (!report) {
+    return "<p class=\"section-note\">No real-stack report is deployed for this embedder.</p>";
+  }
+  const drift = report.drift;
+  const examples = (drift.examples || [])
+    .slice(0, 3)
+    .map((e) => `\`${e.function}\`: ${e.first_rename.join(" -> ")} then ${e.second_rename.join(" -> ")}, supersedes ${e.superseded ? "confirmed" : "not confirmed"}`)
+    .join("; ");
+  return `
+    <p class="section-note">${report.funnel.scenarios} scenarios, ${report.funnel.memories_promoted} memories promoted (${report.funnel.validations_passed} validations passed), ${report.funnel.sibling_pairs ?? "n/a"} sibling pairs, utility threshold ${Number(report.utility_threshold).toFixed(2)}.</p>
+    <h3>Safe conditions: a matching memory exists</h3>
+    <div class="table-wrap">${renderRecapSafe(report)}</div>
+    <h3>No-safe conditions: the right answer is to abstain</h3>
+    <div class="table-wrap">${renderRecapNoSafe(report)}</div>
+    <h3>Abstention precision and recall</h3>
+    <div class="table-wrap">${renderRecapAbstention(report)}</div>
+    <h3>Paired bootstrap against the full policy</h3>
+    <div class="table-wrap">${renderRecapPaired(report)}</div>
+    <p class="section-note">Positive means the full policy did better: call-valid rate on safe rows, abstention rate on no-safe rows. Intervals are 95% cluster bootstraps over functions; a zero-inclusive interval means the data do not separate the arms.</p>
+    <p class="section-note">Drift: ${drift.functions} functions, ${drift.superseded} supersessions confirmed, ${drift.active_after} active memories after supersession. ${examples ? `Examples: ${esc(examples)}.` : ""}</p>
+  `;
 }
 
 async function show(emb) {
   const $ = (s) => document.querySelector(s);
   try {
-    const { ret, tr, retV1, trV1 } = await load(emb);
+    const { ret, tr, retV1, trV1, recap } = await load(emb);
     $("#provenance").textContent = provenance(ret, tr);
     $("#retrieval-table").innerHTML = renderRetrieval(ret);
     $("#transfer-table").innerHTML = renderTransfer(tr);
     $("#retrieval-note").textContent = `Test split, n=${ret.test_labeled}. RRF k=${ret.rrf_k}. Selection rule: ${ret.selection_rule}.`;
     $("#transfer-note").textContent = `${tr.scenarios} paired scenarios. ${tr.injected_failure}. Success means a schema-valid second call.`;
+    $("#recap-body").innerHTML = renderRecap(recap);
+    $("#recap-note").textContent = recap
+      ? `The only report here that exercises the real record → compile → validate → promote → retrieve stack. ${recap.embedding.model} (${recap.embedding.dimension}-d), generated ${String(recap.generated_at).slice(0, 10)}.`
+      : "The real-stack experiment has not been run for this embedder.";
     const delta = [];
     if (retV1) delta.push(`<h3>Retrieval, test hit@1</h3>${renderDelta(ret, retV1, "retrieval")}<p class="section-note">${esc(pairedNote(ret))}</p>`);
     if (trV1) delta.push(`<h3>Transfer, task success</h3>${renderDelta(tr, trV1, "transfer")}`);
     $("#delta-tables").innerHTML = delta.join("") || "<p class=\"section-note\">Pre-fix reports are not deployed.</p>";
-    $("#limits-list").innerHTML = [...ret.limits, ...tr.limits].map((l) => `<li>${esc(l)}</li>`).join("");
+    const limits = [...ret.limits, ...tr.limits, ...(recap ? recap.limits : [])];
+    $("#limits-list").innerHTML = limits.map((l) => `<li>${esc(l)}</li>`).join("");
   } catch (err) {
     $("#provenance").textContent = `Report data unavailable: ${err.message}. Serve over HTTP and copy docs/evidence/real-data-bfcl-*.json into web/data/.`;
   }
@@ -111,4 +232,4 @@ if (typeof document !== "undefined") {
   sel.addEventListener("change", () => show(sel.value));
   show(sel.value);
 }
-if (typeof module !== "undefined") module.exports = { renderRetrieval, renderTransfer, provenance, renderDelta, pairedNote };
+if (typeof module !== "undefined") module.exports = { renderRetrieval, renderTransfer, provenance, renderDelta, pairedNote, renderRecap, renderRecapPaired };

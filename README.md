@@ -23,7 +23,9 @@ The first real-data measurements are in
 [`docs/evidence/real-data-bfcl-transfer-qwen.md`](docs/evidence/real-data-bfcl-transfer-qwen.md):
 630 real BFCL functions, 500 labeled queries, and 48 paired failure-transfer scenarios. They
 show the retrieval core working, and they show that our current equal-weight RRF is
-*below* dense-only on real data.
+*below* dense-only on real data. A third experiment runs the real record -> compile ->
+validate -> promote -> retrieve stack and asks whether relevance is enough to decide that a
+memory is safe: [`docs/evidence/real-data-bfcl-recap-qwen.md`](docs/evidence/real-data-bfcl-recap-qwen.md).
 
 **Explore the recorded runs:** the static replay app in [`web/`](web/) is a
 no-build static page. It shows a silent-drift contrast, the v3 acceptance gate, the full
@@ -74,7 +76,7 @@ Elasticsearch 8.19.3 node. There are no stub endpoints in the implemented paths.
 | Static + executing mock-sandbox validators | Working | `tests/unit/test_repair_compiler.py` |
 | Promotion gate (no bypass path) | Working | `tests/unit/test_repair_compiler.py`, `tests/integration/test_api.py` |
 | MemoryShift drift detection + revalidation queue | Working | `tests/integration/test_postgres.py`, demo step 8 |
-| Real-data evaluation on BFCL v3 (630 real functions; 500 labeled queries; 240 irrelevance controls; 48 paired drift scenarios) | Working; retrieval and failure-memory transfer measured with Qwen3-Embedding-0.6B, committed JSON + reports | `scripts/bfcl_retrieval.py`, `scripts/bfcl_memory_transfer.py`, `docs/evidence/real-data-bfcl-*.md`, `docs/evidence/real-data-bfcl-*.json` |
+| Real-data evaluation on BFCL v3 (630 real functions; 500 labeled queries; 240 irrelevance controls; 48 paired drift scenarios) | Working; retrieval, failure-memory transfer, and real-stack memory selection measured with Qwen3-Embedding-0.6B, committed JSON + reports | `scripts/bfcl_retrieval.py`, `scripts/bfcl_memory_transfer.py`, `scripts/bfcl_recap_experiment.py`, `docs/evidence/real-data-bfcl-*.md`, `docs/evidence/real-data-bfcl-*.json` |
 | Benchmark v3 (memory-required tiers, silent drift, 2,000 decoys, field-scoped compatibility) | Implemented; synthetic methodology suite retained as an audit trail, not real-data evidence | `tests/unit/test_benchmark_v3.py`, `tests/integration/test_benchmark_v3.py`, `docs/benchmark-v3.md`, `docs/results-v3.md`, `docs/evidence/phase3b-v3-deterministic-test.md` |
 | Benchmark v2 (10 failure families, 120 tasks, family-held-out splits) | Legacy ceiling/regression suite; both dev and held-out test run with real nomic embeddings and the live model | `tests/unit/test_benchmark_v2.py`, `tests/integration/test_benchmark_v2.py`, `docs/benchmark-v2.md`, `docs/evidence/phase2-summary.md`, `docs/evidence/phase3-llm-test-core/summary.md` |
 | Benchmark with card + chunk ablations and safety audit | Working (chunk ablation still degenerate on current data) | `recap eval run --suite v2`, `docs/results/2026-10-20-dev.md` |
@@ -149,6 +151,11 @@ public record. A local implementation log is intentionally not published.
   `num_candidates=200` remains the default because it is the value used in the 100k latency
   run; changing it needs a 100k sweep. See
   [`docs/evidence/phase4-retrieval-depth.md`](docs/evidence/phase4-retrieval-depth.md).
+- **The BFCL selection report still injects the failure** (one required parameter rename) and
+  checks schema validity rather than executing live APIs. Its no-safe conditions are rejected
+  by eligibility/applicability, so it does not isolate the utility threshold's contribution;
+  exact schema filters tie the full policy on that run, and the sibling sample is 24 pairs over
+  8 functions. Those limits are listed in the report rather than averaged away.
 - The Postgres **embedding cache** is implemented and keyed by the exact fingerprint; it
   caches vectors, not query results, so a hit does not bypass retrieval or policy checks.
   Cache hits, misses, provider batches, latency, and provider-reported prompt tokens appear in
@@ -171,10 +178,11 @@ public record. A local implementation log is intentionally not published.
 
 The numbers below use public, human-authored data from the Berkeley Function Calling
 Leaderboard (BFCL v3): real API schemas, real user requests, real gold arguments. There are
-no synthetic gold fixtures or synthetic decoys in these two experiments. Full protocol,
+no synthetic gold fixtures or synthetic decoys in these experiments. Full protocol,
 provenance, and JSON reports are in
-[`docs/evidence/real-data-bfcl-qwen.md`](docs/evidence/real-data-bfcl-qwen.md) and
-[`docs/evidence/real-data-bfcl-transfer-qwen.md`](docs/evidence/real-data-bfcl-transfer-qwen.md).
+[`docs/evidence/real-data-bfcl-qwen.md`](docs/evidence/real-data-bfcl-qwen.md),
+[`docs/evidence/real-data-bfcl-transfer-qwen.md`](docs/evidence/real-data-bfcl-transfer-qwen.md),
+and [`docs/evidence/real-data-bfcl-recap-qwen.md`](docs/evidence/real-data-bfcl-recap-qwen.md).
 
 ### Retrieval over 630 real functions
 
@@ -233,7 +241,58 @@ assumed correct. Read this table with three caveats:
   split was chosen on the retrieval dev split, never on these 48 outcomes. Even so, RRF is
   still below dense on Qwen (−0.083, 95% CI [−0.188, 0.000], which does not exclude zero).
 - Every memory in the pool is valid for its target, so stale versions, unseen functions and
-  abstention are not exercised. These scripts do not run RECAP's selection policy.
+  abstention are not exercised by this transfer script. The separate selection experiment
+  below does exercise them through RECAP's policy.
+
+### Selection policy on the real stack (48 scenarios, 6 conditions)
+
+`scripts/bfcl_recap_experiment.py` runs the whole loop: record the injected failure,
+compile a typed repair, validate it in the BFCL sandbox, promote it through the real
+`PromotionService`, then retrieve with `RecallEngine`. The pool holds one repair per
+function. `in_pool`, `drift_phase1` and `drift_phase3` are safe rows. `held_out` excludes the
+target memory through a real `MemorySnapshot`; `sibling` keeps a same-name-family memory but
+excludes the target; `drift_phase2` retires the first repair and changes the schema again
+without changing the environment id. Qwen3-Embedding-0.6B, 48 functions, 24 sibling pairs:
+
+| Arm | Safe call-valid (n=144) | No-safe false apply (n=120) | No-safe harmful transfer (n=120) |
+|---|---:|---:|---:|
+| `bm25` | 92 (0.639) | 120 (1.000) | 79 (0.658) |
+| `vector` | 135 (0.938) | 120 (1.000) | 60 (0.500) |
+| `hybrid_rrf` | 116 (0.806) | 120 (1.000) | 69 (0.575) |
+| `rrf_typed` | 142 (0.986) | 120 (1.000) | 68 (0.567) |
+| `rrf_version_filter` | 144 (1.000) | 48 (0.400) | 0 (0.000) |
+| `function_keyed` | 144 (1.000) | 48 (0.400) | 0 (0.000) |
+| `fingerprint_filter` | 144 (1.000) | 0 (0.000) | 0 (0.000) |
+| `schema_hash` | 144 (1.000) | 0 (0.000) | 0 (0.000) |
+| `full_recap` | 144 (1.000) | 0 (0.000) | 0 (0.000) |
+
+All 48 failures produced a compiled candidate, passed sandbox validation, and were promoted.
+The drift chain produced 96 promotions and 48 confirmed supersessions, leaving 48 active
+memories. The function-cluster bootstrap (2,000 resamples) says the full policy beats pure
+retrieval on safe rows: minus BM25 `+0.361 [0.236, 0.493]`, minus dense `+0.062
+[0.007, 0.125]`, minus RRF `+0.194 [0.104, 0.299]`. Against typed retrieval the gap is
+`+0.014 [0.000, 0.035]`, which includes zero. On no-safe rows the gap is `+1.000
+[1.000, 1.000]` against every pure and typed arm, `+0.400 [0.350, 0.457]` against
+`function_keyed`, `+0.400 [0.350, 0.453]` against the environment-id filter, and `0.000`
+against the exact schema filters.
+`full_recap` abstention precision and recall are both 1.000 (0 missed, 0 unneeded); the pure
+and typed arms never abstain on a no-safe row.
+
+Silent drift is the case that separates the cheap filters. On `drift_phase2`,
+`function_keyed` and `rrf_version_filter` select the stale memory on 48/48 rows, while
+`fingerprint_filter`, `schema_hash`, and `full_recap` abstain on 48/48. With the hashing
+embedder the safe rates are lower (BM25 95/144, dense 97/144, RRF 107/144, typed 144/144,
+`full_recap` 144/144), but the no-safe pattern is identical: every pure and typed arm selects
+120/120, and the exact schema filters and `full_recap` select 0/120. Retrieval quality moves
+with the embedder; the relevance-only failure does not.
+
+This does **not** show that the utility layer beats a static exact schema-hash filter:
+`fingerprint_filter` and `schema_hash` tie the full policy on this data. The no-safe rows are
+rejected by eligibility/applicability, so the 0.35 utility threshold is not isolated. What it
+does show is narrower and still central: retrieval relevance, even with tool and schema
+context, applies a memory on every no-safe row, while a schema-aware selection policy
+abstains. The full protocol, per-scenario rows, funnels, and limits are in
+[`docs/evidence/real-data-bfcl-recap-qwen.md`](docs/evidence/real-data-bfcl-recap-qwen.md).
 
 ## Results snapshot (benchmark v3 held-out test)
 

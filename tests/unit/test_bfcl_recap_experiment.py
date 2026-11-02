@@ -238,6 +238,35 @@ def test_paired_bootstrap_of_identical_arms_is_zero() -> None:
     assert stats["excludes_zero"] is False
 
 
+def test_selection_from_decision_recovers_tool_from_the_memory() -> None:
+    from types import SimpleNamespace
+
+    decision = SimpleNamespace(
+        candidates=[SimpleNamespace(hard_filter_passed=True, applicability_result="satisfied")],
+        selected_memories=[
+            SimpleNamespace(
+                memory_id="mem_1",
+                memory_version=2,
+                actions=[
+                    {
+                        "action_type": "map_parameter",
+                        "parameters": {"from": "city", "to": "city_v2"},
+                    }
+                ],
+            )
+        ],
+        status="selected",
+    )
+    memory = SimpleNamespace(content=SimpleNamespace(tool_names=["get_weather"]))
+    result = experiment.selection_from_decision(
+        decision, memories={"mem_1": memory}, target_function="get_weather"
+    )
+    assert result.selection is not None
+    assert result.selection.tool == "get_weather"
+    assert result.eligible_count == 1
+    assert result.applicable_count == 1
+
+
 def test_abstention_stats_treats_unneeded_and_missed_abstentions_separately() -> None:
     rows = [
         {"condition": "in_pool", "arm": "full_recap", "abstained": True},

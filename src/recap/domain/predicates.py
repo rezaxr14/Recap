@@ -91,11 +91,30 @@ class Predicate(BaseModel):
 
 
 def _lookup(state: dict[str, Any], path: str) -> tuple[bool, Any]:
+    """Resolve a dotted field path, preferring literal keys over nesting.
+
+    Tool names can contain dots (``math.factorial``). A predicate field such as
+    ``tool_schema_fingerprints.math.factorial`` must be able to address the
+    literal dictionary key, not only a three-level nesting. At each step the
+    full remaining key wins; otherwise the longest key prefix is consumed and
+    the rest is resolved against its value.
+    """
     current: Any = state
-    for part in path.split("."):
-        if not isinstance(current, dict) or part not in current:
+    remaining = path
+    while remaining:
+        if not isinstance(current, dict):
             return False, None
-        current = current[part]
+        if remaining in current:
+            return True, current[remaining]
+        parts = remaining.split(".")
+        for index in range(len(parts) - 1, 0, -1):
+            key = ".".join(parts[:index])
+            if key in current:
+                current = current[key]
+                remaining = ".".join(parts[index:])
+                break
+        else:
+            return False, None
     return True, current
 
 

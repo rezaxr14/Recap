@@ -134,6 +134,32 @@ def test_predicates_violation_and_satisfaction() -> None:
     assert violated.result is PredicateResult.VIOLATED
 
 
+def test_predicates_resolve_literal_dotted_keys_before_nesting() -> None:
+    predicate = Predicate(
+        field="tool_schema_fingerprints.math.factorial",
+        operator="eq",
+        value="sha256:abc",
+    )
+    state = {"tool_schema_fingerprints": {"math.factorial": "sha256:abc"}}
+    result, reason = evaluate_predicate(predicate, state)
+    assert result is PredicateResult.SATISFIED, reason
+
+    missing = Predicate(
+        field="tool_schema_fingerprints.math.gcd",
+        operator="eq",
+        value="sha256:abc",
+    )
+    result, _ = evaluate_predicate(missing, state)
+    assert result is PredicateResult.UNKNOWN
+
+
+def test_predicates_prefer_a_literal_key_over_a_nested_interpretation() -> None:
+    predicate = Predicate(field="a.b", operator="eq", value="literal")
+    result, reason = evaluate_predicate(predicate, {"a.b": "literal", "a": {"b": "nested"}})
+    assert result is PredicateResult.SATISFIED, reason
+    assert "a.b eq 'literal'" in reason
+
+
 def test_predicate_rejects_unsafe_expression_fields() -> None:
     with pytest.raises(ValueError):
         Predicate(field="__class__", operator="exists")

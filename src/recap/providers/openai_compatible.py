@@ -553,12 +553,15 @@ class OpenAICompatibleClient:
         temperature: float = 0.0,
         max_tokens: int = 0,
         response_format: dict[str, Any] | None = None,
+        seed: int | None = None,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "model": model,
             "messages": list(messages),
             "temperature": temperature,
         }
+        if seed is not None:
+            payload["seed"] = seed
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
@@ -706,6 +709,7 @@ class OpenAICompatibleChatProvider:
         tools: list[dict[str, Any]] | None = None,
         temperature: float | None = None,
         max_tokens: int | None = None,
+        seed: int | None = None,
     ) -> ChatResult:
         started = time.perf_counter()
         with self._semaphore:
@@ -715,6 +719,7 @@ class OpenAICompatibleChatProvider:
                 tools=tools,
                 temperature=self.temperature if temperature is None else temperature,
                 max_tokens=self.max_tokens if max_tokens is None else max_tokens,
+                seed=seed,
             )
         message, usage, finish_reason = self._parse_choice(payload)
         tool_calls = self._parse_tool_calls(message)

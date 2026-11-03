@@ -104,6 +104,8 @@ def _categorize(*, error_code: str, error_type: str, message: str) -> str:
         return "transient_rate_limit"
     if "unknown_parameter" in combined or "unexpected" in combined and "param" in combined:
         return "tool_parameter_mismatch"
+    if "invalid_argument_type" in combined:
+        return "argument_type_mismatch"
     if "timeout" in combined or "timed out" in combined:
         return "transient_timeout"
     if "token_expired" in combined or "token expired" in combined:

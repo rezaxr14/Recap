@@ -156,6 +156,7 @@ class ActionType(StrEnum):
     SUPPLY_REQUIRED_PARAMETER = "supply_required_parameter"
     MAP_RESPONSE_FIELD = "map_response_field"
     MAP_PARAMETER_VALUE = "map_parameter_value"
+    COERCE_ARGUMENT_TYPE = "coerce_argument_type"
     NORMALIZE_TIMESTAMP = "normalize_timestamp"
     REQUEST_MISSING_FIELD = "request_missing_field"
     VERIFY_RESOURCE_EXISTS = "verify_resource_exists"

@@ -148,6 +148,28 @@ def test_chat_parses_content_tool_calls_and_usage() -> None:
     assert result.latency_ms >= 0
 
 
+def test_chat_forwards_an_explicit_seed() -> None:
+    seen: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.update(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {"message": {"content": "ok"}, "finish_reason": "stop"},
+                ]
+            },
+        )
+
+    provider = _provider(handler)
+    from recap.providers.base import ChatMessage
+
+    provider.chat([ChatMessage(role="user", content="go")], seed=7)
+
+    assert seen["seed"] == 7
+
+
 def test_invalid_tool_call_arguments_fail_closed() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(

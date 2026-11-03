@@ -7,13 +7,23 @@ from typing import Any
 from recap.domain.enums import EventType
 from recap.domain.repairs import FailureWindow
 from recap.domain.runs import RunEvent
-from recap.environments.bfcl import BFCLEnvironment
+from recap.environments.bfcl import (
+    BFCLEnvironment,
+    argument_errors,
+    openai_parameters,
+    openai_tool_schema,
+)
 from recap.evals.bfcl import (
     build_transfer_scenarios,
     drift_schema,
     sibling_pairs,
 )
-from recap.repair_compiler.bfcl import BFCLSandboxValidator, SchemaRenameGenerator
+from recap.repair_compiler.bfcl import (
+    BFCLSandboxValidator,
+    BFCLTypeCoercionGenerator,
+    SchemaRenameGenerator,
+    coerce_argument,
+)
 from recap.repair_compiler.candidate_generation import build_candidate
 
 SCHEMA: dict[str, Any] = {
@@ -100,6 +110,230 @@ def _draft_and_candidate():
         task_family="weather",
     )
     return env, drafts, candidate, old, new
+
+
+STRICT_SCHEMA: dict[str, Any] = {
+    "name": "calculate_things",
+    "description": "Calculate things.",
+    "parameters": {
+        "type": "dict",
+        "properties": {
+            "n": {"type": "integer", "description": "Count"},
+            "unit": {"type": "string", "description": "Unit", "enum": ["c", "f"]},
+            "values": {
+                "type": "array",
+                "description": "Values",
+                "items": {"type": "float"},
+            },
+            "options": {
+                "type": "dict",
+                "properties": {"label": {"type": "string"}},
+            },
+        },
+        "required": ["n"],
+    },
+}
+
+
+def test_strict_environment_rejects_declared_type_and_enum_errors() -> None:
+    strict = BFCLEnvironment(name="calculate_things", schema=STRICT_SCHEMA, strict=True)
+
+    wrong_type = strict.call({"n": "5"})
+    assert not wrong_type.ok
+    assert wrong_type.error is not None
+    assert wrong_type.error["error_code"] == "INVALID_ARGUMENT_TYPE"
+    assert "must be integer" in wrong_type.error["error_message"]
+
+    wrong_enum = strict.call({"n": 5, "unit": "kelvin"})
+    assert not wrong_enum.ok
+    assert wrong_enum.error is not None
+    assert wrong_enum.error["error_code"] == "INVALID_ENUM_VALUE"
+
+    wrong_item = strict.call({"n": 5, "values": [1, "2.5"]})
+    assert not wrong_item.ok
+    assert wrong_item.error is not None
+    assert wrong_item.error["error_code"] == "INVALID_ARGUMENT_TYPE"
+    assert "values[1]" in wrong_item.error["error_message"]
+
+    assert strict.call({"n": 5, "unit": "c", "values": [1, 2.5]}).ok
+
+
+def test_non_strict_environment_keeps_injected_rename_semantics() -> None:
+    environment = BFCLEnvironment(name="calculate_things", schema=STRICT_SCHEMA)
+    assert environment.call({"n": "5"}).ok
+    errors = argument_errors({"type": "integer"}, "5", "n")
+    assert errors[0][0] == "INVALID_ARGUMENT_TYPE"
+
+
+def _type_failure_env():
+    environment = BFCLEnvironment(
+        name="calculate_things",
+        schema=STRICT_SCHEMA,
+        strict=True,
+        failing_args={"n": "5", "values": ["1", "2"]},
+    )
+    window = FailureWindow(
+        run_id="run_type",
+        start_sequence=1,
+        end_sequence=2,
+        start_event_id="evt_1",
+        end_event_id="evt_2",
+        failure_category="argument_type_mismatch",
+        normalized_signature="sig",
+        raw_signature="argument 'n' must be integer, got str",
+        error_code="INVALID_ARGUMENT_TYPE",
+        error_type="InvalidRequest",
+        tool_name="calculate_things",
+        event_ids=["evt_1", "evt_2"],
+        retry_count=0,
+        incomplete=False,
+        notes=[],
+    )
+    events = [
+        RunEvent(
+            run_id="run_type",
+            sequence_number=1,
+            event_type=EventType.TOOL_CALL_REQUESTED,
+            tool_name="calculate_things",
+            payload_redacted={"request": {"n": "5", "values": ["1", "2"]}},
+        ),
+        RunEvent(
+            run_id="run_type",
+            sequence_number=2,
+            event_type=EventType.TOOL_CALL_FAILED,
+            tool_name="calculate_things",
+            payload_redacted={
+                "request": {"n": "5", "values": ["1", "2"]},
+                "error_code": "INVALID_ARGUMENT_TYPE",
+                "error_message": "argument 'n' must be integer, got str",
+            },
+        ),
+    ]
+    info = {
+        "environment_id": environment.environment_id,
+        "environment_version": environment.version,
+        "tool_schema_hashes": {"calculate_things": environment.schema_hash},
+    }
+    return environment, window, events, info
+
+
+def test_type_coercion_generator_repairs_a_real_type_failure() -> None:
+    environment, window, events, info = _type_failure_env()
+    generator = BFCLTypeCoercionGenerator({environment.environment_id: STRICT_SCHEMA})
+    drafts = generator.generate(window=window, environment=info, events=events)
+
+    assert len(drafts) == 1
+    action = drafts[0].actions[0]
+    assert action.parameters == {"arguments": {"n": "integer", "values": "array"}}
+
+    candidate = build_candidate(
+        drafts[0],
+        window=window,
+        workspace_id="ws",
+        environment_id=environment.environment_id,
+        environment_fingerprint=environment.fingerprint().fingerprint,
+        generated_by=generator.name,
+    )
+    validator = BFCLSandboxValidator({environment.environment_id: environment})
+    result = validator.validate(candidate, environment=environment.fingerprint())
+    assert result.status.value == "passed"
+    assert any(check["check"] == "postcondition_tool_call_succeeded" for check in result.checks)
+
+
+def test_type_coercion_generator_ignores_other_failures() -> None:
+    environment, window, events, info = _type_failure_env()
+    window.failure_category = "tool_parameter_mismatch"
+    generator = BFCLTypeCoercionGenerator({environment.environment_id: STRICT_SCHEMA})
+    assert generator.generate(window=window, environment=info, events=events) == []
+
+
+def test_coerce_argument_handles_json_strings_and_refuses_garbage() -> None:
+    assert coerce_argument("5", "integer") == 5
+    assert coerce_argument(" 2.5 ", "number") == 2.5
+    assert coerce_argument("true", "boolean") is True
+    assert coerce_argument("[1, 2]", "array") == [1, 2]
+    assert coerce_argument('{"a": 1}', "object") == {"a": 1}
+    assert coerce_argument("not-a-number", "integer") == "not-a-number"
+    assert coerce_argument("[not json", "array") == "[not json"
+
+
+def test_openai_parameters_convert_bfcl_types_recursively() -> None:
+    bfcl = {
+        "type": "dict",
+        "properties": {
+            "coord": {"type": "tuple", "items": {"type": "float"}},
+            "interval": {"type": "array", "items": {"type": "integer"}},
+            "route": {"type": "string", "enum": ["fast", "short"], "default": "fast"},
+            "nested": {
+                "type": "dict",
+                "properties": {"depth": {"type": "integer"}},
+                "required": ["depth"],
+            },
+            "data": {"type": "any", "description": "training data"},
+        },
+        "required": ["coord", "interval", "nested"],
+    }
+    converted = openai_parameters(bfcl)
+
+    assert converted["type"] == "object"
+    assert converted["additionalProperties"] is False
+    assert converted["required"] == ["coord", "interval", "nested"]
+    assert converted["properties"]["coord"] == {
+        "type": "array",
+        "items": {"type": "number"},
+    }
+    assert converted["properties"]["interval"]["items"] == {"type": "integer"}
+    assert converted["properties"]["route"]["enum"] == ["fast", "short"]
+    assert converted["properties"]["route"]["default"] == "fast"
+    assert converted["properties"]["nested"]["type"] == "object"
+    assert converted["properties"]["nested"]["additionalProperties"] is False
+    assert converted["properties"]["data"]["description"] == "training data"
+    assert converted["properties"]["data"]["type"] == [
+        "string",
+        "number",
+        "integer",
+        "boolean",
+        "array",
+        "object",
+        "null",
+    ]
+
+
+def test_openai_conversion_keeps_parameter_names_and_fingerprints() -> None:
+    bfcl = {
+        "name": "calculate_distance",
+        "description": "Distance between coordinates.",
+        "parameters": {
+            "type": "dict",
+            "properties": {
+                "coord1": {"type": "tuple", "items": {"type": "float"}},
+                "unit": {"type": "string"},
+            },
+            "required": ["coord1", "unit"],
+        },
+    }
+    environment = BFCLEnvironment(name="calculate_distance", schema=bfcl)
+    document = openai_tool_schema(bfcl)
+
+    assert document["name"] == "calculate_distance"
+    assert document["parameters"]["type"] == "object"
+    assert set(document["parameters"]["properties"]) == set(bfcl["parameters"]["properties"])
+    # The fingerprint still hashes the dataset's declared schema.
+    assert environment.tool_document["parameters"]["type"] == "dict"
+    assert (
+        environment.schema_hash
+        == BFCLEnvironment(name="calculate_distance", schema=bfcl).schema_hash
+    )
+
+
+def test_openai_parameters_fall_back_to_an_object() -> None:
+    assert openai_parameters(None) == {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": False,
+    }
+    assert openai_parameters({"type": "string"})["type"] == "object"
 
 
 def test_environment_reports_unknown_and_missing_parameters() -> None:

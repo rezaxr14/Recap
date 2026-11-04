@@ -62,7 +62,7 @@ def openai_parameters(parameters: dict[str, Any] | None) -> dict[str, Any]:
     """
     if not isinstance(parameters, dict):
         return {"type": "object", "properties": {}, "required": [], "additionalProperties": False}
-    converted = _convert(parameters)
+    converted: dict[str, Any] = _convert(parameters)
     if converted.get("type") != "object":
         converted = {
             "type": "object",

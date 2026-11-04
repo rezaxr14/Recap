@@ -162,7 +162,10 @@ public record. A local implementation log is intentionally not published.
   simple/exec_simple categories are available locally; and 363 of 412 functions are skipped
   because BFCL repeats the same query and they cannot form a dev/held-out pair. Memory arms
   apply the selected action deterministically, and only `retry_only` calls the model again.
-  See [`docs/evidence/real-data-bfcl-live-llama-3-2-3b-instruct-hashing.md`](docs/evidence/real-data-bfcl-live-llama-3-2-3b-instruct-hashing.md).
+  The Qwen-embedding rerun reproduces the safety contrast but not the embedding-specific
+  arm ordering. See
+  [`docs/evidence/real-data-bfcl-live-llama-3-2-3b-instruct-hashing.md`](docs/evidence/real-data-bfcl-live-llama-3-2-3b-instruct-hashing.md)
+  and [`docs/evidence/real-data-bfcl-live-llama-3-2-3b-instruct-qwen.md`](docs/evidence/real-data-bfcl-live-llama-3-2-3b-instruct-qwen.md).
 - The Postgres **embedding cache** is implemented and keyed by the exact fingerprint; it
   caches vectors, not query results, so a hit does not bypass retrieval or policy checks.
   Cache hits, misses, provider batches, latency, and provider-reported prompt tokens appear in
@@ -189,8 +192,9 @@ no synthetic gold fixtures or synthetic decoys in these experiments. Full protoc
 provenance, and JSON reports are in
 [`docs/evidence/real-data-bfcl-qwen.md`](docs/evidence/real-data-bfcl-qwen.md),
 [`docs/evidence/real-data-bfcl-transfer-qwen.md`](docs/evidence/real-data-bfcl-transfer-qwen.md),
-[`docs/evidence/real-data-bfcl-recap-qwen.md`](docs/evidence/real-data-bfcl-recap-qwen.md), and
-[`docs/evidence/real-data-bfcl-live-llama-3-2-3b-instruct-hashing.md`](docs/evidence/real-data-bfcl-live-llama-3-2-3b-instruct-hashing.md).
+[`docs/evidence/real-data-bfcl-recap-qwen.md`](docs/evidence/real-data-bfcl-recap-qwen.md),
+[`docs/evidence/real-data-bfcl-live-llama-3-2-3b-instruct-hashing.md`](docs/evidence/real-data-bfcl-live-llama-3-2-3b-instruct-hashing.md),
+and [`docs/evidence/real-data-bfcl-live-llama-3-2-3b-instruct-qwen.md`](docs/evidence/real-data-bfcl-live-llama-3-2-3b-instruct-qwen.md).
 
 ### Retrieval over 630 real functions
 
@@ -362,6 +366,17 @@ abstaining forgoes the rare accidental fix on a no-safe row: that is the intende
 and the harmful-apply gap above is what it buys. Protocol, per-row outcomes, funnels, and
 limits are in
 [`docs/evidence/real-data-bfcl-live-llama-3-2-3b-instruct-hashing.md`](docs/evidence/real-data-bfcl-live-llama-3-2-3b-instruct-hashing.md).
+
+With Qwen3-Embedding-0.6B the same 30 failures, 30 promotions, and 90/93 subsets reproduce.
+Dense retrieval is stronger on this side: it repairs 0.933 of the safe failed calls and
+harms 0.742 of the no-safe rows, versus 0.433/0.968 with hashing, and its all-row validity
+is 0.684 against 0.608 for the full policy (`full_recap` minus dense `-0.076
+[-0.151, 0.000]`, which includes zero). The contrast that matters does not move: every
+relevance-only arm still applies a memory on 93/93 no-safe rows, `full_recap` applies none,
+and the paired harmful-apply gap against `rrf_typed` is still `-0.871 [-0.968, -0.742]`.
+Condition-paired `in_pool` minus `held_out` is still `+1.000 [1.000, 1.000]` for the full
+policy. That report is
+[`docs/evidence/real-data-bfcl-live-llama-3-2-3b-instruct-qwen.md`](docs/evidence/real-data-bfcl-live-llama-3-2-3b-instruct-qwen.md).
 
 ## Results snapshot (benchmark v3 held-out test)
 

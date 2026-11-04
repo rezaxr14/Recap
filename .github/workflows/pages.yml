@@ -30,7 +30,7 @@ jobs:
       # Pages must be enabled once by hand: Settings -> Pages -> Source: GitHub Actions.
       # configure-pages `enablement` needs a non-GITHUB_TOKEN credential, so it is not used.
       - name: Configure Pages
-        uses: actions/configure-pages@v5
+        uses: actions/configure-pages@v6
 
       - name: Sync BFCL reports into the site
         run: |

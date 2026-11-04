@@ -21,11 +21,13 @@ python -m http.server 8000 --directory web
 The third input is the live-model run. The exported catalog keeps it selectable but does not
 make it the default; the deterministic test artifact remains the headline.
 
-The real-data page (`real-data.html`) reads copies of the BFCL retrieval, transfer, and
-real-stack selection reports, including the pre-fix `-v1` reports, so it can show old vs
-current side by side. The real-stack report (`real-data-bfcl-recap-<embedder>.json`) is
-optional: if it is absent, the page says so instead of inventing a table. Copy them first;
-CI does the same on deploy, so `web/data/` is gitignored:
+The real-data page (`real-data.html`) reads copies of the BFCL retrieval, transfer,
+real-stack selection, and live-model failure reports, including the pre-fix `-v1` reports,
+so it can show old vs current side by side. The real-stack report
+(`real-data-bfcl-recap-<embedder>.json`) and the live report
+(`real-data-bfcl-live-llama-3-2-3b-instruct-hashing.json`) are optional: if absent, the
+page says so instead of inventing a table. Copy them first; CI does the same on deploy, so
+`web/data/` is gitignored:
 
 ```bash
 mkdir -p web/data && cp docs/evidence/real-data-bfcl-*.json web/data/

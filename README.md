@@ -76,7 +76,7 @@ Elasticsearch 8.19.3 node. There are no stub endpoints in the implemented paths.
 | Static + executing mock-sandbox validators | Working | `tests/unit/test_repair_compiler.py` |
 | Promotion gate (no bypass path) | Working | `tests/unit/test_repair_compiler.py`, `tests/integration/test_api.py` |
 | MemoryShift drift detection + revalidation queue | Working | `tests/integration/test_postgres.py`, demo step 8 |
-| Real-data evaluation on BFCL v3 (630 real functions; 500 labeled queries; 240 irrelevance controls; 48 paired drift scenarios) | Working; retrieval, failure-memory transfer, and real-stack memory selection measured with Qwen3-Embedding-0.6B, committed JSON + reports | `scripts/bfcl_retrieval.py`, `scripts/bfcl_memory_transfer.py`, `scripts/bfcl_recap_experiment.py`, `docs/evidence/real-data-bfcl-*.md`, `docs/evidence/real-data-bfcl-*.json` |
+| Real-data evaluation on BFCL v3 (630 real functions; 500 labeled queries; 240 irrelevance controls; 48 paired drift scenarios) | Working; retrieval, failure-memory transfer, real-stack memory selection, and real `llama-3.2-3b-instruct` execution failures measured with committed JSON + reports | `scripts/bfcl_retrieval.py`, `scripts/bfcl_memory_transfer.py`, `scripts/bfcl_recap_experiment.py`, `scripts/bfcl_live_failures.py`, `docs/evidence/real-data-bfcl-*.md`, `docs/evidence/real-data-bfcl-*.json` |
 | Benchmark v3 (memory-required tiers, silent drift, 2,000 decoys, field-scoped compatibility) | Implemented; synthetic methodology suite retained as an audit trail, not real-data evidence | `tests/unit/test_benchmark_v3.py`, `tests/integration/test_benchmark_v3.py`, `docs/benchmark-v3.md`, `docs/results-v3.md`, `docs/evidence/phase3b-v3-deterministic-test.md` |
 | Benchmark v2 (10 failure families, 120 tasks, family-held-out splits) | Legacy ceiling/regression suite; both dev and held-out test run with real nomic embeddings and the live model | `tests/unit/test_benchmark_v2.py`, `tests/integration/test_benchmark_v2.py`, `docs/benchmark-v2.md`, `docs/evidence/phase2-summary.md`, `docs/evidence/phase3-llm-test-core/summary.md` |
 | Benchmark with card + chunk ablations and safety audit | Working (chunk ablation still degenerate on current data) | `recap eval run --suite v2`, `docs/results/2026-10-20-dev.md` |
@@ -151,11 +151,18 @@ public record. A local implementation log is intentionally not published.
   `num_candidates=200` remains the default because it is the value used in the 100k latency
   run; changing it needs a 100k sweep. See
   [`docs/evidence/phase4-retrieval-depth.md`](docs/evidence/phase4-retrieval-depth.md).
-- **The BFCL selection report still injects the failure** (one required parameter rename) and
-  checks schema validity rather than executing live APIs. Its no-safe conditions are rejected
-  by eligibility/applicability, so it does not isolate the utility threshold's contribution;
-  exact schema filters tie the full policy on that run, and the sibling sample is 24 pairs over
-  8 functions. Those limits are listed in the report rather than averaged away.
+- **The BFCL selection report injects the failure** (one required parameter rename) and checks
+  schema validity rather than executing live APIs. Its no-safe conditions are rejected by
+  eligibility/applicability, so it does not isolate the utility threshold's contribution; exact
+  schema filters tie the full policy on that run, and the sibling sample is 24 pairs over 8
+  functions. Those limits are listed in the report rather than averaged away.
+- **The live-failure report removes the injection but not every gap.** Every failure is the
+  local model's own output, but calls are still schema-checked, not executed against live APIs;
+  the model sees one correct tool per task, so cross-tool selection is out of scope; only the
+  simple/exec_simple categories are available locally; and 363 of 412 functions are skipped
+  because BFCL repeats the same query and they cannot form a dev/held-out pair. Memory arms
+  apply the selected action deterministically, and only `retry_only` calls the model again.
+  See [`docs/evidence/real-data-bfcl-live-llama-3-2-3b-instruct-hashing.md`](docs/evidence/real-data-bfcl-live-llama-3-2-3b-instruct-hashing.md).
 - The Postgres **embedding cache** is implemented and keyed by the exact fingerprint; it
   caches vectors, not query results, so a hit does not bypass retrieval or policy checks.
   Cache hits, misses, provider batches, latency, and provider-reported prompt tokens appear in
@@ -182,7 +189,8 @@ no synthetic gold fixtures or synthetic decoys in these experiments. Full protoc
 provenance, and JSON reports are in
 [`docs/evidence/real-data-bfcl-qwen.md`](docs/evidence/real-data-bfcl-qwen.md),
 [`docs/evidence/real-data-bfcl-transfer-qwen.md`](docs/evidence/real-data-bfcl-transfer-qwen.md),
-and [`docs/evidence/real-data-bfcl-recap-qwen.md`](docs/evidence/real-data-bfcl-recap-qwen.md).
+[`docs/evidence/real-data-bfcl-recap-qwen.md`](docs/evidence/real-data-bfcl-recap-qwen.md), and
+[`docs/evidence/real-data-bfcl-live-llama-3-2-3b-instruct-hashing.md`](docs/evidence/real-data-bfcl-live-llama-3-2-3b-instruct-hashing.md).
 
 ### Retrieval over 630 real functions
 
@@ -293,6 +301,67 @@ does show is narrower and still central: retrieval relevance, even with tool and
 context, applies a memory on every no-safe row, while a schema-aware selection policy
 abstains. The full protocol, per-scenario rows, funnels, and limits are in
 [`docs/evidence/real-data-bfcl-recap-qwen.md`](docs/evidence/real-data-bfcl-recap-qwen.md).
+
+### Real model failures, not injected renames (49 functions, 3 seeds)
+
+The sections above inject the failure. This one records the failure. A local
+`llama-3.2-3b-instruct` is called with the real BFCL v3 schema and one correct tool per
+task; its own invalid call is recorded through `RunRecorder`, compiled into a typed
+coercion, sandbox-validated, and promoted. Discovery runs at temperature 0; evaluation
+runs at 0.7 with seeds 11, 23, 37 and two conditions per function: `in_pool` keeps that
+function's memory available, `held_out` excludes exactly it through a real
+`MemorySnapshot`. Functions with no promoted memory use `no_memory_available`.
+
+The dev funnel: 49 calls, 0 selection failures, 30 execution failures, all 30 a declared
+argument-type mismatch (`"5"` where the schema says integer, `"[1,2]"` where it says
+array, `"true"` where it says boolean). All 30 produced a compiled candidate, passed
+sandbox validation, and were promoted. Held-out calls where the function's memory was in
+the pool and the first attempt failed (n=90):
+
+| Arm | Call valid | Repaired the failed call | Selected a memory | Harmful apply |
+|---|---:|---:|---:|---:|
+| `no_memory` | 0.000 | 0.000 | 0.000 | 0.000 |
+| `retry_only` | 0.044 | 0.044 | 0.000 | 0.000 |
+| `bm25` | 0.267 | 0.267 | 1.000 | 0.000 |
+| `vector` | 0.433 | 0.433 | 1.000 | 0.000 |
+| `rrf_typed` | 1.000 | 1.000 | 1.000 | 0.000 |
+| `full_recap` | 1.000 | 1.000 | 1.000 | 0.000 |
+
+`retry_only` receives the exact schema error and still fixes only 4 of 90 calls. A typed
+memory fixes all 90. On these rows relevance alone is enough, so the success side does not
+separate the policy from `rrf_typed`; the paired `full_recap` minus `rrf_typed` difference
+is `+0.000 [0.000, 0.000]`.
+
+The safety side does. On rows where the function's memory was excluded and the first
+attempt failed (n=93), the correct answer is to abstain:
+
+| Arm | Call valid | Selected a memory | Harmful apply |
+|---|---:|---:|---:|
+| `no_memory` | 0.000 | 0.000 | 0.000 |
+| `retry_only` | 0.043 | 0.000 | 0.000 |
+| `bm25` | 0.065 | 1.000 | 0.935 |
+| `vector` | 0.032 | 1.000 | 0.968 |
+| `rrf_typed` | 0.129 | 1.000 | 0.871 |
+| `full_recap` | 0.000 | 0.000 | 0.000 |
+
+Every relevance-only arm applies some other function's memory on 93/93 rows; 87–97% of
+those applications leave the call invalid. The full policy applies none. Paired on the
+same rows, `full_recap` has 0.871 fewer harmful applies than `rrf_typed`
+(`[-0.968, -0.742]`), 0.968 fewer than dense (`[-1.000, -0.903]`), and 0.935 fewer than
+BM25 (`[-1.000, -0.839]`); every interval excludes zero.
+
+Pairing the conditions on each `(task, seed)` isolates the memory: `in_pool` minus
+`held_out` is `+1.000 [1.000, 1.000]` for `full_recap`, `+0.867 [0.733, 0.967]` for
+`rrf_typed`, and exactly `0.000` for `no_memory` and `retry_only`. The same pattern holds
+at each seed separately: `full_recap` 1.000/0.000 on the safe and no-safe subsets,
+`rrf_typed` 1.000/0.871, `no_memory` 0.000/0.000.
+
+Across all held-out rows `full_recap` is valid on 0.608 and `no_memory` on 0.228. It is
+slightly worse than `rrf_typed` overall (0.608 vs 0.658, `-0.051 [-0.101, -0.012]`) because
+abstaining forgoes the rare accidental fix on a no-safe row: that is the intended trade,
+and the harmful-apply gap above is what it buys. Protocol, per-row outcomes, funnels, and
+limits are in
+[`docs/evidence/real-data-bfcl-live-llama-3-2-3b-instruct-hashing.md`](docs/evidence/real-data-bfcl-live-llama-3-2-3b-instruct-hashing.md).
 
 ## Results snapshot (benchmark v3 held-out test)
 

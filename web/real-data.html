@@ -29,6 +29,7 @@
         <a href="#delta">What changed</a>
         <a href="#transfer">Failure-memory transfer</a>
         <a href="#recap">Selection policy</a>
+        <a href="#live">Real model failures</a>
         <a href="#limits">Limits</a>
         <a href="index.html">Replay (synthetic audit trail)</a>
       </nav>
@@ -88,6 +89,20 @@
           <li>The exact schema filters (<code>fingerprint_filter</code> and <code>schema_hash</code>) tie the full policy on this run. That is reported, not hidden: the experiment does not show the utility layer beating a static exact-schema filter.</li>
           <li><code>function_keyed</code> and the environment-id filter are safe while the tool or environment id is current, but a silent schema drift inside one environment id defeats both. A tool name or environment id alone is not a safety signal.</li>
           <li>Function selection is assumed correct. The context supplies the tool the agent already chose, so these tables measure memory selection, not whether an agent picks the right tool.</li>
+        </ul>
+      </section>
+
+      <section class="section" id="live">
+        <div class="section-heading">
+          <h2>Real model failures, repaired by memory</h2>
+          <p class="section-note" id="live-note"></p>
+        </div>
+        <div id="live-body"></div>
+        <ul class="callouts">
+          <li>Nothing is injected. A local model is called with the real BFCL schema and its own invalid call is recorded through <code>RunRecorder</code>, compiled into a typed coercion, sandbox-validated, and promoted.</li>
+          <li>The model sees one correct tool per task, so these tables measure argument-execution failures and memory selection, not cross-tool selection.</li>
+          <li>Memory arms apply the selected typed action deterministically; only <code>retry_only</code> asks the model again, with the schema error as feedback.</li>
+          <li>This covers the BFCL simple and exec_simple categories available locally. Multi-turn categories are not included.</li>
         </ul>
       </section>
 

@@ -82,14 +82,19 @@ async function load(emb) {
     const res = await fetch(`data/real-data-bfcl-recap-${emb}.json`);
     return res.ok ? res.json() : null;
   };
-  const [ret, tr, retV1, trV1, recap] = await Promise.all([
+  const getLive = async () => {
+    const res = await fetch("data/real-data-bfcl-live-llama-3-2-3b-instruct.json");
+    return res.ok ? res.json() : null;
+  };
+  const [ret, tr, retV1, trV1, recap, live] = await Promise.all([
     get("real-data-bfcl"),
     get("real-data-bfcl-transfer"),
     getOptional("real-data-bfcl"),
     getOptional("real-data-bfcl-transfer"),
     getRecap(),
+    getLive(),
   ]);
-  return { ret, tr, retV1, trV1, recap };
+  return { ret, tr, retV1, trV1, recap, live };
 }
 
 const RECAP_ARMS = [
@@ -101,6 +106,15 @@ const RECAP_ARMS = [
   ["fingerprint_filter", "RRF + fingerprint filter"],
   ["function_keyed", "Keyed by tool name"],
   ["schema_hash", "Schema-hash match"],
+  ["full_recap", "Full RECAP policy"],
+];
+
+const LIVE_ARMS = [
+  ["no_memory", "No memory applied"],
+  ["retry_only", "Retry only (model sees the error)"],
+  ["bm25", "BM25 memory"],
+  ["vector", "Dense memory"],
+  ["rrf_typed", "RRF + typed context"],
   ["full_recap", "Full RECAP policy"],
 ];
 
@@ -203,10 +217,65 @@ function renderRecap(report) {
   `;
 }
 
+function renderLiveArms(report, subsetKey) {
+  const subset = (report.eval.subsets || {})[subsetKey] || {};
+  const rows = LIVE_ARMS.filter(([arm]) => subset[arm]).map(([arm, label]) => {
+    const stats = subset[arm];
+    return [
+      esc(label),
+      String(stats.n),
+      num(stats.call_valid_rate),
+      num(stats.execution_repair_rate),
+      num(stats.selected_rate),
+      num(stats.abstain_rate),
+      num(stats.harmful_apply_rate),
+    ];
+  });
+  return table(
+    ["Arm", "n", "Call valid", "Repaired failed call", "Selected", "Abstained", "Harmful apply"],
+    rows,
+  );
+}
+
+function renderLivePaired(report) {
+  const subset = (report.paired || {}).safe_failed || {};
+  const harm = report.paired_harm || {};
+  const signed = (x) => `${x >= 0 ? "+" : ""}${x.toFixed(3)}`;
+  const rows = [];
+  for (const [arm, stats] of Object.entries(subset)) {
+    const [lo, hi] = stats.cluster_ci95;
+    rows.push(["Safe failure: call valid", esc(arm), signed(stats.observed), `[${signed(lo)}, ${signed(hi)}]`, stats.excludes_zero ? "yes" : "no"]);
+  }
+  for (const [arm, stats] of Object.entries(harm)) {
+    const [lo, hi] = stats.cluster_ci95;
+    rows.push(["No safe memory: harmful apply", esc(arm), signed(stats.observed), `[${signed(lo)}, ${signed(hi)}]`, stats.excludes_zero ? "yes" : "no"]);
+  }
+  return table(["Comparison", "Baseline", "full_recap − baseline", "95% CI", "Excludes zero"], rows);
+}
+
+function renderLive(report) {
+  if (!report) {
+    return "<p class=\"section-note\">No live-model failure report is deployed.</p>";
+  }
+  const d = report.discovery.summary;
+  const f = report.funnel;
+  return `
+    <p class="section-note">${esc(report.model.model)} at ${esc(report.model.base_url)} · discovery temperature ${num(report.decoding.discovery_temperature)} · eval temperature ${num(report.decoding.eval_temperature)} · seeds ${report.decoding.seeds.join(", ")} · embedder ${esc(report.embedding.model)} (${report.embedding.dimension}-d).</p>
+    <p class="section-note">${f.dev_calls} dev calls produced ${d.execution_failures} execution failures (${d.type_failures} declared-type mismatches) and ${d.selection_failures} selection failures. ${f.memories_promoted} memories were recorded, compiled, sandbox-validated, and promoted. ${f.eval_first_calls} held-out model calls were made under ${f.eval_conditions} conditions.</p>
+    <h3>Held-out calls where the function's memory was in the pool and the first call failed</h3>
+    <div class="table-wrap">${renderLiveArms(report, "safe_failed")}</div>
+    <h3>Held-out calls where that memory was excluded and the first call failed</h3>
+    <div class="table-wrap">${renderLiveArms(report, "no_safe_failed")}</div>
+    <h3>Paired cluster bootstrap against the full policy</h3>
+    <div class="table-wrap">${renderLivePaired(report)}</div>
+    <p class="section-note">Positive call-valid means the full policy repaired more failed calls. Negative harmful-apply means the full policy applied fewer inapplicable memories. Intervals are 95% function-level cluster bootstraps.</p>
+  `;
+}
+
 async function show(emb) {
   const $ = (s) => document.querySelector(s);
   try {
-    const { ret, tr, retV1, trV1, recap } = await load(emb);
+    const { ret, tr, retV1, trV1, recap, live } = await load(emb);
     $("#provenance").textContent = provenance(ret, tr);
     $("#retrieval-table").innerHTML = renderRetrieval(ret);
     $("#transfer-table").innerHTML = renderTransfer(tr);
@@ -216,11 +285,15 @@ async function show(emb) {
     $("#recap-note").textContent = recap
       ? `The only report here that exercises the real record → compile → validate → promote → retrieve stack. ${recap.embedding.model} (${recap.embedding.dimension}-d), generated ${String(recap.generated_at).slice(0, 10)}.`
       : "The real-stack experiment has not been run for this embedder.";
+    $("#live-body").innerHTML = renderLive(live);
+    $("#live-note").textContent = live
+      ? "Real model failures, not injected renames. The local model's own invalid calls become the failure evidence; every repair is compiled and promoted by the real stack."
+      : "The live-model failure experiment has not been run.";
     const delta = [];
     if (retV1) delta.push(`<h3>Retrieval, test hit@1</h3>${renderDelta(ret, retV1, "retrieval")}<p class="section-note">${esc(pairedNote(ret))}</p>`);
     if (trV1) delta.push(`<h3>Transfer, task success</h3>${renderDelta(tr, trV1, "transfer")}`);
     $("#delta-tables").innerHTML = delta.join("") || "<p class=\"section-note\">Pre-fix reports are not deployed.</p>";
-    const limits = [...ret.limits, ...tr.limits, ...(recap ? recap.limits : [])];
+    const limits = [...ret.limits, ...tr.limits, ...(recap ? recap.limits : []), ...(live ? live.limits : [])];
     $("#limits-list").innerHTML = limits.map((l) => `<li>${esc(l)}</li>`).join("");
   } catch (err) {
     $("#provenance").textContent = `Report data unavailable: ${err.message}. Serve over HTTP and copy docs/evidence/real-data-bfcl-*.json into web/data/.`;
@@ -232,4 +305,4 @@ if (typeof document !== "undefined") {
   sel.addEventListener("change", () => show(sel.value));
   show(sel.value);
 }
-if (typeof module !== "undefined") module.exports = { renderRetrieval, renderTransfer, provenance, renderDelta, pairedNote, renderRecap, renderRecapPaired };
+if (typeof module !== "undefined") module.exports = { renderRetrieval, renderTransfer, provenance, renderDelta, pairedNote, renderRecap, renderRecapPaired, renderLive, renderLiveArms, renderLivePaired };

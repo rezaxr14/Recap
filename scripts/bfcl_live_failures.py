@@ -112,7 +112,6 @@ SUBSETS = (
     "all",
     "selected_ok",
     "execution_failed",
-    "execution_failed_with_memory",
     "safe_failed",
     "no_safe",
     "no_safe_failed",
@@ -348,12 +347,6 @@ def subset_rows(rows: list[dict[str, Any]], subset: str) -> list[dict[str, Any]]
         return [row for row in rows if row["selection_ok"]]
     if subset == "execution_failed":
         return [row for row in rows if row["selection_ok"] and not row["initial_valid"]]
-    if subset == "execution_failed_with_memory":
-        return [
-            row
-            for row in rows
-            if row["selection_ok"] and not row["initial_valid"] and row["has_safe_memory"]
-        ]
     if subset == "safe_failed":
         return [
             row
@@ -1217,6 +1210,7 @@ def run_evaluation(
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     rows: list[dict[str, Any]] = []
     calls_log: list[dict[str, Any]] = []
+    consecutive_errors = 0
     for index, task in enumerate(evaluation, start=1):
         function = str(task["function"])
         environment = BFCLEnvironment(name=function, schema=task["schema"], strict=True)
@@ -1241,6 +1235,15 @@ def run_evaluation(
                 kind="first",
             )
             first_classification = classify_call(task=task, call=first)
+            if first.error:
+                consecutive_errors += 1
+                if consecutive_errors >= 3:
+                    raise SystemExit(
+                        "three consecutive model transport failures; "
+                        f"last error: {first.error}. Is the endpoint at {base_url} running?"
+                    )
+            else:
+                consecutive_errors = 0
             retry: ModelCall | None = None
             retry_classification: dict[str, Any] | None = None
             if not first_classification["execution_ok"]:
@@ -1379,20 +1382,20 @@ def render_markdown(payload: dict[str, Any]) -> str:
         f"({discovery['type_failures']} declared-type mismatches).",
         f"- {funnel['memories_promoted']} type-coercion memories were compiled, "
         "sandbox-validated, and promoted.",
-        f"- On held-out calls whose first attempt failed on an argument type and whose "
-        f"function has a memory (n={full.get('n', 0)}), `no_memory` stayed valid on "
+        f"- On in-pool held-out calls whose first attempt failed on an argument type "
+        f"(n={full.get('n', 0)}), `no_memory` stayed valid on "
         f"{_pct(n_full.get('call_valid_rate', 0.0))}, `retry_only` on "
         f"{_pct(retry.get('call_valid_rate', 0.0))}, and `full_recap` on "
         f"{_pct(full.get('call_valid_rate', 0.0))}.",
         f"- Across all held-out rows, `no_memory` was valid on "
         f"{_pct(no_all.get('call_valid_rate', 0.0))} and `full_recap` on "
         f"{_pct(full_all.get('call_valid_rate', 0.0))}.",
-        f"- On the primary subset `rrf_typed` (typed retrieval, no policy) reached "
+        f"- On the same in-pool subset `rrf_typed` (typed retrieval, no policy) reached "
         f"{_pct(full_typed.get('call_valid_rate', 0.0))}, so relevance alone explains the "
         "success side here.",
-        f"- On held-out rows with no memory for the function and a failed first call "
-        f"(n={full_safety.get('n', 0)}), relevance-only `rrf_typed` applied a memory on "
-        f"{_pct(typed_safety.get('selected_rate', 0.0))} of rows and did harm on "
+        f"- On rows where the function's memory was excluded and the first call failed "
+        f"(n={full_safety.get('n', 0)}), relevance-only `rrf_typed` applied a cross-function "
+        f"memory on {_pct(typed_safety.get('selected_rate', 0.0))} of rows and did harm on "
         f"{_pct(typed_safety.get('harmful_apply_rate', 0.0))}; `full_recap` applied one on "
         f"{_pct(full_safety.get('selected_rate', 0.0))} and did harm on "
         f"{_pct(full_safety.get('harmful_apply_rate', 0.0))}.",
@@ -1477,6 +1480,33 @@ def render_markdown(payload: dict[str, Any]) -> str:
         ]
     )
     lines.extend(_arm_table(valid_rows))
+
+    conditions = sorted({row["condition"] for row in payload["eval"]["per_row"]})
+    if conditions:
+        lines.extend(
+            [
+                "",
+                "## With vs without the function's memory",
+                "",
+                "`in_pool` keeps the function's own memory in the pool; `held_out` excludes "
+                "exactly that memory through a real `MemorySnapshot`; "
+                "`no_memory_available` is used when no memory was promoted for the function.",
+                "",
+                "| Condition | Arm | n | call valid | selected | harmful apply |",
+                "|---|---|---:|---:|---:|---:|",
+            ]
+        )
+        for condition in conditions:
+            condition_rows = [
+                row for row in payload["eval"]["per_row"] if row["condition"] == condition
+            ]
+            for arm in ("no_memory", "rrf_typed", "full_recap"):
+                stats = summarize_arm([row for row in condition_rows if row["arm"] == arm])
+                lines.append(
+                    f"| `{condition}` | `{arm}` | {stats['n']} | "
+                    f"{_pct(stats['call_valid_rate'])} | {_pct(stats['selected_rate'])} | "
+                    f"{_pct(stats['harmful_apply_rate'])} |"
+                )
 
     lines.extend(
         [
@@ -1629,6 +1659,7 @@ def main(argv: list[str] | None = None) -> int:
 
     dev_calls: dict[str, ModelCall] = {}
     dev_classifications: dict[str, dict[str, Any]] = {}
+    consecutive_errors = 0
     for index, task in enumerate(dev, start=1):
         call = call_model(
             provider,
@@ -1640,6 +1671,15 @@ def main(argv: list[str] | None = None) -> int:
             temperature=args.discovery_temperature,
             kind="dev",
         )
+        if call.error:
+            consecutive_errors += 1
+            if consecutive_errors >= 3:
+                raise SystemExit(
+                    "three consecutive model transport failures; "
+                    f"last error: {call.error}. Is the endpoint at {args.base_url} running?"
+                )
+        else:
+            consecutive_errors = 0
         classification = classify_call(task=task, call=call)
         dev_calls[str(task["function"])] = call
         dev_classifications[str(task["function"])] = classification

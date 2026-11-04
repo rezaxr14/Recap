@@ -255,7 +255,6 @@ def test_subset_rows_use_the_documented_definitions() -> None:
     assert len(live.subset_rows(rows, "all")) == 4
     assert len(live.subset_rows(rows, "selected_ok")) == 3
     assert len(live.subset_rows(rows, "execution_failed")) == 2
-    assert len(live.subset_rows(rows, "execution_failed_with_memory")) == 1
     assert len(live.subset_rows(rows, "safe_failed")) == 1
     assert len(live.subset_rows(rows, "no_safe")) == 1
     assert len(live.subset_rows(rows, "no_safe_failed")) == 1
@@ -412,7 +411,6 @@ def test_markdown_renders_numbers_from_the_payload() -> None:
         "eval": {
             "subsets": {
                 "all": subset,
-                "execution_failed_with_memory": subset,
                 "execution_failed": subset,
                 "safe_failed": subset,
                 "no_safe": subset,
@@ -422,7 +420,7 @@ def test_markdown_renders_numbers_from_the_payload() -> None:
             "per_row": [],
         },
         "paired": {
-            "execution_failed_with_memory": {
+            "safe_failed": {
                 "retry_only": {
                     "observed": 0.5,
                     "cluster_ci95": [0.1, 0.9],

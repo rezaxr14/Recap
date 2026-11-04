@@ -83,7 +83,7 @@ async function load(emb) {
     return res.ok ? res.json() : null;
   };
   const getLive = async () => {
-    const res = await fetch("data/real-data-bfcl-live-llama-3-2-3b-instruct-hashing.json");
+    const res = await fetch(`data/real-data-bfcl-live-llama-3-2-3b-instruct-${emb}.json`);
     return res.ok ? res.json() : null;
   };
   const [ret, tr, retV1, trV1, recap, live] = await Promise.all([

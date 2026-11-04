@@ -26,6 +26,10 @@ show the retrieval core working, and they show that our current equal-weight RRF
 *below* dense-only on real data. A third experiment runs the real record -> compile ->
 validate -> promote -> retrieve stack and asks whether relevance is enough to decide that a
 memory is safe: [`docs/evidence/real-data-bfcl-recap-qwen.md`](docs/evidence/real-data-bfcl-recap-qwen.md).
+A fourth records a local model's own invalid BFCL calls and repairs them: relevance-only
+arms apply a memory on every row where the correct answer is to abstain, while the full
+policy applies none
+([`docs/evidence/real-data-bfcl-live-llama-3-2-3b-instruct-hashing.md`](docs/evidence/real-data-bfcl-live-llama-3-2-3b-instruct-hashing.md)).
 
 **Explore the recorded runs:** the static replay app in [`web/`](web/) is a
 no-build static page. It shows a silent-drift contrast, the v3 acceptance gate, the full

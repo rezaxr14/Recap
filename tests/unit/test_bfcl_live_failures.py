@@ -369,13 +369,41 @@ def _stats(n: int, call_valid: float, repair: float = 0.0) -> dict:
     }
 
 
-def test_markdown_renders_numbers_from_the_payload() -> None:
+def test_condition_paired_bootstrap_uses_the_same_task_and_seed() -> None:
+    rng = np.random.default_rng(9)
+    rows = []
+    for index in range(4):
+        for condition, valid in (("in_pool", True), ("held_out", False)):
+            rows.append(
+                _row(
+                    arm="full_recap",
+                    condition=condition,
+                    task_id=f"t{index}",
+                    seed=11,
+                    cluster=f"f{index}",
+                    call_valid=valid,
+                )
+            )
+    stats = live.condition_paired_bootstrap(
+        rows,
+        treatment="in_pool",
+        reference="held_out",
+        cluster_key="cluster",
+        value_key="call_valid",
+        rng=rng,
+        resamples=100,
+    )
+    assert stats["full_recap"]["observed"] == 1.0
+    assert stats["full_recap"]["excludes_zero"] is True
+
+
+def _payload() -> dict:
     subset = {
         "no_memory": _stats(8, 0.125),
         "retry_only": _stats(8, 0.25),
         "full_recap": _stats(8, 0.75),
     }
-    payload = {
+    return {
         "generated_at": "2026-01-01T00:00:00+00:00",
         "dataset": "fixture",
         "index_prefix": "fixture-prefix",
@@ -437,10 +465,24 @@ def test_markdown_renders_numbers_from_the_payload() -> None:
         },
         "limits": ["fixture only"],
     }
-    text = live.render_markdown(payload)
+
+
+def test_markdown_renders_numbers_from_the_payload() -> None:
+    text = live.render_markdown(_payload())
     assert "fixture-model" in text
     assert "0.750" in text
     assert "0.125" in text
     assert "0.500" in text
     assert "[+0.100, +0.900]" in text
     assert "fixture only" in text
+
+
+def test_render_only_regenerates_markdown_from_json(tmp_path) -> None:
+    import json
+
+    json_path = tmp_path / "report.json"
+    json_path.write_text(json.dumps(_payload()), encoding="utf-8")
+    assert live.main(["--render-only", str(json_path)]) == 0
+    markdown = (tmp_path / "report.md").read_text(encoding="utf-8")
+    assert "fixture-model" in markdown
+    assert "0.750" in markdown

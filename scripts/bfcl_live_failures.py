@@ -416,6 +416,45 @@ def paired_bootstrap(
     return result
 
 
+def condition_paired_bootstrap(
+    rows: list[dict[str, Any]],
+    *,
+    treatment: str,
+    reference: str,
+    cluster_key: str,
+    value_key: str,
+    rng: np.random.Generator,
+    resamples: int = BOOTSTRAP,
+) -> dict[str, dict[str, Any]]:
+    """Compare the same (task, seed) under two conditions, per arm.
+
+    This is the with-memory vs without-memory contrast: the model call is the
+    same draw and only the availability of the function's memory changes.
+    """
+    reference_map = {
+        (row["task_id"], row["seed"], row["arm"]): row[value_key]
+        for row in rows
+        if row["condition"] == reference
+    }
+    by_arm: dict[str, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
+    for row in rows:
+        if row["condition"] != treatment:
+            continue
+        key = (row["task_id"], row["seed"], row["arm"])
+        if key not in reference_map:
+            continue
+        delta = float(row[value_key]) - float(reference_map[key])
+        by_arm[str(row["arm"])][str(row[cluster_key])].append(delta)
+    result: dict[str, dict[str, Any]] = {}
+    for arm, by_cluster in by_arm.items():
+        stats = cluster_bootstrap(dict(by_cluster), rng, resamples=resamples)
+        stats["excludes_zero"] = bool(
+            stats["cluster_ci95"][0] > 0.0 or stats["cluster_ci95"][1] < 0.0
+        )
+        result[arm] = stats
+    return result
+
+
 # ------------------------------------------------------------------------ stack
 def build_settings(args: argparse.Namespace) -> Settings:
     settings = load_settings()
@@ -1508,6 +1547,34 @@ def render_markdown(payload: dict[str, Any]) -> str:
                     f"{_pct(stats['harmful_apply_rate'])} |"
                 )
 
+    seeds = sorted({row["seed"] for row in payload["eval"]["per_row"]})
+    if seeds:
+        lines.extend(
+            [
+                "",
+                "## Per-seed stability",
+                "",
+                "The same scoring rule, reported separately for each evaluation seed:",
+                "",
+                "| Seed | Arm | safe_failed call valid | no_safe_failed harmful apply |",
+                "|---:|---|---:|---:|",
+            ]
+        )
+        safe_rows = subset_rows(payload["eval"]["per_row"], "safe_failed")
+        unsafe_rows = subset_rows(payload["eval"]["per_row"], "no_safe_failed")
+        for seed in seeds:
+            for arm in ("no_memory", "rrf_typed", "full_recap"):
+                safe_stats = summarize_arm(
+                    [row for row in safe_rows if row["seed"] == seed and row["arm"] == arm]
+                )
+                unsafe_stats = summarize_arm(
+                    [row for row in unsafe_rows if row["seed"] == seed and row["arm"] == arm]
+                )
+                lines.append(
+                    f"| {seed} | `{arm}` | {_pct(safe_stats['call_valid_rate'])} | "
+                    f"{_pct(unsafe_stats['harmful_apply_rate'])} |"
+                )
+
     lines.extend(
         [
             "",
@@ -1547,6 +1614,26 @@ def render_markdown(payload: dict[str, Any]) -> str:
         lines.append(
             f"| `{arm}` | {stats['observed']:+.3f} | {_ci(stats)} | {stats['excludes_zero']} |"
         )
+
+    condition_paired = payload.get("condition_paired", {})
+    if condition_paired:
+        lines.extend(
+            [
+                "",
+                "## With the function's memory vs without it",
+                "",
+                "`in_pool` minus `held_out` on the same (task, seed): the model call is the "
+                "same draw and only the function's own memory changes availability. Positive "
+                "means the memory improved schema validity.",
+                "",
+                "| Arm | observed | 95% CI | excludes zero |",
+                "|---|---:|---:|---|",
+            ]
+        )
+        for arm, stats in condition_paired.items():
+            lines.append(
+                f"| `{arm}` | {stats['observed']:+.3f} | {_ci(stats)} | {stats['excludes_zero']} |"
+            )
 
     lines.extend(
         [
@@ -1607,7 +1694,20 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--overall-timeout", type=float, default=600.0)
     parser.add_argument("--no-progress-timeout", type=float, default=180.0)
     parser.add_argument("--max-retries", type=int, default=1)
+    parser.add_argument(
+        "--render-only",
+        type=Path,
+        default=None,
+        help="Regenerate the Markdown report from an existing JSON report and exit.",
+    )
     args = parser.parse_args(argv)
+
+    if args.render_only is not None:
+        payload = json.loads(args.render_only.read_text(encoding="utf-8"))
+        doc_path = args.doc or args.render_only.with_suffix(".md")
+        doc_path.write_text(render_markdown(payload), encoding="utf-8")
+        print(f"wrote {doc_path}")
+        return 0
 
     if not args.data_dir.is_dir():
         raise SystemExit(
@@ -1776,6 +1876,16 @@ def main(argv: list[str] | None = None) -> int:
             rng=rng,
             resamples=args.bootstrap,
         )
+
+    condition_paired = condition_paired_bootstrap(
+        rows,
+        treatment="in_pool",
+        reference="held_out",
+        cluster_key="cluster",
+        value_key="call_valid",
+        rng=rng,
+        resamples=args.bootstrap,
+    )
     categories: dict[str, int] = defaultdict(int)
     for classification in dev_classifications.values():
         categories[str(classification["failure_category"])] += 1
@@ -1888,11 +1998,13 @@ def main(argv: list[str] | None = None) -> int:
             "subsets": subsets_payload,
             "paired": paired,
             "paired_harm": paired_harm,
+            "condition_paired": condition_paired,
             "per_row": rows,
             "per_call": calls_log,
         },
         "paired": paired,
         "paired_harm": paired_harm,
+        "condition_paired": condition_paired,
         "limits": [
             "Calls are validated against the real BFCL schema (declared types, enums, "
             "required parameters); they are not executed against live APIs.",

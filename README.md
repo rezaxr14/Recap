@@ -357,8 +357,9 @@ BM25 (`[-1.000, -0.839]`); every interval excludes zero.
 Pairing the conditions on each `(task, seed)` isolates the memory: `in_pool` minus
 `held_out` is `+1.000 [1.000, 1.000]` for `full_recap`, `+0.867 [0.733, 0.967]` for
 `rrf_typed`, and exactly `0.000` for `no_memory` and `retry_only`. The same pattern holds
-at each seed separately: `full_recap` 1.000/0.000 on the safe and no-safe subsets,
-`rrf_typed` 1.000/0.871, `no_memory` 0.000/0.000.
+at each seed separately: on the safe subset `full_recap` repairs 1.000 and on the no-safe
+subset it harms 0.000; for `rrf_typed` those numbers are 1.000 and 0.871, and for
+`no_memory` 0.000 and 0.000.
 
 Across all held-out rows `full_recap` is valid on 0.608 and `no_memory` on 0.228. It is
 slightly worse than `rrf_typed` overall (0.608 vs 0.658, `-0.051 [-0.101, -0.012]`) because

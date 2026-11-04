@@ -1676,6 +1676,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT)
     parser.add_argument("--doc", type=Path, default=None)
+    parser.add_argument(
+        "--report-suffix",
+        default="",
+        help="Optional suffix for the report filename, e.g. the embedder name.",
+    )
     parser.add_argument("--bootstrap", type=int, default=BOOTSTRAP)
     parser.add_argument("--rng-seed", type=int, default=RNG_SEED)
     parser.add_argument("--keep", action="store_true")
@@ -2018,6 +2023,11 @@ def main(argv: list[str] | None = None) -> int:
             "`retry_only` asks the model again, with the schema error as feedback.",
             "Only simple and exec_simple BFCL files are available locally. Multi-turn and "
             "irrelevance categories are not covered.",
+            "BFCL repeats the same user query for several possible answers, so only functions "
+            "with two distinct queries in one schema variant are usable. The other functions "
+            "are skipped: they cannot form a dev/held-out pair.",
+            "Each promoted memory comes from one dev call, so a held-out query can fail on a "
+            "different optional argument than the one the coercion was recorded for.",
             "The local model runs at temperature 0 during discovery and nonzero temperature "
             "during evaluation; a server that ignores `seed` makes evaluation draws "
             "independent rather than exactly reproducible.",
@@ -2030,6 +2040,8 @@ def main(argv: list[str] | None = None) -> int:
 
     args.out.mkdir(parents=True, exist_ok=True)
     stem = f"real-data-bfcl-live-{args.model.replace('/', '-').replace('.', '-')}"
+    if args.report_suffix:
+        stem = f"{stem}-{args.report_suffix}"
     json_path = args.out / f"{stem}.json"
     doc_path = args.doc or args.out / f"{stem}.md"
     json_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")

@@ -83,7 +83,7 @@ async function load(emb) {
     return res.ok ? res.json() : null;
   };
   const getLive = async () => {
-    const res = await fetch("data/real-data-bfcl-live-llama-3-2-3b-instruct.json");
+    const res = await fetch("data/real-data-bfcl-live-llama-3-2-3b-instruct-hashing.json");
     return res.ok ? res.json() : null;
   };
   const [ret, tr, retV1, trV1, recap, live] = await Promise.all([
@@ -240,6 +240,7 @@ function renderLiveArms(report, subsetKey) {
 function renderLivePaired(report) {
   const subset = (report.paired || {}).safe_failed || {};
   const harm = report.paired_harm || {};
+  const conditions = report.condition_paired || {};
   const signed = (x) => `${x >= 0 ? "+" : ""}${x.toFixed(3)}`;
   const rows = [];
   for (const [arm, stats] of Object.entries(subset)) {
@@ -250,7 +251,34 @@ function renderLivePaired(report) {
     const [lo, hi] = stats.cluster_ci95;
     rows.push(["No safe memory: harmful apply", esc(arm), signed(stats.observed), `[${signed(lo)}, ${signed(hi)}]`, stats.excludes_zero ? "yes" : "no"]);
   }
-  return table(["Comparison", "Baseline", "full_recap − baseline", "95% CI", "Excludes zero"], rows);
+  for (const [arm, stats] of Object.entries(conditions)) {
+    const [lo, hi] = stats.cluster_ci95;
+    rows.push(["In pool − held out: call valid", esc(arm), signed(stats.observed), `[${signed(lo)}, ${signed(hi)}]`, stats.excludes_zero ? "yes" : "no"]);
+  }
+  return table(["Comparison", "Arm", "Delta", "95% CI", "Excludes zero"], rows);
+}
+
+function renderLiveConditions(report) {
+  const rows = report.eval.per_row || [];
+  const conditions = [...new Set(rows.map((row) => row.condition))].sort();
+  const arms = ["no_memory", "rrf_typed", "full_recap"];
+  const out = [];
+  for (const condition of conditions) {
+    for (const arm of arms) {
+      const block = rows.filter((row) => row.condition === condition && row.arm === arm);
+      if (!block.length) continue;
+      const mean = (key) => block.reduce((sum, row) => sum + (row[key] ? 1 : 0), 0) / block.length;
+      out.push([
+        `\`${condition}\``,
+        `\`${arm}\``,
+        String(block.length),
+        num(mean("call_valid")),
+        num(mean("selected")),
+        num(mean("harmful_apply")),
+      ]);
+    }
+  }
+  return table(["Condition", "Arm", "n", "Call valid", "Selected", "Harmful apply"], out);
 }
 
 function renderLive(report) {
@@ -266,6 +294,8 @@ function renderLive(report) {
     <div class="table-wrap">${renderLiveArms(report, "safe_failed")}</div>
     <h3>Held-out calls where that memory was excluded and the first call failed</h3>
     <div class="table-wrap">${renderLiveArms(report, "no_safe_failed")}</div>
+    <h3>With vs without the function's memory</h3>
+    <div class="table-wrap">${renderLiveConditions(report)}</div>
     <h3>Paired cluster bootstrap against the full policy</h3>
     <div class="table-wrap">${renderLivePaired(report)}</div>
     <p class="section-note">Positive call-valid means the full policy repaired more failed calls. Negative harmful-apply means the full policy applied fewer inapplicable memories. Intervals are 95% function-level cluster bootstraps.</p>
@@ -305,4 +335,4 @@ if (typeof document !== "undefined") {
   sel.addEventListener("change", () => show(sel.value));
   show(sel.value);
 }
-if (typeof module !== "undefined") module.exports = { renderRetrieval, renderTransfer, provenance, renderDelta, pairedNote, renderRecap, renderRecapPaired, renderLive, renderLiveArms, renderLivePaired };
+if (typeof module !== "undefined") module.exports = { renderRetrieval, renderTransfer, provenance, renderDelta, pairedNote, renderRecap, renderRecapPaired, renderLive, renderLiveArms, renderLiveConditions, renderLivePaired };

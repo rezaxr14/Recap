@@ -463,6 +463,13 @@ def _payload() -> dict:
                 "excludes_zero": True,
             }
         },
+        "condition_paired": {
+            "full_recap": {
+                "observed": 0.5,
+                "cluster_ci95": [0.2, 0.8],
+                "excludes_zero": True,
+            }
+        },
         "limits": ["fixture only"],
     }
 
@@ -474,6 +481,7 @@ def test_markdown_renders_numbers_from_the_payload() -> None:
     assert "0.125" in text
     assert "0.500" in text
     assert "[+0.100, +0.900]" in text
+    assert "With the function's memory vs without it" in text
     assert "fixture only" in text
 
 

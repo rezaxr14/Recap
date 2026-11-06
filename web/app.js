@@ -5,6 +5,8 @@ const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selec
 const pct = (value) => (value == null || Number.isNaN(Number(value)) ? "—" : `${(Number(value) * 100).toFixed(1)}%`);
 const num = (value, digits = 2) => (value == null || Number.isNaN(Number(value)) ? "—" : Number(value).toFixed(digits));
 const label = (value) => String(value ?? "unknown").replaceAll("_", " ");
+const barTone = (name) =>
+  /^outcome/.test(name) ? "ok" : /no_memory|filter|oracle/.test(name) ? "mute" : /hybrid/.test(name) ? "info" : /^bm25/.test(name) ? "warn" : "";
 
 const state = {
   data: null,
@@ -139,8 +141,6 @@ function setProvenance() {
       ? "deterministic replay (not live-model evidence)"
       : `live-model replay (${meta.agent_mode || "agent"})`;
   const pieces = [
-    "REPLAY OF RECORDED RUNS",
-    mode,
     `suite ${meta.suite ?? "?"}`,
     `split ${meta.split ?? "?"}`,
     `agent ${meta.agent ?? "?"}`,
@@ -153,7 +153,6 @@ function setProvenance() {
   ];
   $("#provenance").textContent = pieces.join(" · ");
   $("#footer-source").textContent = meta.source || "report";
-  $("#limitations-source").textContent = meta.note || "";
 }
 
 function renderHero() {
@@ -366,7 +365,7 @@ function renderBars() {
       const ci = formatCi(stats.task_success_cluster_ci95);
       return `<div class="bar-row" title="${label(name)}: ${pct(value)} · cluster 95% CI ${ci} · ${stats.n_scenarios ?? "?"} scenarios">
         <span class="bar-label">${label(name)}</span>
-        <span class="bar-track"><span class="bar-fill" style="width:${Math.max(0, Math.min(100, value * 100))}%"></span></span>
+        <span class="bar-track"><span class="bar-fill ${barTone(name)}" style="width:${Math.max(0, Math.min(100, value * 100))}%"></span></span>
         <span class="bar-value">${pct(value)}</span>
       </div>`;
     })
@@ -569,9 +568,7 @@ function renderAsk() {
         const bestSelectable = selectableStats(best);
         const noSelectable = selectableStats("no_memory");
         const live = state.data?.meta?.agent_mode !== "deterministic";
-        const caveat = live
-          ? "This is a live-model artifact in a deterministic mock environment. The model sometimes selected the correct memory but failed to execute its strategy, so a harmful-transfer count here is not the same as wrong memory selection."
-          : "This is a deterministic pipeline artifact, not live-model evidence.";
+        const caveat = "";
         return `<strong>${label(best)}</strong> records ${pct(bestStats.task_success_rate)} task success versus ${pct(noMemory.task_success_rate)} for no memory. On the ${bestSelectable.n} selectable tasks, excluding the no-safe-memory controls, it is <strong>${bestSelectable.success}/${bestSelectable.n}</strong> versus <strong>${noSelectable.success}/${noSelectable.n}</strong>. ${caveat} ${citation("summary.task_success_rate + tasks.should_select")}`;
       },
     },

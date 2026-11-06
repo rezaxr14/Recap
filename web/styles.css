@@ -1074,3 +1074,35 @@ tbody tr:hover {
     transition: none !important;
   }
 }
+
+/* recap-tighten */
+:root { --info: #2f5d8a; }
+[data-theme="dark"] { --info: #8db8e8; }
+
+/* Utility bars: .bar-fill is a <span> inside the track, so it was never given a size. */
+.bar-fill { display: block; width: 0; min-width: 0; transition: width 0.7s cubic-bezier(0.2, 0.7, 0.2, 1); }
+.bar-track { height: 12px; }
+.bar-fill.ok { background: var(--ok); }
+.bar-fill.warn { background: #c98a1e; }
+.bar-fill.info { background: var(--info); }
+.bar-fill.mute { background: #9aa59f; }
+.bar-row { grid-template-columns: clamp(120px, 32%, 200px) minmax(0, 1fr) 52px; }
+.bar-label { white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere; line-height: 1.25; }
+.bars-panel { display: flex; flex-direction: column; }
+.bars-panel .bars { flex: 1; justify-content: space-evenly; }
+@media (prefers-reduced-motion: reduce) { .bar-fill { transition: none; } }
+
+/* Silent drift: scenario picker becomes a full-width toolbar, so its text is never clipped
+   and it scales from phone to ultrawide. */
+.drift-panel { grid-template-columns: 1fr; gap: 14px; }
+.drift-controls { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 10px 16px; }
+.drift-panel > * { min-width: 0; }
+.drift-controls select { flex: 0 1 clamp(280px, 46vw, 560px); width: auto; min-width: 0; max-width: 100%; text-overflow: ellipsis; }
+.drift-controls .hint { flex: 1 1 260px; margin: 0; }
+@media (max-width: 640px) { .drift-controls select { flex-basis: 100%; } }
+@media (min-width: 641px) and (max-width: 980px) { .tier-grid { grid-template-columns: repeat(3, 1fr); } }
+
+/* Header: nav, embedder select and theme button used to overflow between ~980px and ~1100px. */
+.site-header { flex-wrap: wrap; gap: 10px clamp(12px, 2vw, 24px); }
+.site-header nav { gap: clamp(12px, 1.6vw, 22px); flex-wrap: wrap; }
+.dataset-select { max-width: clamp(170px, 22vw, 310px); min-width: 0; }

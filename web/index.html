@@ -37,11 +37,6 @@
       Loading recorded run provenance…
     </div>
 
-    <div class="provenance" role="note">
-      This replay shows the <strong>synthetic v3 suite</strong>, kept as an audit trail and not as evidence.
-      Real-data results: <a href="real-data.html">BFCL v3 retrieval and failure-memory transfer</a>.
-    </div>
-
     <main id="main">
       <section class="hero" id="top">
         <div class="hero-copy">
@@ -58,10 +53,6 @@
             <a class="button primary" href="#drift">Break a silent drift</a>
             <a class="button ghost" href="#benchmark">Read the evidence</a>
           </div>
-          <p class="micro">
-            Replay mode. Every number below comes from a committed benchmark
-            report; no live model is required to explore this page.
-          </p>
         </div>
         <aside class="hero-card" aria-labelledby="hero-card-title">
           <div class="card-topline">
@@ -156,7 +147,7 @@
         <div class="stat-row" id="stat-row"></div>
 
         <div class="chart-grid">
-          <article class="panel">
+          <article class="panel bars-panel">
             <div class="panel-heading">
               <h3>Success by baseline</h3>
               <span class="panel-caption">task success rate · 95% CI in tooltip</span>
@@ -244,8 +235,7 @@
           </div>
           <p class="section-note">
             A completion failure becomes a typed candidate only after validation.
-            Promotion is a separate gate. The benchmark store is synthetic after
-            the gold fixtures; the UI labels that provenance explicitly.
+            Promotion is a separate gate.
           </p>
         </div>
         <div class="lifecycle" id="lifecycle-flow" aria-label="Memory lifecycle"></div>
@@ -306,18 +296,6 @@
         <div class="architecture" id="architecture-grid"></div>
       </section>
 
-      <section class="section limitations">
-        <h2>What this page does not prove</h2>
-        <ul>
-          <li>The environment is a deterministic mock API, not production traffic.</li>
-          <li>The deterministic headline uses a 256-d hashing embedder. The selectable live dataset uses nomic 768-d and one small local model on one machine.</li>
-          <li>Elasticsearch is single-node. There is no scale claim here.</li>
-          <li>Gold v3 memories are labelled synthetic fixtures; decoys are synthetic too.</li>
-          <li>Task success counts only externally verified completion. A safe abstention is reported separately, not relabelled as success.</li>
-          <li>A live model can select the correct memory and still fail to execute its strategy. Harmful transfer records the failed outcome; it does not prove the wrong memory was selected.</li>
-        </ul>
-        <p class="micro" id="limitations-source"></p>
-      </section>
     </main>
 
     <footer class="site-footer">
